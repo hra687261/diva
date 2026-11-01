@@ -1,0 +1,21 @@
+name = "diva"
+version = "0.1.0-dev"
+license = "Apache-2.0"
+defaultTargets = ["diva"]
+
+[[require]]
+name = "ParseIt"
+git = "https://github.com/fgdorais/lean4-parseit"
+rev = "main"
+
+[[lean_lib]]
+name = "Diva"
+
+[[lean_lib]]
+name = "DivaTest"
+srcDir = "test"
+globs = ["ParserTest"]
+
+[[lean_exe]]
+name = "diva"
+root = "Main"
