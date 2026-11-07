@@ -14,7 +14,7 @@ name = "Diva"
 [[lean_lib]]
 name = "DivaTest"
 srcDir = "test"
-globs = ["ParserTest"]
+globs = ["ParserTest", "InterpTest"]
 
 [[lean_exe]]
 name = "diva"
