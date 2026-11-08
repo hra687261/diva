@@ -97,21 +97,21 @@ theorem Eval.deterministic {ρ : Env} {e : Expr} {v₁ v₂ : Value}
   induction h₁ generalizing v₂
   case int env n => cases h₂; rfl
   case bool => cases h₂; rfl
+  case unit => cases h₂; rfl
+  case nil => cases h₂; rfl
   case var hlook =>
     cases h₂ with
     | var hlook2 =>
       rw [hlook] at hlook2; injection hlook2 with h
-  case letin ih1 ih2 =>
-    cases h₂ with
-    | letin h2a h2b =>
-      expose_names;
-      have hv1 := ih1 h2a
-      subst hv1
-      -- rw [ih2 h2b]
-      exact ih2 h2b
   case lam env name ebody =>
     cases h₂
     rfl
+  case letrec h₂ =>
+    cases h₂ with
+    | letrec h2 =>
+      expose_names;
+      have hv1 := h₂ h2
+      exact hv1
   case app ihf iha ihbody =>
     cases h₂ with
     | app hf ha hbody =>
@@ -121,6 +121,14 @@ theorem Eval.deterministic {ρ : Env} {e : Expr} {v₁ v₂ : Value}
       have hva := iha ha
       subst hva
       exact ihbody hbody
+  case letin ih1 ih2 =>
+    cases h₂ with
+    | letin h2a h2b =>
+      expose_names;
+      have hv1 := ih1 h2a
+      subst hv1
+      -- rw [ih2 h2b]
+      exact ih2 h2b
   -- case ifT =>
   --   cases h₂ with
   --   | ifT =>
@@ -155,6 +163,34 @@ theorem Eval.deterministic {ρ : Env} {e : Expr} {v₁ v₂ : Value}
       subst hclos2
       rw [h_2] at h_5
       injection h_5
-  case unit | nil | letrec | cons | matchNil | matchCons | assert => sorry
+  case cons iha ihb =>
+    cases h₂ with
+    | cons ha hb =>
+      have nha := iha ha
+      have nhb := ihb hb
+      subst nha
+      subst nhb
+      rfl
+  case matchNil iha ihb =>
+    cases h₂ with
+    | matchNil ha hb =>
+      have nhb := ihb hb
+      exact nhb
+    | matchCons ha hb =>
+      have nha := iha ha
+      cases nha
+  case matchCons iha ihb =>
+    cases h₂ with
+    | matchNil ha hb =>
+      cases (iha ha)
+    | matchCons ha hb =>
+      have nha := iha ha
+      injection nha with hh ht
+      subst hh
+      subst ht
+      have nhb := ihb hb
+      exact nhb
+  case assert => cases h₂; rfl
+
 
 end Diva

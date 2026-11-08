@@ -71,12 +71,11 @@ theorem eval_sound : ∀ {fuel ρ e v}, eval fuel ρ e = some v → Eval ρ e v 
     case bool b =>
       subst h
       exact Eval.bool
+    case unit =>
+      subst h
+      exact Eval.unit
     case var name =>
       apply Eval.var h
-    case lam x body =>
-      rw [← h]
-      subst h
-      exact Eval.lam
     case app e1 e2 =>
       simp [Option.bind_eq_some_iff] at h
       obtain ⟨vf, hf, h⟩ := h
@@ -87,10 +86,16 @@ theorem eval_sound : ∀ {fuel ρ e v}, eval fuel ρ e = some v → Eval ρ e v 
         exact .app (ih hf) (ih ha) (ih hb)
       case h_2 x q =>
         simp at h
+    case lam x body =>
+      rw [← h]
+      subst h
+      exact Eval.lam
     case letin name e body =>
       simp [Option.bind_eq_some_iff] at h
       obtain ⟨va, ha, hb⟩ := h
       exact .letin (ih ha) (ih hb)
+    case letrec =>
+      exact .letrec (ih h)
     case ite =>
       split at h
       case h_1 hc =>
@@ -103,7 +108,28 @@ theorem eval_sound : ∀ {fuel ρ e v}, eval fuel ρ e = some v → Eval ρ e v 
       simp [Option.bind_eq_some_iff] at h
       obtain ⟨va, ha, vb, hb, hc⟩ := h
       exact .binop (ih ha) (ih hb) (hc)
-    case unit | nil | letrec | cons | matchList | assert => sorry
+    case nil =>
+      subst h
+      exact Eval.nil
+    case cons =>
+      simp [Option.bind_eq_some_iff] at h
+      obtain ⟨va, ha, vb, hb, hl, rfl⟩ := h
+      exact .cons (ih ha) (ih hb) hl
+    case matchList =>
+      split at h
+      case h_1 hs =>
+        exact .matchNil (ih hs) (ih h)
+      case h_2 hs =>
+        exact .matchCons (ih hs) (ih h)
+      case h_3 =>
+        simp at h
+    case assert =>
+      split at h
+      case h_1 hc =>
+        cases h
+        exact Eval.assert (ih hc)
+      case h_2 hc =>
+        cases h
 
 def ppValue : Value → String
   | .int n  => toString n
