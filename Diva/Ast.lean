@@ -34,6 +34,12 @@ e ::= n                                    -- natural number literal
     | [] | e :: e                          -- lists
     | match e with [] -> e | x :: xs -> e  -- list case match analysis
     | assert e                             -- runtime check
+    | Array.make e e                       -- new array: length, initial value
+    | e.(e) | e.(e) <- e                   -- array read and write
+    | Array.length e                       -- array length
+    | ref e | !e | e := e                  -- refs
+    | for x = e to e do e done             -- loops, desugared to recursion
+    | while e do e done
 ```
 -/
 inductive Expr where
@@ -53,6 +59,15 @@ inductive Expr where
   | matchList : Expr → Expr → String → String → Expr → Expr
     -- `match e1 with [] -> e2 | s1 :: s2 -> e3`
   | assert : Expr → Expr
+  | alloc : Nat → Expr → Expr → Expr
+    -- `Array.make n v`, the Nat is the id of the allocation site
+  | get   : Expr → Expr → Expr          -- `a.(i)`
+  | set   : Expr → Expr → Expr → Expr   -- `a.(i) <- v`
+  | len   : Expr → Expr                 -- `Array.length a`
+  | ref   : Nat → Expr → Expr
+    -- `ref v`, the Nat is the id of the allocation site
+  | deref : Expr → Expr                 -- `!r`
+  | assign : Expr → Expr → Expr         -- `r := v`
   deriving Inhabited
 
 def ppExpr : Expr → String
@@ -71,6 +86,13 @@ def ppExpr : Expr → String
   | .matchList s n x xs c =>
     s!"(match {ppExpr s} with [] -> {ppExpr n} | {x} :: {xs} -> {ppExpr c})"
   | .assert c      => s!"(assert {ppExpr c})"
+  | .alloc _ n v   => s!"(Array.make {ppExpr n} {ppExpr v})"
+  | .get a i       => s!"{ppExpr a}.({ppExpr i})"
+  | .set a i v     => s!"({ppExpr a}.({ppExpr i}) <- {ppExpr v})"
+  | .len a         => s!"(Array.length {ppExpr a})"
+  | .ref _ v       => s!"(ref {ppExpr v})"
+  | .deref r       => s!"!{ppExpr r}"
+  | .assign r v    => s!"({ppExpr r} := {ppExpr v})"
 
 instance : Repr Expr := ⟨fun e _ => Std.Format.text (ppExpr e)⟩
 

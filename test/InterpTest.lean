@@ -5,8 +5,8 @@ import Diva.Interp
     of fuel -/
 private def run (s : String) : Option String := do
   let e ← (Diva.parse s).toOption
-  let v ← Diva.eval 1000 [] e
-  return toString v
+  let (r, _) ← Diva.eval 1000 [] [] e
+  return toString r
 
 #guard run "1 + 2 * 3 - 4"                       = some "3"
 #guard run "let x = 40 in x + 2"                 = some "42"
@@ -86,3 +86,35 @@ private def run (s : String) : Option String := do
 #guard run "let rec fact n = if n = 0 then 1 else n * fact (n - 1) ;; fact 6" = some "720"
 #guard run "let x = 1 ;; let y = x + 1"          = some "2"
 #guard run "assert true ;; 7"                    = some "7"
+
+-- arrays
+#guard run "let a = Array.make 3 0 in a.(1) <- 5; a.(1) + a.(0)" = some "5"
+#guard run "let a = Array.make 1 0 in a.(0) <- a.(0) + 1; a.(0) <- a.(0) + 1; a.(0)" = some "2"
+#guard run "Array.length (Array.make 4 true)"   = some "4"
+
+-- arrays are shared
+#guard run "let a = Array.make 1 0 in let b = a in b.(0) <- 7; a.(0)" = some "7"
+#guard run "let a = Array.make 2 0 in a.(2)"    = some "error: index out of bounds"
+#guard run "let a = Array.make 2 0 in a.(-1) <- 1" = some "error: index out of bounds"
+#guard run "Array.make (-1) 0"                  = some "error: index out of bounds"
+#guard run "1.(0)"                              = some "error: type error"
+
+-- refs
+#guard run "let r = ref 1 in r := !r + 41; !r"   = some "42"
+#guard run "let r = ref 0 in incr r; incr r; decr r; !r" = some "1"
+#guard run "let r = ref 0 in let rec loop n = if n = 0 then () else (r := !r + n; loop (n - 1)) in loop 4; !r" = some "10"
+
+-- refs and arrays are different kinds of values
+#guard run "let r = ref 0 in r.(0)"             = some "error: type error"
+#guard run "let a = Array.make 1 0 in !a"       = some "error: type error"
+#guard run "let a = Array.make 1 0 in a := 1"   = some "error: type error"
+#guard run "ref 0"                              = some "<ref 0>"
+
+-- loops
+#guard run "let s = ref 0 in for i = 1 to 4 do s := !s + i done; !s" = some "10"
+#guard run "let s = ref 0 in for i = 1 to 0 do s := !s + 1 done; !s" = some "0"
+#guard run "let n = ref 5 in let c = ref 0 in while !n > 0 do decr n; incr c done; !c" = some "5"
+
+-- nested loops: the inner `%for` does not capture the outer one
+#guard run "let s = ref 0 in for i = 1 to 3 do for j = 1 to 2 do incr s done done; !s" = some "6"
+#guard run "let a = Array.make 3 0 in for i = 0 to 3 do a.(i) <- i done" = some "error: index out of bounds"

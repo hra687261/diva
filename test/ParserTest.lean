@@ -71,3 +71,33 @@ private def parseStr (s : String) : Option String :=
 #guard parseStr "let x = 1 if x = 1 then 2 else 3" = none
 #guard parseStr "let x = 1 ;; if x = 1 then 2 else 3" =
   some "(let x = 1 in (if (x = 1) then 2 else 3))"
+
+-- array reads bind like atoms
+#guard parseStr "Array.make 3 0"      = some "(Array.make 3 0)"
+#guard parseStr "Array.length a + 1"  = some "((Array.length a) + 1)"
+#guard parseStr "f a.(1)"             = some "(f a.(1))"
+#guard parseStr "a.(i).(j)"           = some "a.(i).(j)"
+
+-- `<-` is looser than `||`
+#guard parseStr "a.(i + 1) <- v"      = some "(a.((i + 1)) <- v)"
+#guard parseStr "a.(1) <- 1; b"       = some "(let _ = (a.(1) <- 1) in b)"
+#guard parseStr "a.(i) < -1"          = some "(a.(i) < (0 - 1))"
+
+-- refs
+#guard parseStr "ref 0"               = some "(ref 0)"
+#guard parseStr "!r + 1"              = some "(!r + 1)"
+#guard parseStr "r := !r + 1; !r"     = some "(let _ = (r := (!r + 1)) in !r)"
+#guard parseStr "incr r"              = some "(r := (!r + 1))"
+#guard parseStr "f !r"                = some "(f !r)"
+
+-- loops desugar to recursive functions whose names (`%for`) users cannot write
+#guard parseStr "for i = 1 to n do f i done" =
+  some "(let rec %for i = (if (i <= n) then (let _ = (f i) in (%for (i + 1))) else ()) in (%for 1))"
+#guard parseStr "while c do f () done" =
+  some "(let rec %while _ = (if c then (let _ = (f ()) in (%while ())) else ()) in (%while ()))"
+#guard parseStr "__for"               = some "__for"
+
+-- allocation sites are numbered in source order
+#guard match Diva.parse "let r = ref 0 in let a = Array.make 2 r in Array.make 1 a" with
+  | .ok (.letin _ (.ref 0 _) (.letin _ (.alloc 1 _ _) (.alloc 2 _ _))) => true
+  | _ => false

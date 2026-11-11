@@ -12,9 +12,9 @@ def main (args : List String) : IO Unit := do
     match parse src with
     | .ok ast  =>
       IO.println (toString ast)
-      match eval fuel [] ast with
-      | .ok v => IO.println s!"= {v}"
-      | .err k =>
+      match eval fuel [] [] ast with
+      | .ok v _ => IO.println s!"= {v}"
+      | .err k _ =>
         IO.eprintln s!"runtime error: {ppErr k}"
         IO.Process.exit 1
       | .outOfFuel =>

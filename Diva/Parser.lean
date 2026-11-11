@@ -34,7 +34,8 @@ def rawIdent : P String := do
 /-- Reserved words that may not be used as identifiers. -/
 def keywords : List String :=
   ["let", "in", "fun", "if", "then", "else", "true", "false", "rec",
-   "match", "with", "mod", "not", "assert", "_"]
+   "match", "with", "mod", "not", "assert", "_",
+   "for", "to", "do", "done", "while"]
 
 /-- A symbolic token such as `"+"` or `"->"`. -/
 def symbol (s : String) : P Unit := lexeme (ParseIt.Char.string s *> pure ())
@@ -82,7 +83,7 @@ partial def seqExpr : P Expr := do
 
 /-- A full expression, try to parse all constructors one after the other. -/
 partial def expr : P Expr :=
-  letinxpr <|> funExpr <|> itexpr <|> matchExpr <|> orExpr
+  letinxpr <|> funExpr <|> itexpr <|> matchExpr <|> forExpr <|> whileExpr <|> assignExpr
 
 /-- `let [rec] f x y = e`, shared by `let … in` and top-level declarations. -/
 partial def binding : P (String × (Expr → Expr)) := do
@@ -138,6 +139,42 @@ partial def matchExpr : P Expr := do
   let c ← seqExpr
   return .matchList s n x xs c
 
+-- The loops below desugar to a recursive function named `%for` / `%while`
+/-- `for i = a to b do e done` is
+    `let rec %for i = if i <= b then (e; %for (i + 1)) else () in %for a`. -/
+partial def forExpr : P Expr := do
+  keyword "for"
+  let i ← binderTok
+  symbol "="
+  let a ← expr
+  keyword "to"
+  let b ← expr
+  keyword "do"
+  let e ← seqExpr
+  keyword "done"
+  let next := Expr.app (.var "%for") (.binop .add (.var i) (.int 1))
+  return .letrec "%for" i (.ite (.binop .le (.var i) b) (.letin "_" e next) .unit)
+    (.app (.var "%for") a)
+
+/-- `while c do e done` is
+    `let rec %while _ = if c then (e; %while ()) else () in %while ()`. -/
+partial def whileExpr : P Expr := do
+  keyword "while"
+  let c ← expr
+  keyword "do"
+  let e ← seqExpr
+  keyword "done"
+  let next := Expr.app (.var "%while") .unit
+  return .letrec "%while" "_" (.ite c (.letin "_" e next) .unit) next
+
+/-- `a.(i) <- v`, `r := v`, or any other `orExpr`. -/
+partial def assignExpr : P Expr := do
+  let lhs ← orExpr
+  let assignRef := do symbol ":="; let v ← expr; return Expr.assign lhs v
+  match lhs with
+  | .get a i => (do symbol "<-"; let v ← expr; return .set a i v) <|> assignRef <|> pure lhs
+  | _ => assignRef <|> pure lhs
+
 /-- `a || b` is `if a then true else b`. -/
 partial def orExpr : P Expr := do
   let a ← andExpr
@@ -159,7 +196,7 @@ partial def cmpExpr : P Expr := do
   (cmpOp "=" .eq e) <|>
   (cmpOp "<>" .ne e) <|>
   (cmpOp "<=" .le e) <|>
-  (cmpOp "<" .lt e) <|>
+  (notFollowedBy (symbol "<-") *> cmpOp "<" .lt e) <|>
   (cmpOp ">=" .ge e) <|>
   (cmpOp ">" .gt e) <|>
   pure e
@@ -180,8 +217,30 @@ partial def prattLoop (lhs: Expr) (lastBp: Nat) : P Expr := (
         prattLoop (builder lhs rhs) lastBp
   ) <|> pure lhs
 
-/-- `-e` (`0 - e`), `not e`, `assert e`. -/
+/-- `-e` (`0 - e`), `not e`, `assert e`, `Array.make n v`, `Array.length a`, and
+    `ref v`, and `incr r` / `decr r` (`r := !r ± 1`). -/
 partial def unary : P Expr :=
+  (do
+    keyword "ref"
+    let v ← postfixExpr
+    return .ref 0 v) <|>
+  (do
+    keyword "incr"
+    let r ← postfixExpr
+    return .assign r (.binop .add (.deref r) (.int 1))) <|>
+  (do
+    keyword "decr"
+    let r ← postfixExpr
+    return .assign r (.binop .sub (.deref r) (.int 1))) <|>
+  (do
+    keyword "Array"; symbol "."; keyword "make"
+    let n ← postfixExpr
+    let v ← postfixExpr
+    return .alloc 0 n v) <|>
+  (do
+    keyword "Array"; symbol "."; keyword "length"
+    let a ← postfixExpr
+    return .len a) <|>
   (do
     symbol "-"
     let e ← unary
@@ -198,17 +257,27 @@ partial def unary : P Expr :=
 
 /-- Left-associative application `e e e ...`. -/
 partial def appExpr : P Expr := do
-  let f ← atom
+  let f ← postfixExpr
   appRest f
 
 partial def appRest (f : Expr) : P Expr :=
-  (do let a ← atom; appRest (.app f a)) <|>
+  (do let a ← postfixExpr; appRest (.app f a)) <|>
   pure f
 
-/-- Atoms: parenthesised expr, `()`, list literal, integer, boolean literal, or
-    variable. -/
+/-- An atom followed by array reads `a.(i).(j)`. -/
+partial def postfixExpr : P Expr := do
+  let a ← atom
+  getRest a
+
+partial def getRest (a : Expr) : P Expr :=
+  (do symbol "."; symbol "("; let i ← seqExpr; symbol ")"; getRest (.get a i)) <|>
+  pure a
+
+/-- Atoms: parenthesised expr, `()`, list literal, integer, boolean literal,
+    variable, or `!r`. -/
 partial def atom : P Expr :=
   parenExpr
+    <|> (do symbol "!"; let r ← atom; return .deref r)
     <|> (symbol "(" *> symbol ")" *> pure Expr.unit)
     <|> listLit
     <|> (Expr.int <$> intTok)
@@ -269,10 +338,42 @@ def program : P Expr := do
   let _ ← dropMany (symbol ";;")
   return Item.toExpr (first.toList ++ rest.toList)
 
+/-- A fresh allocation-site number. -/
+def freshSite : StateM Nat Nat := modifyGet fun n => (n, n + 1)
+
+/-- Number the allocation sites (`Array.make`, `ref`) 0, 1, 2, ... in source order.
+    The parser leaves them all at 0.
+
+    TODO: somehow avoid the pass
+-/
+def numberSites : Expr → StateM Nat Expr
+  | .alloc _ n v => do
+    let s ← freshSite
+    return .alloc s (← numberSites n) (← numberSites v)
+  | .ref _ v => do
+    let s ← freshSite
+    return .ref s (← numberSites v)
+  | .app f a => return .app (← numberSites f) (← numberSites a)
+  | .lam x b => return .lam x (← numberSites b)
+  | .letin x a b => return .letin x (← numberSites a) (← numberSites b)
+  | .letrec f x a b => return .letrec f x (← numberSites a) (← numberSites b)
+  | .ite c t e => return .ite (← numberSites c) (← numberSites t) (← numberSites e)
+  | .binop op a b => return .binop op (← numberSites a) (← numberSites b)
+  | .cons a b => return .cons (← numberSites a) (← numberSites b)
+  | .matchList s n x xs c =>
+    return .matchList (← numberSites s) (← numberSites n) x xs (← numberSites c)
+  | .assert c => return .assert (← numberSites c)
+  | .get a i => return .get (← numberSites a) (← numberSites i)
+  | .set a i v => return .set (← numberSites a) (← numberSites i) (← numberSites v)
+  | .len a => return .len (← numberSites a)
+  | .deref r => return .deref (← numberSites r)
+  | .assign r v => return .assign (← numberSites r) (← numberSites v)
+  | e => return e
+
 /-- Parse a complete program. -/
 def parse (s : String) : Except String Expr :=
   match (whitespace *> program <* endOfInput).parseString s with
-  | .ok e => .ok e
+  | .ok e => .ok ((numberSites e).run' 0)
   | .error err => .error s!"Parse error near byte {err.pos.byteIdx}"
 
 end Diva
