@@ -13,9 +13,12 @@ def main (args : List String) : IO Unit := do
     | .ok ast  =>
       IO.println (toString ast)
       match eval fuel [] ast with
-      | some v => IO.println s!"= {v}"
-      | none =>
-        IO.eprintln "evaluation stuck or out of fuel"
+      | .ok v => IO.println s!"= {v}"
+      | .err k =>
+        IO.eprintln s!"runtime error: {ppErr k}"
+        IO.Process.exit 1
+      | .outOfFuel =>
+        IO.eprintln "out of fuel"
         IO.Process.exit 1
     | .error e =>
       IO.eprintln s!"parse error: {e}"

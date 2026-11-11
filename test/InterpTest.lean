@@ -1,8 +1,8 @@
 import Diva.Parser
 import Diva.Interp
 
-/-- Parse and run `s`, and return the value. Return `none` on a parse error, a
-    program that goes wrong or exhausted fuel. -/
+/-- Parse and run `s`, and return its outcome, a value, an error, or none if out
+    of fuel -/
 private def run (s : String) : Option String := do
   let e ← (Diva.parse s).toOption
   let v ← Diva.eval 1000 [] e
@@ -28,24 +28,26 @@ private def run (s : String) : Option String := do
 #guard run "-3 + 1"                              = some "-2"
 #guard run "let x = 5 in -x * 2"                 = some "-10"
 
--- programs that go wrong have no value
-#guard run "true + 1"                            = none
-#guard run "x"                                   = none
-#guard run "1 2"                                 = none
-#guard run "if 1 then 2 else 3"                  = none
+-- programs that go wrong evaluate to an error
+#guard run "true + 1"                            = some "error: type error"
+#guard run "x"                                   = some "error: unbound variable"
+#guard run "1 2"                                 = some "error: type error"
+#guard run "if 1 then 2 else 3"                  = some "error: type error"
+-- errors propagate, left operand first
+#guard run "1 / 0 + x"                           = some "error: division by zero"
 
 -- division (truncating, like OCaml)
 #guard run "7 / 2"                               = some "3"
 #guard run "-7 / 2"                              = some "-3"
 #guard run "-7 mod 2"                            = some "-1"
-#guard run "1 / 0"                               = none
-#guard run "5 mod 0"                             = none
+#guard run "1 / 0"                               = some "error: division by zero"
+#guard run "5 mod 0"                             = some "error: division by zero"
 
 -- unit and assert
 #guard run "()"                                  = some "()"
 #guard run "assert (1 < 2)"                      = some "()"
-#guard run "assert (2 < 1)"                      = none
-#guard run "assert 1"                            = none
+#guard run "assert (2 < 1)"                      = some "error: assertion failed"
+#guard run "assert 1"                            = some "error: type error"
 
 -- recursion
 #guard run "let rec fact n = if n = 0 then 1 else n * fact (n - 1) in fact 5" = some "120"
@@ -62,14 +64,14 @@ private def run (s : String) : Option String := do
 -- `&&` short-circuits: the right side is never evaluated
 #guard run "false && 1 / 0 = 0"                  = some "false"
 #guard run "assert true; 42"                     = some "42"
-#guard run "assert false; 42"                    = none
+#guard run "assert false; 42"                    = some "error: assertion failed"
 
 -- lists
 #guard run "1 :: 2 :: []"                        = some "(1 :: (2 :: []))"
-#guard run "1 :: 2"                              = none
+#guard run "1 :: 2"                              = some "error: type error"
 #guard run "let rec len l = match l with [] -> 0 | x :: xs -> 1 + len xs in len (1 :: 2 :: 3 :: [])" = some "3"
 #guard run "match [] with [] -> 0 | x :: xs -> x" = some "0"
-#guard run "match 1 with [] -> 0 | x :: xs -> x" = none
+#guard run "match 1 with [] -> 0 | x :: xs -> x" = some "error: type error"
 
 -- top-level declarations
 #guard run "let x = 40 let y = 2 ;; x + y"       = some "42"
