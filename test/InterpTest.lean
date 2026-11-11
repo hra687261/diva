@@ -28,6 +28,12 @@ private def run (s : String) : Option String := do
 #guard run "-3 + 1"                              = some "-2"
 #guard run "let x = 5 in -x * 2"                 = some "-10"
 
+-- `=` and `<>` on bools and units
+#guard run "true = false"                        = some "false"
+#guard run "true <> false"                       = some "true"
+#guard run "() = ()"                             = some "true"
+#guard run "1 = true"                            = some "error: type error"
+
 -- programs that go wrong evaluate to an error
 #guard run "true + 1"                            = some "error: type error"
 #guard run "x"                                   = some "error: unbound variable"
@@ -71,6 +77,8 @@ private def run (s : String) : Option String := do
 #guard run "1 :: 2"                              = some "error: type error"
 #guard run "let rec len l = match l with [] -> 0 | x :: xs -> 1 + len xs in len (1 :: 2 :: 3 :: [])" = some "3"
 #guard run "match [] with [] -> 0 | x :: xs -> x" = some "0"
+#guard run "match [1; 2] with [] -> 0 | x :: xs -> x" = some "1"
+#guard run "if 1 < 2 then assert true"           = some "()"
 #guard run "match 1 with [] -> 0 | x :: xs -> x" = some "error: type error"
 
 -- top-level declarations

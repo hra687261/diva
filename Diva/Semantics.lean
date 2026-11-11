@@ -55,6 +55,10 @@ def BinOp.denote : BinOp → Value → Value → Outcome
   | .le,  .int x, .int y => .ok (.bool (x ≤ y))
   | .gt,  .int x, .int y => .ok (.bool (x > y))
   | .ge,  .int x, .int y => .ok (.bool (x ≥ y))
+  | .eq,  .bool x, .bool y => .ok (.bool (x == y))
+  | .ne,  .bool x, .bool y => .ok (.bool (x != y))
+  | .eq,  .unit, .unit   => .ok (.bool true)
+  | .ne,  .unit, .unit   => .ok (.bool false)
   | _,    _,      _      => .err .typeError
 
 /-- The call environment of a function. Calling `clos s x body ρ` on `va` extends

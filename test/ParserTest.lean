@@ -12,6 +12,8 @@ private def parseStr (s : String) : Option String :=
 #guard parseStr "let x = 40 in x + 2" = some "(let x = 40 in (x + 2))"
 #guard parseStr "fun x -> x + 1"      = some "(fun x -> (x + 1))"
 #guard parseStr "if a then b else c"  = some "(if a then b else c)"
+#guard parseStr "if a then b"         = some "(if a then b else ())"
+#guard parseStr "if a then b; c"      = some "(let _ = (if a then b else ()) in c)"
 #guard parseStr "a = b = c"           = none
 
 -- comparisons
@@ -52,6 +54,9 @@ private def parseStr (s : String) : Option String :=
 -- lists: `::` is right-associative and looser than `+`
 #guard parseStr "[]"                  = some "[]"
 #guard parseStr "a :: b :: []"        = some "(a :: (b :: []))"
+#guard parseStr "[a; b]"              = some "(a :: (b :: []))"
+#guard parseStr "[a; b;]"             = some "(a :: (b :: []))"
+#guard parseStr "[f x; a + 1]"        = some "((f x) :: ((a + 1) :: []))"
 #guard parseStr "a + 1 :: l"          = some "((a + 1) :: l)"
 #guard parseStr "match l with [] -> 0 | x :: xs -> x" =
   some "(match l with [] -> 0 | x :: xs -> x)"

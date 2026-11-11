@@ -114,14 +114,13 @@ partial def funExpr : P Expr := do
   let body ← seqExpr
   return lams xs.toList body
 
-/-- `if c then t else e` -/
+/-- `if c then t else e`. Without `else`, `e` is `()`. -/
 partial def itexpr : P Expr := do
   keyword "if"
   let c ← expr
   keyword "then"
   let t ← expr
-  keyword "else"
-  let e ← expr
+  let e ← (keyword "else" *> expr) <|> pure .unit
   return .ite c t e
 
 /-- `match s with [] -> n | x :: xs -> c` -/
@@ -206,14 +205,22 @@ partial def appRest (f : Expr) : P Expr :=
   (do let a ← atom; appRest (.app f a)) <|>
   pure f
 
-/-- Atoms: parenthesised expr, `()`, `[]`, integer, boolean literal, or variable. -/
+/-- Atoms: parenthesised expr, `()`, list literal, integer, boolean literal, or
+    variable. -/
 partial def atom : P Expr :=
   parenExpr
     <|> (symbol "(" *> symbol ")" *> pure Expr.unit)
-    <|> (symbol "[" *> symbol "]" *> pure Expr.nil)
+    <|> listLit
     <|> (Expr.int <$> intTok)
     <|> boolLit
     <|> (Expr.var <$> identTok)
+
+/-- `[a; b; c]` is `a :: b :: c :: []`. -/
+partial def listLit : P Expr := do
+  symbol "["
+  let es ← sepEndBy (symbol ";") expr
+  symbol "]"
+  return es.foldr .cons .nil
 
 /-- `( e )` -/
 partial def parenExpr : P Expr := do
