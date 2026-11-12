@@ -118,3 +118,12 @@ private def run (s : String) : Option String := do
 -- nested loops: the inner `%for` does not capture the outer one
 #guard run "let s = ref 0 in for i = 1 to 3 do for j = 1 to 2 do incr s done done; !s" = some "6"
 #guard run "let a = Array.make 3 0 in for i = 0 to 3 do a.(i) <- i done" = some "error: index out of bounds"
+
+-- exceptions are values; raising one stops the program
+#guard run "E"                                  = some "E"
+#guard run "E (1 + 2)"                          = some "(E 3)"
+#guard run "raise E"                            = some "error: uncaught exception E"
+#guard run "raise (E 1); 2"                     = some "error: uncaught exception (E 1)"
+#guard run "let r = ref 0 in for i = 1 to 5 do (if i = 3 then raise Stop); incr r done" =
+  some "error: uncaught exception Stop"
+#guard run "raise 1"                            = some "error: type error"

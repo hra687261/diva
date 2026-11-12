@@ -21,6 +21,7 @@ inductive Value where
   | cons : Value → Value → Value
   | arr  : Nat → Value  -- the address of an array in the store
   | ref  : Nat → Value  -- the address of a ref in the store
+  | exn  : String → Value → Value  -- the exception `E v`
   deriving Repr, Inhabited
 
 /-- Variable environment. -/
@@ -30,10 +31,11 @@ abbrev Env := List (String × Value)
 value). An array's length never changes. -/
 abbrev Store := List (List Value)
 
-/-- Runtime errors. -/
+/-- Runtime errors, and raised exceptions (`exn v`). -/
 inductive Err where
   | divZero | assertFail | typeError | unbound | outOfBounds
-  deriving Repr, DecidableEq, Inhabited
+  | exn : Value → Err
+  deriving Repr, Inhabited
 
 /-- The result of an evaluation: a value or a runtime error. -/
 inductive Outcome where
@@ -139,6 +141,10 @@ def Value.isList : Value → Bool
   | .nil | .cons .. => true
   | _ => false
 
+def Value.isExn : Value → Bool
+  | .exn .. => true
+  | _ => false
+
 /-- Big-step semantics: `Eval ρ μ e r μ'` means `e`, run in `ρ` from store `μ`,
 gives `r` and store `μ'`. Evaluation is left to right; errors propagate. -/
 inductive Eval : Env → Store → Expr → Outcome → Store → Prop where
@@ -241,6 +247,13 @@ inductive Eval : Env → Store → Expr → Outcome → Store → Prop where
   | assignErrR : Eval ρ μ r (.err k) μ₁ → Eval ρ μ (.assign r e) (.err k) μ₁
   | assignErrV :
     Eval ρ μ r (.ok vr) μ₁ → Eval ρ μ₁ e (.err k) μ₂ → Eval ρ μ (.assign r e) (.err k) μ₂
+  | exn : Eval ρ μ e (.ok v) μ₁ → Eval ρ μ (.exn c e) (.ok (.exn c v)) μ₁
+  | exnErr : Eval ρ μ e (.err k) μ₁ → Eval ρ μ (.exn c e) (.err k) μ₁
+  | raise :
+    Eval ρ μ e (.ok v) μ₁ → v.isExn = true → Eval ρ μ (.raise e) (.err (.exn v)) μ₁
+  | raiseNotExn :
+    Eval ρ μ e (.ok v) μ₁ → v.isExn = false → Eval ρ μ (.raise e) (.err .typeError) μ₁
+  | raiseErr : Eval ρ μ e (.err k) μ₁ → Eval ρ μ (.raise e) (.err k) μ₁
 
 /-- Evaluation is deterministic: the same expression, environment and store give
 the same outcome and the same final store. -/
@@ -504,5 +517,28 @@ theorem Eval.deterministic {ρ : Env} {μ : Store} {e : Expr} {r₁ r₂ : Outco
     | assign hr he => cases ihr hr; cases ihe he
     | assignErrR hr => cases ihr hr
     | assignErrV hr he => cases ihr hr; cases ihe he; rfl
+  case exn ihe =>
+    cases h₂ with
+    | exn he => cases ihe he; rfl
+    | exnErr he => cases ihe he
+  case exnErr ihe =>
+    cases h₂ with
+    | exn he => cases ihe he
+    | exnErr he => cases ihe he; rfl
+  case raise hx ihe =>
+    cases h₂ with
+    | raise he _ => cases ihe he; rfl
+    | raiseNotExn he hx' => cases ihe he; rw [hx] at hx'; cases hx'
+    | raiseErr he => cases ihe he
+  case raiseNotExn hx ihe =>
+    cases h₂ with
+    | raise he hx' => cases ihe he; rw [hx] at hx'; cases hx'
+    | raiseNotExn he _ => cases ihe he; rfl
+    | raiseErr he => cases ihe he
+  case raiseErr ihe =>
+    cases h₂ with
+    | raise he _ => cases ihe he
+    | raiseNotExn he _ => cases ihe he
+    | raiseErr he => cases ihe he; rfl
 
 end Diva

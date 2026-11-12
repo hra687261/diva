@@ -35,7 +35,7 @@ def rawIdent : P String := do
 def keywords : List String :=
   ["let", "in", "fun", "if", "then", "else", "true", "false", "rec",
    "match", "with", "mod", "not", "assert", "_",
-   "for", "to", "do", "done", "while"]
+   "for", "to", "do", "done", "while", "raise"]
 
 /-- A symbolic token such as `"+"` or `"->"`. -/
 def symbol (s : String) : P Unit := lexeme (ParseIt.Char.string s *> pure ())
@@ -56,10 +56,15 @@ def opbp: P ((Expr → Expr → Expr) × Nat × Nat) :=
   (symbol "/"    *> pure (.binop .div, (3, 4))) <|>
   (keyword "mod" *> pure (.binop .mod, (3, 4)))
 
-/-- A non-keyword identifier. -/
+/-- A variable: a non-keyword identifier that is not capitalised. -/
 def identTok : P String := lexeme do
   let id ← rawIdent
-  if keywords.contains id then throwUnexpected else pure id
+  if keywords.contains id || id.front.isUpper then throwUnexpected else pure id
+
+/-- An exception constructor: a capitalised identifier, such as `Not_found`. -/
+def ctorTok : P String := lexeme do
+  let id ← rawIdent
+  if id.front.isUpper then pure id else throwUnexpected
 
 /-- bound variable names: an identifier or the wildcard `_`. -/
 def binderTok : P String := identTok <|> (keyword "_" *> pure "_")
@@ -218,8 +223,16 @@ partial def prattLoop (lhs: Expr) (lastBp: Nat) : P Expr := (
   ) <|> pure lhs
 
 /-- `-e` (`0 - e`), `not e`, `assert e`, `Array.make n v`, `Array.length a`, and
-    `ref v`, and `incr r` / `decr r` (`r := !r ± 1`). -/
+    `ref v`, `incr r` / `decr r` (`r := !r ± 1`), `E v` and `raise e`. -/
 partial def unary : P Expr :=
+  (do
+    let c ← ctorTok
+    let v ← postfixExpr
+    return .exn c v) <|>
+  (do
+    keyword "raise"
+    let e ← unary
+    return .raise e) <|>
   (do
     keyword "ref"
     let v ← postfixExpr
@@ -274,7 +287,7 @@ partial def getRest (a : Expr) : P Expr :=
   pure a
 
 /-- Atoms: parenthesised expr, `()`, list literal, integer, boolean literal,
-    variable, or `!r`. -/
+    variable, `!r`, or an exception without argument `E` (carrying `()`). -/
 partial def atom : P Expr :=
   parenExpr
     <|> (do symbol "!"; let r ← atom; return .deref r)
@@ -283,6 +296,7 @@ partial def atom : P Expr :=
     <|> (Expr.int <$> intTok)
     <|> boolLit
     <|> (Expr.var <$> identTok)
+    <|> (do let c ← ctorTok; return .exn c .unit)
 
 /-- `[a; b; c]` is `a :: b :: c :: []`. -/
 partial def listLit : P Expr := do
@@ -368,6 +382,8 @@ def numberSites : Expr → StateM Nat Expr
   | .len a => return .len (← numberSites a)
   | .deref r => return .deref (← numberSites r)
   | .assign r v => return .assign (← numberSites r) (← numberSites v)
+  | .exn c e => return .exn c (← numberSites e)
+  | .raise e => return .raise (← numberSites e)
   | e => return e
 
 /-- Parse a complete program. -/

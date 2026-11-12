@@ -40,6 +40,7 @@ e ::= n                                    -- natural number literal
     | ref e | !e | e := e                  -- refs
     | for x = e to e do e done             -- loops, desugared to recursion
     | while e do e done
+    | E | E e | raise e                    -- exceptions
 ```
 -/
 inductive Expr where
@@ -68,6 +69,8 @@ inductive Expr where
     -- `ref v`, the Nat is the id of the allocation site
   | deref : Expr → Expr                 -- `!r`
   | assign : Expr → Expr → Expr         -- `r := v`
+  | exn   : String → Expr → Expr        -- `E v`: the exception `E` carrying `v`
+  | raise : Expr → Expr                 -- `raise e`
   deriving Inhabited
 
 def ppExpr : Expr → String
@@ -93,6 +96,9 @@ def ppExpr : Expr → String
   | .ref _ v       => s!"(ref {ppExpr v})"
   | .deref r       => s!"!{ppExpr r}"
   | .assign r v    => s!"({ppExpr r} := {ppExpr v})"
+  | .exn c .unit   => c
+  | .exn c v       => s!"({c} {ppExpr v})"
+  | .raise e       => s!"(raise {ppExpr e})"
 
 instance : Repr Expr := ⟨fun e _ => Std.Format.text (ppExpr e)⟩
 

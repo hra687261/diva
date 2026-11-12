@@ -127,6 +127,15 @@ def eval : Nat → Env → Store → Expr → Result
         | .ok v μ₂ => some (assignV μ₂ vr v)
         | r => r
       | r => r
+    | .exn c e =>
+      match eval fuel ρ μ e with
+      | .ok v μ₁ => .ok (.exn c v) μ₁
+      | r => r
+    | .raise e =>
+      match eval fuel ρ μ e with
+      | .ok v μ₁ =>
+        if v.isExn then .err (.exn v) μ₁ else .err .typeError μ₁
+      | r => r
 
 /-- **Interpreter soundness**: whatever the interpreter returns is what `Eval` says. -/
 theorem eval_sound :
@@ -391,6 +400,29 @@ theorem eval_sound :
         cases r with
         | ok v => exact absurd h (hnr v μ')
         | err k => exact .assignErrR (ih h)
+    case exn =>
+      split at h
+      case h_1 v μ₁ he =>
+        cases h
+        exact .exn (ih he)
+      case h_2 hne =>
+        cases r with
+        | ok v => exact absurd h (hne v μ')
+        | err k => exact .exnErr (ih h)
+    case raise =>
+      split at h
+      case h_1 v μ₁ he =>
+        split at h
+        case isTrue hx =>
+          cases h
+          exact .raise (ih he) hx
+        case isFalse hx =>
+          cases h
+          exact .raiseNotExn (ih he) (by simpa using hx)
+      case h_2 hne =>
+        cases r with
+        | ok v => exact absurd h (hne v μ')
+        | err k => exact .raiseErr (ih h)
 
 def ppValue : Value → String
   | .int n  => toString n
@@ -401,6 +433,8 @@ def ppValue : Value → String
   | .cons a b => s!"({ppValue a} :: {ppValue b})"
   | .arr l => s!"<array {l}>"
   | .ref l => s!"<ref {l}>"
+  | .exn c .unit => c
+  | .exn c v => s!"({c} {ppValue v})"
 
 instance : ToString Value := ⟨ppValue⟩
 
@@ -410,6 +444,7 @@ def ppErr : Err → String
   | .typeError  => "type error"
   | .unbound    => "unbound variable"
   | .outOfBounds => "index out of bounds"
+  | .exn v       => s!"uncaught exception {ppValue v}"
 
 def ppOutcome : Outcome → String
   | .ok v  => ppValue v

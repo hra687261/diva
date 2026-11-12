@@ -101,3 +101,11 @@ private def parseStr (s : String) : Option String :=
 #guard match Diva.parse "let r = ref 0 in let a = Array.make 2 r in Array.make 1 a" with
   | .ok (.letin _ (.ref 0 _) (.letin _ (.alloc 1 _ _) (.alloc 2 _ _))) => true
   | _ => false
+
+-- exceptions: capitalised names are constructors, not variables
+#guard parseStr "E"                   = some "E"
+#guard parseStr "E ()"                = some "E"
+#guard parseStr "E x + 1"             = some "((E x) + 1)"
+#guard parseStr "raise E 1"           = some "(raise (E 1))"
+#guard parseStr "f E"                 = some "(f E)"
+#guard parseStr "let E = 1 in E"      = none
