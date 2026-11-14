@@ -127,3 +127,20 @@ private def run (s : String) : Option String := do
 #guard run "let r = ref 0 in for i = 1 to 5 do (if i = 3 then raise Stop); incr r done" =
   some "error: uncaught exception Stop"
 #guard run "raise 1"                            = some "error: type error"
+
+-- catching exceptions: handlers are tried in order, unmatched ones are re-raised
+#guard run "try raise E with E -> 1"            = some "1"
+#guard run "try raise (E 5) with E x -> x + 1"  = some "6"
+#guard run "try 3 with E -> 1"                  = some "3"
+#guard run "try raise (F 1) with E x -> x | F y -> y * 10" = some "10"
+#guard run "try raise G with E -> 1 | F -> 2"   = some "error: uncaught exception G"
+#guard run "try raise (E 2) with k -> k"        = some "(E 2)"
+#guard run "try (try raise E with F -> 1) with E -> 2" = some "2"
+
+-- runtime errors are not exceptions: `try` does not catch them
+#guard run "try 1 / 0 with _ -> 0"              = some "error: division by zero"
+#guard run "try assert false with _ -> 0"       = some "error: assertion failed"
+
+-- the store is kept when an exception is caught: exiting a loop early
+#guard run "let r = ref 0 in try for i = 1 to 10 do (if i = 4 then raise Stop); incr r done with Stop -> !r" =
+  some "3"

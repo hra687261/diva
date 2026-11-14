@@ -109,3 +109,9 @@ private def parseStr (s : String) : Option String :=
 #guard parseStr "raise E 1"           = some "(raise (E 1))"
 #guard parseStr "f E"                 = some "(f E)"
 #guard parseStr "let E = 1 in E"      = none
+
+-- `try` desugars to catching `%exn` and testing its tag
+#guard parseStr "try a with E x -> b | _ -> c" =
+  some "(try a with %exn -> (match %exn with E x -> b | _ -> (let _ = %exn in c)))"
+#guard parseStr "try a with | E -> b" =
+  some "(try a with %exn -> (match %exn with E _ -> b | _ -> (raise %exn)))"

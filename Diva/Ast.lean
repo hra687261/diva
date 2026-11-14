@@ -21,26 +21,27 @@ def ppBinOp : BinOp → String
 
 /-- AST for the currently supported language:
 ```
-e ::= n                                    -- natural number literal
-    | true | false                         -- boolean literals
-    | ()                                   -- unit literal
-    | x                                    -- variable
-    | e e                                  -- application (left-associative)
-    | fun x -> e                           -- lambda
-    | let x = e in e                       -- let binding
-    | let [rec] f x = e in e               -- [recursive] function
-    | if e then e else e                   -- conditional
-    | e op e                               -- binary operator
-    | [] | e :: e                          -- lists
-    | match e with [] -> e | x :: xs -> e  -- list case match analysis
-    | assert e                             -- runtime check
-    | Array.make e e                       -- new array: length, initial value
-    | e.(e) | e.(e) <- e                   -- array read and write
-    | Array.length e                       -- array length
-    | ref e | !e | e := e                  -- refs
-    | for x = e to e do e done             -- loops, desugared to recursion
+e ::= n                                      -- natural number literal
+    | true | false                           -- boolean literals
+    | ()                                     -- unit literal
+    | x                                      -- variable
+    | e e                                    -- application (left-associative)
+    | fun x -> e                             -- lambda
+    | let x = e in e                         -- let binding
+    | let [rec] f x = e in e                 -- [recursive] function
+    | if e then e else e                     -- conditional
+    | e op e                                 -- binary operator
+    | [] | e :: e                            -- lists
+    | match e with [] -> e | x :: xs -> e    -- list case match analysis
+    | assert e                               -- runtime check
+    | Array.make e e                         -- new array: length, initial value
+    | e.(e) | e.(e) <- e                     -- array read and write
+    | Array.length e                         -- array length
+    | ref e | !e | e := e                    -- refs
+    | for x = e to e do e done               -- loops, desugared to recursion
     | while e do e done
-    | E | E e | raise e                    -- exceptions
+    | E | E e | raise e                      -- exceptions
+    | try e with E x -> e | F -> e | k -> e  -- catch exceptions
 ```
 -/
 inductive Expr where
@@ -71,6 +72,10 @@ inductive Expr where
   | assign : Expr → Expr → Expr         -- `r := v`
   | exn   : String → Expr → Expr        -- `E v`: the exception `E` carrying `v`
   | raise : Expr → Expr                 -- `raise e`
+  | tryw  : Expr → String → Expr → Expr
+    -- `try e with k -> h`: catch any exception as `k`
+  | exnCase : Expr → String → String → Expr → Expr → Expr
+    -- `match e1 with E x -> e2 | _ -> e3`: test the tag of the exception `e1`
   deriving Inhabited
 
 def ppExpr : Expr → String
@@ -99,6 +104,9 @@ def ppExpr : Expr → String
   | .exn c .unit   => c
   | .exn c v       => s!"({c} {ppExpr v})"
   | .raise e       => s!"(raise {ppExpr e})"
+  | .tryw e k h     => s!"(try {ppExpr e} with {k} -> {ppExpr h})"
+  | .exnCase s c x h m =>
+    s!"(match {ppExpr s} with {c} {x} -> {ppExpr h} | _ -> {ppExpr m})"
 
 instance : Repr Expr := ⟨fun e _ => Std.Format.text (ppExpr e)⟩
 

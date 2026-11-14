@@ -145,6 +145,10 @@ def Value.isExn : Value → Bool
   | .exn .. => true
   | _ => false
 
+def Err.isExn : Err → Bool
+  | .exn _ => true
+  | _ => false
+
 /-- Big-step semantics: `Eval ρ μ e r μ'` means `e`, run in `ρ` from store `μ`,
 gives `r` and store `μ'`. Evaluation is left to right; errors propagate. -/
 inductive Eval : Env → Store → Expr → Outcome → Store → Prop where
@@ -254,6 +258,21 @@ inductive Eval : Env → Store → Expr → Outcome → Store → Prop where
   | raiseNotExn :
     Eval ρ μ e (.ok v) μ₁ → v.isExn = false → Eval ρ μ (.raise e) (.err .typeError) μ₁
   | raiseErr : Eval ρ μ e (.err k) μ₁ → Eval ρ μ (.raise e) (.err k) μ₁
+  | tryOk : Eval ρ μ e (.ok v) μ₁ → Eval ρ μ (.tryw e x h) (.ok v) μ₁
+  | tryCatch :
+    Eval ρ μ e (.err (.exn v)) μ₁ → Eval ((x, v) :: ρ) μ₁ h r μ₂ → Eval ρ μ (.tryw e x h) r μ₂
+  | tryErr :
+    Eval ρ μ e (.err k) μ₁ → k.isExn = false → Eval ρ μ (.tryw e x h) (.err k) μ₁
+  | exnHit :
+    Eval ρ μ s (.ok (.exn c v)) μ₁ → Eval ((x, v) :: ρ) μ₁ hit r μ₂ →
+    Eval ρ μ (.exnCase s c x hit miss) r μ₂
+  | exnMiss :
+    Eval ρ μ s (.ok (.exn c' v)) μ₁ → c' ≠ c → Eval ρ μ₁ miss r μ₂ →
+    Eval ρ μ (.exnCase s c x hit miss) r μ₂
+  | exnCaseNotExn :
+    Eval ρ μ s (.ok v) μ₁ → v.isExn = false →
+    Eval ρ μ (.exnCase s c x hit miss) (.err .typeError) μ₁
+  | exnCaseErr : Eval ρ μ s (.err k) μ₁ → Eval ρ μ (.exnCase s c x hit miss) (.err k) μ₁
 
 /-- Evaluation is deterministic: the same expression, environment and store give
 the same outcome and the same final store. -/
@@ -540,5 +559,44 @@ theorem Eval.deterministic {ρ : Env} {μ : Store} {e : Expr} {r₁ r₂ : Outco
     | raise he _ => cases ihe he
     | raiseNotExn he _ => cases ihe he
     | raiseErr he => cases ihe he; rfl
+  case tryOk ihe =>
+    cases h₂ with
+    | tryOk he => cases ihe he; rfl
+    | tryCatch he _ => cases ihe he
+    | tryErr he _ => cases ihe he
+  case tryCatch ihe ihh =>
+    cases h₂ with
+    | tryOk he => cases ihe he
+    | tryCatch he hh => cases ihe he; exact ihh hh
+    | tryErr he hk => cases ihe he; cases hk
+  case tryErr hk ihe =>
+    cases h₂ with
+    | tryOk he => cases ihe he
+    | tryCatch he _ => cases ihe he; cases hk
+    | tryErr he _ => cases ihe he; rfl
+  case exnHit ihs ihh =>
+    cases h₂ with
+    | exnHit hs hh => cases ihs hs; exact ihh hh
+    | exnMiss hs hne _ => cases ihs hs; exact absurd rfl hne
+    | exnCaseNotExn hs hnx => cases ihs hs; cases hnx
+    | exnCaseErr hs => cases ihs hs
+  case exnMiss hne _ ihs ihm =>
+    cases h₂ with
+    | exnHit hs _ => cases ihs hs; exact absurd rfl hne
+    | exnMiss hs _ hm => cases ihs hs; exact ihm hm
+    | exnCaseNotExn hs hnx => cases ihs hs; cases hnx
+    | exnCaseErr hs => cases ihs hs
+  case exnCaseNotExn hnx ihs =>
+    cases h₂ with
+    | exnHit hs _ => cases ihs hs; cases hnx
+    | exnMiss hs _ _ => cases ihs hs; cases hnx
+    | exnCaseNotExn hs _ => cases ihs hs; rfl
+    | exnCaseErr hs => cases ihs hs
+  case exnCaseErr ihs =>
+    cases h₂ with
+    | exnHit hs _ => cases ihs hs
+    | exnMiss hs _ _ => cases ihs hs
+    | exnCaseNotExn hs _ => cases ihs hs
+    | exnCaseErr hs => cases ihs hs; rfl
 
 end Diva

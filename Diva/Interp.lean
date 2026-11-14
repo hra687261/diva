@@ -136,6 +136,16 @@ def eval : Nat → Env → Store → Expr → Result
       | .ok v μ₁ =>
         if v.isExn then .err (.exn v) μ₁ else .err .typeError μ₁
       | r => r
+    | .tryw e x h =>
+      match eval fuel ρ μ e with
+      | .err (.exn v) μ₁ => eval fuel ((x, v) :: ρ) μ₁ h
+      | r => r
+    | .exnCase s c x hit miss =>
+      match eval fuel ρ μ s with
+      | .ok (.exn c' v) μ₁ =>
+        if c' = c then eval fuel ((x, v) :: ρ) μ₁ hit else eval fuel ρ μ₁ miss
+      | .ok _ μ₁ => .err .typeError μ₁
+      | r => r
 
 /-- **Interpreter soundness**: whatever the interpreter returns is what `Eval` says. -/
 theorem eval_sound :
@@ -423,6 +433,33 @@ theorem eval_sound :
         cases r with
         | ok v => exact absurd h (hne v μ')
         | err k => exact .raiseErr (ih h)
+    case tryw =>
+      split at h
+      case h_1 v μ₁ he => exact .tryCatch (ih he) (ih h)
+      case h_2 hne =>
+        cases r with
+        | ok v => exact .tryOk (ih h)
+        | err k =>
+          cases k
+          case exn v => exact absurd h (hne v μ')
+          all_goals exact .tryErr (ih h) rfl
+    case exnCase =>
+      split at h
+      case h_1 c' v μ₁ hs =>
+        split at h
+        case isTrue hc => subst hc; exact .exnHit (ih hs) (ih h)
+        case isFalse hc => exact .exnMiss (ih hs) hc (ih h)
+      case h_2 _ v μ₁ hne hs =>
+        cases h
+        have hv : v.isExn = false := by
+          cases v
+          case exn c' v' => exact absurd rfl (hne c' v')
+          all_goals rfl
+        exact .exnCaseNotExn (ih hs) hv
+      case h_3 hns =>
+        cases r with
+        | ok v => exact absurd h (hns v μ')
+        | err k => exact .exnCaseErr (ih h)
 
 def ppValue : Value → String
   | .int n  => toString n

@@ -35,7 +35,7 @@ def rawIdent : P String := do
 def keywords : List String :=
   ["let", "in", "fun", "if", "then", "else", "true", "false", "rec",
    "match", "with", "mod", "not", "assert", "_",
-   "for", "to", "do", "done", "while", "raise"]
+   "for", "to", "do", "done", "while", "raise", "try"]
 
 /-- A symbolic token such as `"+"` or `"->"`. -/
 def symbol (s : String) : P Unit := lexeme (ParseIt.Char.string s *> pure ())
@@ -77,6 +77,23 @@ def intTok : P Int := lexeme do
 /-- `fun x y -> e` is `fun x -> fun y -> e`. -/
 def lams (xs : List String) (body : Expr) : Expr := xs.foldr .lam body
 
+/-- The pattern of a `try` handler: `E x` / `E` (an exception tag), or `k` / `_`
+    (any exception). -/
+inductive Handler where
+  | tag : String → String → Handler
+  | any : String → Handler
+
+/-- `try e with p1 -> h1 | … | pn -> hn` catches the exception as `%exn` (a name
+    users cannot write), then tries the handlers in order.
+    An exception no handler matches is raised again. -/
+def tryWith (e : Expr) (arms : List (Handler × Expr)) : Expr :=
+  .tryw e "%exn" (go arms)
+where
+  go : List (Handler × Expr) → Expr
+    | [] => .raise (.var "%exn")
+    | (.tag c x, h) :: rest => .exnCase (.var "%exn") c x h (go rest)
+    | (.any k, h) :: _ => .letin k (.var "%exn") h
+
 /-! ### Expression grammar -/
 
 mutual
@@ -88,7 +105,8 @@ partial def seqExpr : P Expr := do
 
 /-- A full expression, try to parse all constructors one after the other. -/
 partial def expr : P Expr :=
-  letinxpr <|> funExpr <|> itexpr <|> matchExpr <|> forExpr <|> whileExpr <|> assignExpr
+  letinxpr <|> funExpr <|> itexpr <|> matchExpr <|> forExpr <|> whileExpr <|> tryExpr
+    <|> assignExpr
 
 /-- `let [rec] f x y = e`, shared by `let … in` and top-level declarations. -/
 partial def binding : P (String × (Expr → Expr)) := do
@@ -143,6 +161,23 @@ partial def matchExpr : P Expr := do
   symbol "->"
   let c ← seqExpr
   return .matchList s n x xs c
+
+/-- `try e with p -> h | …`, see `tryWith`. -/
+partial def tryExpr : P Expr := do
+  keyword "try"
+  let e ← seqExpr
+  keyword "with"
+  let _ ← option? (symbol "|")
+  let arms ← sepBy1 (symbol "|") handler
+  return tryWith e arms.toList
+
+/-- One handler `p -> h` of a `try`. -/
+partial def handler : P (Handler × Expr) := do
+  let p ← (do let c ← ctorTok; let x ← binderTok <|> pure "_"; return Handler.tag c x)
+    <|> (Handler.any <$> binderTok)
+  symbol "->"
+  let h ← seqExpr
+  return (p, h)
 
 -- The loops below desugar to a recursive function named `%for` / `%while`
 /-- `for i = a to b do e done` is
@@ -384,6 +419,9 @@ def numberSites : Expr → StateM Nat Expr
   | .assign r v => return .assign (← numberSites r) (← numberSites v)
   | .exn c e => return .exn c (← numberSites e)
   | .raise e => return .raise (← numberSites e)
+  | .tryw e x h => return .tryw (← numberSites e) x (← numberSites h)
+  | .exnCase s c x h m =>
+    return .exnCase (← numberSites s) c x (← numberSites h) (← numberSites m)
   | e => return e
 
 /-- Parse a complete program. -/
