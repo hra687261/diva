@@ -5,5 +5,6 @@ import Diva.Interp
 import Diva.AbsInt.Domain
 import Diva.AbsInt.SoundItv
 import Diva.AbsInt.Framework
+import Diva.AbsInt.AVal
 import Diva.AbsInt.ItvDomain
 import Diva.AbsInt.Aeval
