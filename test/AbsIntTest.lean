@@ -20,3 +20,15 @@ private def analyse (s : String) : Option String :=
 #guard analyse "y"                             = some "[-∞, +∞]"  -- unknown variable
 #guard analyse "let x = 7 in x"                = some "7"         -- shadowing
 #guard analyse "(fun y -> y) 3"                = some "[-∞, +∞]"  -- not analysed yet
+
+-- branch refinement: `x < 5` narrows `x` in each branch
+#guard analyse "if x < 5 then x else 0"          = some "[0, 4]" -- join of both branches
+#guard analyse "if x < 5 then 0 else x"          = some "[0, 10]"
+#guard analyse "if x < 5 then 0 else x - 5"      = some "[0, 5]"
+#guard analyse "if 3 <= x then x else 3"         = some "[3, 10]"
+#guard analyse "if x > 7 then x else 7"          = some "[7, 10]"
+#guard analyse "if x >= 7 then 0 else x"         = some "[0, 6]"
+#guard analyse "if x < 20 then x else 100"       = some "[0, 10]"  -- else is dead
+#guard analyse "if x > 10 then 1 else 2"         = some "2"        -- then is dead
+#guard analyse "if x + 1 < 5 then x else 0"      = some "[0, 10]"  -- only atoms narrow
+#guard analyse "let y = x in if y < x then y else 0" = some "[0, 9]"

@@ -77,6 +77,18 @@ theorem le_neg {a : Bound} {m : Int} (h : a ≤ fin m) : fin (-m) ≤ -a := by
   show _ ≤ Bound.neg a
   cases a <;> simp_all [Bound.neg] <;> omega
 
+/-- Below an upper bound `d` of a larger integer: `n < m ≤ d → n ≤ d - 1`. -/
+theorem le_sub_one {d : Bound} {n m : Int} (hm : fin m ≤ d) (h : n < m) :
+    fin n ≤ d + fin (-1) := by
+  show _ ≤ Bound.add d _
+  cases d <;> simp_all [Bound.add] <;> omega
+
+/-- Above a lower bound `a` of a smaller integer: `a ≤ n < m → a + 1 ≤ m`. -/
+theorem add_one_le {a : Bound} {n m : Int} (hn : a ≤ fin n) (h : n < m) :
+    a + fin 1 ≤ fin m := by
+  show Bound.add a _ ≤ _
+  cases a <;> simp_all [Bound.add] <;> omega
+
 /-- `x.tdiv k` for `k < 0`, via a positive divisor. -/
 private theorem tdiv_of_neg (x k : Int) : x.tdiv k = -(x.tdiv (-k)) := by
   rw [Int.tdiv_neg, Int.neg_neg]
@@ -196,16 +208,16 @@ theorem mem_mul {i j : Itv} {n m : Int} (h1 : i.mem n) (h2 : j.mem m) :
   · simp [mem] at h2
   · simp only [mem, fin_le_fin] at *
     exact corners h1.1 h1.2 h2.1 h2.2
-  · rename_i a b c d _
+  next a _ c _ _ =>
     split
-    · rename_i hpos
-      simp only [mem, fin_le_fin] at *
-      have ha := h1.1
-      have hc := h2.1
-      have hnm : a * c ≤ n * m := Int.mul_le_mul ha hc hpos.2 (by omega)
-      refine ⟨hnm, ?_⟩
-      cases b <;> cases d <;> simp_all
-    · exact mem_top _
+    next hpos =>
+      -- both lower bounds are `≥ 0`: the product is in `[a * c, +∞]`
+      obtain ⟨ha, hc⟩ := hpos
+      simp only [mem, fin_le_fin] at h1 h2 ⊢
+      constructor
+      · exact Int.mul_le_mul h1.1 h2.1 hc (by omega)
+      · exact le_posInf _
+    next => exact mem_top _
   · exact mem_top _
 
 /-- Truncating division by a constant is monotone (`k > 0`) or antitone (`k < 0`). -/
@@ -231,6 +243,21 @@ theorem mem_div {i j : Itv} {n m : Int} (h1 : i.mem n) (h2 : j.mem m) (_hm : m �
       next => exact mem_top _
   · exact mem_top _
 
+/-- `|n mod m| ≤ |m| - 1`. -/
+private theorem tmod_bound (n : Int) {m : Int} (hm : m ≠ 0) :
+    -((m.natAbs : Int) - 1) ≤ n.tmod m ∧ n.tmod m ≤ (m.natAbs : Int) - 1 := by
+  have habs := Int.natAbs_tmod n m  -- `|n mod m| = |n| % |m|`
+  have hlt := Nat.mod_lt n.natAbs (Int.natAbs_pos.mpr hm)
+  omega
+
+/-- For `n ≥ 0`: `0 ≤ n mod m ≤ n`. -/
+private theorem tmod_nonneg_le {n : Int} (m : Int) (hn : 0 ≤ n) :
+    0 ≤ n.tmod m ∧ n.tmod m ≤ n := by
+  have habs := Int.natAbs_tmod n m  -- `|n mod m| = |n| % |m|`
+  have hle := Nat.mod_le n.natAbs m.natAbs
+  have h0 := Int.tmod_nonneg m hn
+  omega
+
 /-- `|n mod k| < |k|`, and `0 ≤ n mod k ≤ n` when `0 ≤ n`. -/
 theorem mem_mod {i j : Itv} {n m : Int} (h1 : i.mem n) (h2 : j.mem m) (hm : m ≠ 0) :
     (i.mod j).mem (n.tmod m) := by
@@ -238,26 +265,59 @@ theorem mem_mod {i j : Itv} {n m : Int} (h1 : i.mem n) (h2 : j.mem m) (hm : m �
   split
   · simp [mem] at h1
   · simp [mem] at h2
-  · rename_i k k'
+  next a b k k' =>
     simp only [mem, fin_le_fin] at h1 h2
     split
     next hk =>
+      -- the divisor is the constant `k`, so `m = k`
       obtain ⟨hkk, -⟩ := hk
       obtain rfl : m = k := by omega
-      -- `|n mod m| = |n| % |m| < |m|`
-      have habs := Int.natAbs_tmod n m
-      have hlt := Nat.mod_lt n.natAbs (Int.natAbs_pos.mpr hm)
+      have hb := tmod_bound n hm
       split
       next ha =>
+        -- `n ≥ 0`: the result is in `[0, min (|m| - 1) b]`
         have hn : 0 ≤ n := by simpa using le_trans ha h1.1
-        have h0 := Int.tmod_nonneg m hn
-        have hle : n.tmod m ≤ n := by
-          have := Nat.mod_le n.natAbs m.natAbs; omega
-        simp only [mem]
-        refine ⟨by simpa using h0, le_min (by simp; omega) (le_trans (fin_le_fin.mpr hle) h1.2)⟩
-      next => simp only [mem, fin_le_fin]; omega
+        have ⟨h0, hle⟩ := tmod_nonneg_le m hn
+        simp only [mem, fin_le_fin]
+        exact ⟨h0, le_min (fin_le_fin.mpr hb.2) (le_trans (fin_le_fin.mpr hle) h1.2)⟩
+      next =>
+        -- otherwise: `[-(|m| - 1), |m| - 1]`
+        simp only [mem, fin_le_fin]
+        exact hb
     next => exact mem_top _
   · exact mem_top _
+
+theorem mem_assumeLt {i j : Itv} {n m : Int} (h1 : i.mem n) (h2 : j.mem m) (h : n < m) :
+    (assumeLt i j).1.mem n ∧ (assumeLt i j).2.mem m := by
+  cases i with
+  | bot => simp [mem] at h1
+  | range a b =>
+    cases j with
+    | bot => simp [mem] at h2
+    | range c d =>
+      simp only [mem] at h1 h2
+      simp only [assumeLt]
+      constructor
+      · -- `n ≤ d - 1`, since `n < m ≤ d`
+        exact mem_meet h1 ⟨negInf_le _, le_sub_one h2.2 h⟩
+      · -- `a + 1 ≤ m`, since `a ≤ n < m`
+        exact mem_meet h2 ⟨add_one_le h1.1 h, le_posInf _⟩
+
+theorem mem_assumeLe {i j : Itv} {n m : Int} (h1 : i.mem n) (h2 : j.mem m) (h : n ≤ m) :
+    (assumeLe i j).1.mem n ∧ (assumeLe i j).2.mem m := by
+  cases i with
+  | bot => simp [mem] at h1
+  | range a b =>
+    cases j with
+    | bot => simp [mem] at h2
+    | range c d =>
+      simp only [mem] at h1 h2
+      simp only [assumeLe]
+      constructor
+      · -- `n ≤ d`, since `n ≤ m ≤ d`
+        exact mem_meet h1 ⟨negInf_le _, le_trans (fin_le_fin.mpr h) h2.2⟩
+      · -- `a ≤ m`, since `a ≤ n ≤ m`
+        exact mem_meet h2 ⟨le_trans h1.1 (fin_le_fin.mpr h), le_posInf _⟩
 
 theorem cmpLt_sound {i j : Itv} {n m : Int} (h1 : i.mem n) (h2 : j.mem m) :
     (n < m → (cmpLt i j).1 = true) ∧ (¬ n < m → (cmpLt i j).2 = true) := by

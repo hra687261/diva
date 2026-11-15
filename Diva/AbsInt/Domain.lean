@@ -115,9 +115,9 @@ def mul : Itv → Itv → Itv
   | range (fin a) (fin b), range (fin c) (fin d) =>
     range (fin (min (min (a * c) (a * d)) (min (b * c) (b * d))))
        (fin (max (max (a * c) (a * d)) (max (b * c) (b * d))))
-  | range (fin a) b, range (fin c) d =>
+  | range (fin a) _, range (fin c) _ =>
     if 0 ≤ a ∧ 0 ≤ c then
-      range (fin (a * c)) (match b, d with | fin x, fin y => fin (x * y) | _, _ => posInf)
+      range (fin (a * c)) posInf  -- not all bounds are finite (previous case)
     else top
   | _, _ => top
 
@@ -141,6 +141,18 @@ def mod : Itv → Itv → Itv
       if fin 0 ≤ a then range (fin 0) (min (fin m) b) else range (fin (-m)) (fin m)
     else top
   | _, _ => top
+
+/-- Narrow `x ∈ i`, `y ∈ j` assuming `x < y`: `x ≤ hi j - 1` and `y ≥ lo i + 1`. -/
+def assumeLt : Itv → Itv → Itv × Itv
+  | range a b, range c d =>
+    ((range a b).meet (range negInf (d + fin (-1))), (range c d).meet (range (a + fin 1) posInf))
+  | _, _ => (bot, bot)
+
+/-- Narrow `x ∈ i`, `y ∈ j` assuming `x ≤ y`: `x ≤ hi j` and `y ≥ lo i`. -/
+def assumeLe : Itv → Itv → Itv × Itv
+  | range a b, range c d =>
+    ((range a b).meet (range negInf d), (range c d).meet (range a posInf))
+  | _, _ => (bot, bot)
 
 /-- `(may be true, may be false)` for `x < y`, `x ∈ i`, `y ∈ j`. -/
 def cmpLt : Itv → Itv → Bool × Bool

@@ -22,6 +22,8 @@ instance : NumDomain Itv where
   cmpLt := Itv.cmpLt
   cmpLe := Itv.cmpLe
   cmpEq := Itv.cmpEq
+  assumeLt := Itv.assumeLt
+  assumeLe := Itv.assumeLe
   top_sound := Itv.mem_top
   bot_sound := Itv.mem_bot
   leq_sound := Itv.mem_leq
@@ -39,5 +41,7 @@ instance : NumDomain Itv where
   cmpLt_sound := Itv.cmpLt_sound
   cmpLe_sound := Itv.cmpLe_sound
   cmpEq_sound := Itv.cmpEq_sound
+  assumeLt_sound := Itv.mem_assumeLt
+  assumeLe_sound := Itv.mem_assumeLe
 
 end Diva.AbsInt

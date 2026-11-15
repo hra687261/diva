@@ -29,3 +29,8 @@ private def itv (lo hi : Int) : Itv := .range (.fin lo) (.fin hi)
 #guard toString (Itv.bot.add (itv 5 7))         = "⊥"
 #guard Itv.bot.leq (itv 5 7)                    = true
 #guard toString ((itv 0 5).mul (.range (.fin 2) .posInf)) = "[0, +∞]"
+
+-- narrowing by a comparison
+#guard toString (Itv.assumeLt (itv 0 10) (Itv.singleton 5)).1 = "[0, 4]"
+#guard toString (Itv.assumeLe (Itv.singleton 5) (itv 0 10)).2 = "[5, 10]"
+#guard toString (Itv.assumeLt (itv 5 10) (itv 0 5)).1         = "⊥"
