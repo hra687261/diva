@@ -77,6 +77,38 @@ theorem le_neg {a : Bound} {m : Int} (h : a ≤ fin m) : fin (-m) ≤ -a := by
   show _ ≤ Bound.neg a
   cases a <;> simp_all [Bound.neg] <;> omega
 
+/-- `x.tdiv k` for `k < 0`, via a positive divisor. -/
+private theorem tdiv_of_neg (x k : Int) : x.tdiv k = -(x.tdiv (-k)) := by
+  rw [Int.tdiv_neg, Int.neg_neg]
+
+/-- Dividing a lower bound by `k > 0`. -/
+theorem divBy_le_pos {a : Bound} {n k : Int} (hk : 0 < k) (h : a ≤ fin n) :
+    a.divBy k ≤ fin (n.tdiv k) := by
+  cases a <;> simp_all [divBy]
+  exact Int.tdiv_le_tdiv hk h
+
+/-- Dividing an upper bound by `k > 0`. -/
+theorem le_divBy_pos {b : Bound} {n k : Int} (hk : 0 < k) (h : fin n ≤ b) :
+    fin (n.tdiv k) ≤ b.divBy k := by
+  cases b <;> simp_all [divBy]
+  exact Int.tdiv_le_tdiv hk h
+
+/-- Dividing an upper bound by `k < 0` gives a lower bound. -/
+theorem divBy_le_neg {b : Bound} {n k : Int} (hk : k < 0) (h : fin n ≤ b) :
+    b.divBy k ≤ fin (n.tdiv k) := by
+  cases b <;> simp_all [divBy, Int.not_lt.mpr (Int.le_of_lt hk)]
+  rename_i y
+  have := Int.tdiv_le_tdiv (c := -k) (by omega) h
+  rw [tdiv_of_neg y, tdiv_of_neg n]; omega
+
+/-- Dividing a lower bound by `k < 0` gives an upper bound. -/
+theorem le_divBy_neg {a : Bound} {n k : Int} (hk : k < 0) (h : a ≤ fin n) :
+    fin (n.tdiv k) ≤ a.divBy k := by
+  cases a <;> simp_all [divBy, Int.not_lt.mpr (Int.le_of_lt hk)]
+  rename_i x
+  have := Int.tdiv_le_tdiv (c := -k) (by omega) h
+  rw [tdiv_of_neg x, tdiv_of_neg n]; omega
+
 end Bound
 
 /-! ## Intervals -/
@@ -176,13 +208,56 @@ theorem mem_mul {i j : Itv} {n m : Int} (h1 : i.mem n) (h2 : j.mem m) :
     · exact mem_top _
   · exact mem_top _
 
-/-- TODO: truncating division by a constant is monotone (or antitone). -/
-theorem mem_div {i j : Itv} {n m : Int} (h1 : i.mem n) (h2 : j.mem m) (hm : m ≠ 0) :
-    (i.div j).mem (n.tdiv m) := sorry
+/-- Truncating division by a constant is monotone (`k > 0`) or antitone (`k < 0`). -/
+theorem mem_div {i j : Itv} {n m : Int} (h1 : i.mem n) (h2 : j.mem m) (_hm : m ≠ 0) :
+    (i.div j).mem (n.tdiv m) := by
+  unfold div
+  split
+  · simp [mem] at h1
+  · simp [mem] at h2
+  · rename_i k k'
+    simp only [mem, fin_le_fin] at h1 h2
+    split
+    next hk =>
+      obtain ⟨hkk, hpos⟩ := hk
+      obtain rfl : m = k := by omega
+      exact ⟨divBy_le_pos hpos h1.1, le_divBy_pos hpos h1.2⟩
+    next =>
+      split
+      next hk =>
+        obtain ⟨hkk, hneg⟩ := hk
+        obtain rfl : m = k := by omega
+        exact ⟨divBy_le_neg hneg h1.2, le_divBy_neg hneg h1.1⟩
+      next => exact mem_top _
+  · exact mem_top _
 
-/-- TODO: `|n mod k| < |k|`, and `0 ≤ n mod k ≤ n` when `0 ≤ n`. -/
+/-- `|n mod k| < |k|`, and `0 ≤ n mod k ≤ n` when `0 ≤ n`. -/
 theorem mem_mod {i j : Itv} {n m : Int} (h1 : i.mem n) (h2 : j.mem m) (hm : m ≠ 0) :
-    (i.mod j).mem (n.tmod m) := sorry
+    (i.mod j).mem (n.tmod m) := by
+  unfold mod
+  split
+  · simp [mem] at h1
+  · simp [mem] at h2
+  · rename_i k k'
+    simp only [mem, fin_le_fin] at h1 h2
+    split
+    next hk =>
+      obtain ⟨hkk, -⟩ := hk
+      obtain rfl : m = k := by omega
+      -- `|n mod m| = |n| % |m| < |m|`
+      have habs := Int.natAbs_tmod n m
+      have hlt := Nat.mod_lt n.natAbs (Int.natAbs_pos.mpr hm)
+      split
+      next ha =>
+        have hn : 0 ≤ n := by simpa using le_trans ha h1.1
+        have h0 := Int.tmod_nonneg m hn
+        have hle : n.tmod m ≤ n := by
+          have := Nat.mod_le n.natAbs m.natAbs; omega
+        simp only [mem]
+        refine ⟨by simpa using h0, le_min (by simp; omega) (le_trans (fin_le_fin.mpr hle) h1.2)⟩
+      next => simp only [mem, fin_le_fin]; omega
+    next => exact mem_top _
+  · exact mem_top _
 
 theorem cmpLt_sound {i j : Itv} {n m : Int} (h1 : i.mem n) (h2 : j.mem m) :
     (n < m → (cmpLt i j).1 = true) ∧ (¬ n < m → (cmpLt i j).2 = true) := by
