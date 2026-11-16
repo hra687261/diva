@@ -9,7 +9,7 @@ private def itv (lo hi : Int) : Itv := .range (.fin lo) (.fin hi)
 /-- Analyse `s` with `x ∈ [0, 10]`. -/
 private def analyse (s : String) : Option String :=
   (Diva.parse s).toOption.map fun e =>
-    toString (aeval ([("x", AVal.ofInt (itv 0 10))] : AEnv Itv) e)
+    toString (aeval [] ([("x", AVal.ofInt (itv 0 10))] : AEnv Itv) e)
 
 #guard analyse "x + 1"                         = some "[1, 11]"
 #guard analyse "2 * x - 3"                     = some "[-3, 17]"
@@ -19,7 +19,7 @@ private def analyse (s : String) : Option String :=
 #guard analyse "if x < 5 then 0 else 100"      = some "[0, 100]"
 #guard analyse "y"                             = some "⊤"         -- unknown variable
 #guard analyse "let x = 7 in x"                = some "7"         -- shadowing
-#guard analyse "(fun y -> y) 3"                = some "⊤"         -- calls: not analysed yet
+#guard analyse "(fun y -> y) 3"                = some "⊤"         -- no precondition on `y`
 
 -- branch refinement: `x < 5` narrows `x` in each branch
 #guard analyse "if x < 5 then x else 0"          = some "[0, 4]" -- join of both branches
@@ -37,8 +37,8 @@ private def analyse (s : String) : Option String :=
 #guard analyse "true"                            = some "true"
 #guard analyse "()"                              = some "()"
 #guard analyse "[1; 2]"                          = some "list"
-#guard analyse "fun y -> y"                      = some "fun"
-#guard analyse "let rec f y = y in f"            = some "fun"
+#guard analyse "fun y -> y"                      = some "fun ⊤ -> ⊤"
+#guard analyse "let rec f y = y in f"            = some "fun ⊤ -> ⊤"
 #guard analyse "E 1"                             = some "exn"
 #guard analyse "x < 5"                           = some "bool"
 #guard analyse "x < 20"                          = some "true"
@@ -48,3 +48,22 @@ private def analyse (s : String) : Option String :=
 #guard analyse "if x > 20 then raise E else 1"   = some "1"
 #guard analyse "if 1 then 2 else 3"              = some "⊥"        -- not a boolean: an error
 #guard analyse "let b = x < 20 in if b then 1 else 2" = some "1"   -- `b` is surely true
+
+/-- Analyse `s` with `x ∈ [0, 10]` and the hints `H`. -/
+private def analyseH (H : List (String × Itv)) (s : String) : Option String :=
+  (Diva.parse s).toOption.map fun e =>
+    toString (aeval (H.map fun (k, i) => (k, Flat.ofInt i))
+      ([("x", AVal.ofInt (itv 0 10))] : AEnv Itv) e)
+
+-- functions: a summary from the parameter's precondition
+#guard analyseH [("y", itv 0 10)] "fun y -> y + 1"           = some "fun [0, 10] -> [1, 11]"
+#guard analyseH [("y", itv 0 10)] "(fun y -> y + 1) x"       = some "[1, 11]"
+#guard analyseH [("y", itv 0 10)] "let f = fun y -> y + 1 in f (f x)" = some "⊤"  -- `f x` ∉ [0, 10]
+#guard analyseH [("y", itv 0 10)] "let f = fun y -> y + 1 in f 20"    = some "⊤"  -- 20 ∉ [0, 10]
+#guard analyseH [("y", itv 0 20)] "let f = fun y -> y / 2 in f (f x)" = some "[0, 10]"
+
+-- recursive functions: the claimed result (`$f`) is checked against the body
+private def countdown := "let rec f y = if y <= 0 then 0 else f (y - 1) in f x"
+#guard analyseH [("y", itv 0 10), ("$f", itv 0 0)] countdown  = some "0"
+#guard analyseH [("y", itv 0 10), ("$f", itv 5 5)] countdown  = some "⊤"  -- wrong claim: dropped
+#guard analyseH [("y", itv 0 10)] countdown                    = some "⊤"  -- no claim

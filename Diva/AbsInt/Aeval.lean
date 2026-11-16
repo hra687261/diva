@@ -3,14 +3,22 @@ import Diva.AbsInt.AVal
 /-!
 # Abstract evaluation
 
-`aeval σ e` over-approximates the values `e` can evaluate to (`AVal`), in any
+`aeval H σ e` over-approximates the values `e` can evaluate to (`AVal`), in any
 `NumDomain`. Integers and booleans are tracked by value, the other kinds only by
-kind, what isn't analysed yet (calls, the store, catching exceptions) gives `top`.
+kind; what isn't analysed yet (the store, catching exceptions) gives `top`.
 
 A comparison `l < r` (or `≤`, `>`, `≥`) in an `if` narrows the variables it
 compares in each branch, and a branch that can't be taken is skipped. Only
 variables and constants are looked at in the comparison: `x < 5` narrows `x`,
 `x + 1 < 5` doesn't.
+
+Functions are not iterated: the hints `H` claim each parameter's range `P` and each
+recursive function's result `R`, and `aeval` only checks these claims.
+- `fun x -> b` gives the summary `(P, R)`, where `R` is `b` analysed with `x ∈ P`.
+- A call gives `R` if the argument is in `P`, and `⊤` otherwise.
+- `let rec f` keeps its claimed `R` only if the body, assuming `R` for the
+  recursive calls, stays in `R`.
+A wrong claim gives `⊤`.
 -/
 
 namespace Diva.AbsInt
@@ -89,21 +97,47 @@ def joinOpt [NumDomain A] : Option (AVal A) → Option (AVal A) → AVal A
   | none, some b => b
   | none, none => AVal.bot
 
-def aeval [NumDomain A] (σ : AEnv A) : Expr → AVal A
+/-- Claims the analysis checks rather than finds: the precondition of each
+    parameter `x` (key `x`), and the result of each recursive function `f`
+    (key `$f`). Missing claims are `top`. -/
+abbrev Hints (A : Type) := List (String × Flat A)
+
+def Hints.param [NumDomain A] (H : Hints A) (x : String) : Flat A :=
+  (H.lookup x).getD Flat.top
+
+def Hints.result [NumDomain A] (H : Hints A) (f : String) : Flat A :=
+  (H.lookup ("$" ++ f)).getD Flat.top
+
+/-- A call: the summary's result, if the function is certainly described by its
+    summary and the argument meets the precondition, anything otherwise. -/
+def apply [NumDomain A] (af aa : AVal A) : AVal A :=
+  match af.sum with
+  | some (P, R) => if !af.fn && aa.flat.leq P then AVal.ofFlat R else AVal.top
+  | none => AVal.top
+
+def aeval [NumDomain A] (H : Hints A) (σ : AEnv A) : Expr → AVal A
   | .int n => AVal.ofInt (const n)
   | .bool b => AVal.bools b !b
   | .unit => AVal.unitV
   | .nil | .cons _ _ => AVal.listV
-  | .lam _ _ => AVal.fnV
   | .var x => σ.get x
-  | .binop op a b => abinop op (aeval σ a) (aeval σ b)
-  | .letin x e1 e2 => aeval ((x, aeval σ e1) :: σ) e2
-  | .letrec f _ _ e2 => aeval ((f, AVal.fnV) :: σ) e2
+  | .binop op a b => abinop op (aeval H σ a) (aeval H σ b)
+  | .letin x e1 e2 => aeval H ((x, aeval H σ e1) :: σ) e2
+  | .lam x b =>
+    -- the body, analysed with `x` in its precondition
+    let P := H.param x
+    AVal.summary (P, (aeval H ((x, AVal.ofFlat P) :: σ) b).flat)
+  | .app f a => apply (aeval H σ f) (aeval H σ a)
+  | .letrec f x b e2 =>
+    -- the claimed summary, checked against the body (which may call `f`)
+    let S : Summary A := (H.param x, H.result f)
+    let holds := (aeval H ((x, AVal.ofFlat S.1) :: (f, AVal.summary S) :: σ) b).flat.leq S.2
+    aeval H ((f, if holds then AVal.summary S else AVal.fnV) :: σ) e2
   | .ite c t e =>
     -- a branch is taken only if the condition may have that value
     joinOpt
-      (if (aeval σ c).tt then (σ.assume c true).map (aeval · t) else none)
-      (if (aeval σ c).ff then (σ.assume c false).map (aeval · e) else none)
+      (if (aeval H σ c).tt then (σ.assume c true).map (aeval H · t) else none)
+      (if (aeval H σ c).ff then (σ.assume c false).map (aeval H · e) else none)
   | .assert _ => AVal.unitV
   | .exn _ _ => AVal.exnV
   | .raise _ => AVal.bot   -- never gives a value
@@ -138,7 +172,7 @@ theorem atom_sound {e : Expr} {μ μ' : Store} {v : Value} (hσ : σ.Describes �
     (h : Eval ρ μ e (.ok v) μ') : (σ.atom e).mem v := by
   cases e
   case var x => cases h with | var hx => exact hσ x v hx
-  case int => cases h; exact const_sound _
+  case int => cases h; exact .inl (const_sound _)
   all_goals exact AVal.mem_top _
 
 /-- Recording `a` for `e` keeps the description, if `a` describes `e`'s value. -/
@@ -161,29 +195,29 @@ theorem refineLt_sound {l r : Expr} {μ₁ μ₂ μ₃ μ₄ : Store} {n m : Int
     (hσ : σ.Describes ρ) (hl : Eval ρ μ₁ l (.ok (.int n)) μ₂)
     (hr : Eval ρ μ₃ r (.ok (.int m)) μ₄) (h : n < m) :
     ∃ σ', σ.refineLt l r = some σ' ∧ σ'.Describes ρ := by
-  have ha : γ (σ.atom l).int n := atom_sound hσ hl
-  have hb : γ (σ.atom r).int m := atom_sound hσ hr
+  have ha : γ (σ.atom l).int n := AVal.mem_int (atom_sound hσ hl)
+  have hb : γ (σ.atom r).int m := AVal.mem_int (atom_sound hσ hr)
   -- `l < r` is possible, so `refineLt` narrows instead of giving `none`
   have hmay := (cmpLt_sound ha hb).1 h
   unfold refineLt
   rw [ite_eq_left hmay]
   -- the narrowed values still describe `l` and `r`
   have hp := assumeLt_sound ha hb h
-  exact ⟨_, rfl, bind_sound (bind_sound hσ hr hp.2) hl hp.1⟩
+  exact ⟨_, rfl, bind_sound (bind_sound hσ hr (.inl hp.2)) hl (.inl hp.1)⟩
 
 theorem refineLe_sound {l r : Expr} {μ₁ μ₂ μ₃ μ₄ : Store} {n m : Int}
     (hσ : σ.Describes ρ) (hl : Eval ρ μ₁ l (.ok (.int n)) μ₂)
     (hr : Eval ρ μ₃ r (.ok (.int m)) μ₄) (h : n ≤ m) :
     ∃ σ', σ.refineLe l r = some σ' ∧ σ'.Describes ρ := by
-  have ha : γ (σ.atom l).int n := atom_sound hσ hl
-  have hb : γ (σ.atom r).int m := atom_sound hσ hr
+  have ha : γ (σ.atom l).int n := AVal.mem_int (atom_sound hσ hl)
+  have hb : γ (σ.atom r).int m := AVal.mem_int (atom_sound hσ hr)
   -- `l ≤ r` is possible, so `refineLe` narrows instead of giving `none`
   have hmay := (cmpLe_sound ha hb).1 h
   unfold refineLe
   rw [ite_eq_left hmay]
   -- the narrowed values still describe `l` and `r`
   have hp := assumeLe_sound ha hb h
-  exact ⟨_, rfl, bind_sound (bind_sound hσ hr hp.2) hl hp.1⟩
+  exact ⟨_, rfl, bind_sound (bind_sound hσ hr (.inl hp.2)) hl (.inl hp.1)⟩
 
 end AEnv
 
@@ -201,18 +235,20 @@ theorem abinop_sound [NumDomain A] {op : BinOp} {a b : AVal A} {va vb v : Value}
   case eq | ne => exact AVal.mem_top _
   all_goals
     obtain ⟨x, y, rfl, rfl⟩ := denote_ints (by simp) h
+    replace ha := AVal.mem_int ha
+    replace hb := AVal.mem_int hb
     simp only [BinOp.denote] at h
-  case add => cases h; exact add_sound ha hb
-  case sub => cases h; exact sub_sound ha hb
-  case mul => cases h; exact mul_sound ha hb
+  case add => cases h; exact .inl (add_sound ha hb)
+  case sub => cases h; exact .inl (sub_sound ha hb)
+  case mul => cases h; exact .inl (mul_sound ha hb)
   case div =>
     split at h
     next => cases h   -- division by zero: an error
-    next hy => cases h; exact div_sound ha hb hy
+    next hy => cases h; exact .inl (div_sound ha hb hy)
   case mod =>
     split at h
     next => cases h
-    next hy => cases h; exact mod_sound ha hb hy
+    next hy => cases h; exact .inl (mod_sound ha hb hy)
   case lt => cases h; exact AVal.mem_bools (cmpLt_sound ha hb)
   case le => cases h; exact AVal.mem_bools (cmpLe_sound ha hb)
   case gt => cases h; exact AVal.mem_bools (cmpLt_sound hb ha)
@@ -258,18 +294,65 @@ theorem joinOpt_sound_r [NumDomain A] {a : AVal A} {o : Option (AVal A)} {v : Va
   · exact h
   · exact AVal.mem_join_r h
 
-/-- **Soundness**: if `e` evaluates to `v`, `aeval` describes `v`. -/
-theorem aeval_sound [NumDomain A] {σ : AEnv A} {ρ : Env} {μ μ' : Store} {e : Expr}
-    {v : Value} (hσ : σ.Describes ρ) (h : Eval ρ μ e (.ok v) μ') :
-    (aeval σ e).mem v := by
+/-- A call to a closure satisfying `(P, R)`, with an argument meeting `P`, gives a
+    value in `R`. -/
+theorem apply_sound [NumDomain A] {af aa : AVal A} {s : Option String} {x : String}
+    {b : Expr} {ρ' : Env} {va v : Value} {μ μ' : Store}
+    (hf : af.mem (.clos s x b ρ')) (ha : aa.mem va)
+    (hb : Eval (callEnv s x b ρ' va) μ b (.ok v) μ') : (apply af aa).mem v := by
+  unfold apply
+  split
+  next P R hS =>
+    split
+    next hcall =>
+      simp only [Bool.and_eq_true, Bool.not_eq_true'] at hcall
+      simp only [AVal.mem] at hf
+      rcases hf with hf | hf
+      · -- "any closure" is impossible, since `af.fn = false`: `hf` is `False`
+        simp [Flat.mem, hcall.1] at hf
+      · -- the closure satisfies the summary `(P, R)`
+        simp only [AVal.sumMem] at hf
+        obtain ⟨S, hS', hsat⟩ := hf
+        rw [hS] at hS'
+        -- `hS' : some (P, R) = some S`, so `S` is `(P, R)`
+        simp only [Option.some.injEq] at hS'
+        subst hS'
+        -- the argument meets `P`, so the result is in `R`
+        have hP : P.mem va := Flat.mem_leq (AVal.mem_flat ha) hcall.2
+        exact .inl (hsat va v μ μ' hP hb)
+    next => exact AVal.mem_top _
+  next => exact AVal.mem_top _
+
+/-- A recursive closure whose summary was checked against its body satisfies it.
+    TODO: by induction on the height of the evaluation of the body: a recursive call
+    inside it is a smaller evaluation, so it satisfies the summary by induction. -/
+theorem letrec_sat [NumDomain A] {H : Hints A} {σ : AEnv A} {ρ : Env} {f x : String}
+    {b : Expr} {S : Summary A} (hσ : σ.Describes ρ)
+    (hholds : (aeval H ((x, AVal.ofFlat S.1) :: (f, AVal.summary S) :: σ) b).flat.leq S.2
+      = true) :
+    Sat S (some f) x b ρ := by
+  sorry
+
+/-- **Soundness**: if `e` evaluates to `v`, `aeval` describes `v`, whatever the
+    hints. -/
+theorem aeval_sound [NumDomain A] {H : Hints A} {σ : AEnv A} {ρ : Env} {μ μ' : Store}
+    {e : Expr} {v : Value} (hσ : σ.Describes ρ) (h : Eval ρ μ e (.ok v) μ') :
+    (aeval H σ e).mem v := by
   induction e generalizing σ ρ μ μ' v with
-  | int m => cases h; exact const_sound _
-  | bool b => cases h; cases b <;> rfl
-  | unit => cases h; rfl
-  | nil => cases h; rfl
-  | cons => cases h; rfl
-  | lam => cases h; rfl
+  | int m => cases h; exact .inl (const_sound _)
+  | bool b => cases h; cases b <;> exact .inl rfl
+  | unit => cases h; exact .inl rfl
+  | nil => cases h; exact .inl rfl
+  | cons => cases h; exact .inl rfl
   | var x => cases h with | var hx => exact hσ x v hx
+  | lam x b ihb =>
+    cases h
+    -- the closure satisfies its summary: the body was analysed with `x` in `P`
+    refine .inr ⟨_, rfl, fun va w μ₁ μ₂ hv hev => ?_⟩
+    exact AVal.mem_flat (ihb (hσ.cons (AVal.mem_ofFlat hv)) hev)
+  | app f a ihf iha =>
+    cases h with
+    | app hf ha hb => exact apply_sound (ihf hσ hf) (iha hσ ha) hb
   | binop op a b iha ihb =>
     generalize hr : Outcome.ok v = r at h
     cases h with
@@ -281,22 +364,25 @@ theorem aeval_sound [NumDomain A] {σ : AEnv A} {ρ : Env} {μ μ' : Store} {e :
   | letrec f x e1 e2 _ ih2 =>
     cases h with
     | letrec h2 =>
-      refine ih2 ?_ h2
-      exact hσ.cons rfl   -- `f` is a closure
+      refine ih2 (hσ.cons ?_) h2
+      -- `f` satisfies its summary if the check passed, and is a closure anyway
+      split
+      next hholds => exact .inr ⟨_, rfl, letrec_sat hσ hholds⟩
+      next => exact .inl rfl
   | ite c t e ihc iht ihe =>
     cases h with
     | ifT hc ht =>
-      have htt : (aeval σ c).tt = true := ihc hσ hc
+      have htt : (aeval H σ c).tt = true := AVal.mem_tt (ihc hσ hc)
       obtain ⟨σt, hst, hdt⟩ := σ.assume_sound hσ hc
       simp only [aeval, htt, hst, Option.map_some, ↓reduceIte]
       exact joinOpt_sound_l (iht hdt ht)
     | ifF hc he =>
-      have hff : (aeval σ c).ff = true := ihc hσ hc
+      have hff : (aeval H σ c).ff = true := AVal.mem_ff (ihc hσ hc)
       obtain ⟨σe, hse, hde⟩ := σ.assume_sound hσ hc
       simp only [aeval, hff, hse, Option.map_some, ↓reduceIte]
       exact joinOpt_sound_r (ihe hde he)
-  | assert => cases h; rfl
-  | exn => cases h; rfl
+  | assert => cases h; exact .inl rfl
+  | exn => cases h; exact .inl rfl
   | raise => cases h
   | _ => exact AVal.mem_top _
 
