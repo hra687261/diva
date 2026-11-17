@@ -10,7 +10,8 @@ the value may be of that kind.
 
 An `AVal A` adds a *summary* `(P, R)` for the closures it may be: called with an
 argument in `P`, they return a value in `R` (if they return). Summaries are over
-`Flat`, so a closure returned by a closure loses its summary.
+`Flat`, so a closure returned by a closure loses its summary. Which values an
+`AVal` describes is defined with `aeval` (`AVal.mem`, in `Aeval.lean`).
 -/
 
 namespace Diva.AbsInt
@@ -94,6 +95,11 @@ theorem mem_leq {a b : Flat A} {v : Value} (h : a.mem v) (hl : a.leq b = true) :
   case bool c => cases c <;> simp_all [mem]
   all_goals simp_all [mem]
 
+/-- `a` describes no more values than `b`. -/
+def sub (a b : Flat A) : Prop := ∀ v, a.mem v → b.mem v
+
+theorem sub_refl (a : Flat A) : a.sub a := fun _ h => h
+
 /-- A comparison's result: `true` if it may hold, `false` if it may not. -/
 theorem mem_bools {p : Bool × Bool} {P : Prop} [Decidable P]
     (h : (P → p.1 = true) ∧ (¬ P → p.2 = true)) :
@@ -163,101 +169,6 @@ def join (a b : AVal A) : AVal A :=
     else ofFlat (a.flat.join b.flat)
   | some S, none => { toFlat := a.toFlat.join b.toFlat, sum := some S }
   | none, s => { toFlat := a.toFlat.join b.toFlat, sum := s }
-
-/-- The closures described by the summary. -/
-def sumMem (a : AVal A) : Value → Prop
-  | .clos s x b ρ => ∃ S, a.sum = some S ∧ Sat S s x b ρ
-  | _ => False
-
-/-- Concretisation: the values `a` describes. -/
-def mem (a : AVal A) (v : Value) : Prop := a.toFlat.mem v ∨ a.sumMem v
-
-theorem mem_ofFlat {f : Flat A} {v : Value} (h : f.mem v) : (ofFlat f).mem v := .inl h
-
-theorem mem_top (v : Value) : (top : AVal A).mem v := .inl (Flat.mem_top v)
-
-theorem mem_bools {p : Bool × Bool} {P : Prop} [Decidable P]
-    (h : (P → p.1 = true) ∧ (¬ P → p.2 = true)) :
-    (bools p.1 p.2 : AVal A).mem (.bool (decide P)) := .inl (Flat.mem_bools h)
-
-theorem mem_int {a : AVal A} {n : Int} (h : a.mem (.int n)) : γ a.int n := by
-  rcases h with h | h
-  · exact h
-  · simp [sumMem] at h
-
-theorem mem_tt {a : AVal A} (h : a.mem (.bool true)) : a.tt = true := by
-  rcases h with h | h
-  · exact h
-  · simp [sumMem] at h
-
-theorem mem_ff {a : AVal A} (h : a.mem (.bool false)) : a.ff = true := by
-  rcases h with h | h
-  · exact h
-  · simp [sumMem] at h
-
-/-- Two values with the same summary describe the same closures. -/
-theorem sumMem_of_eq {a b : AVal A} {v : Value} (hs : a.sum = b.sum) (h : a.sumMem v) :
-    b.sumMem v := by
-  cases v <;> simp_all [sumMem]
-
-theorem mem_flat {a : AVal A} {v : Value} (h : a.mem v) : a.flat.mem v := by
-  rcases h with h | h
-  · -- the same values, and possibly more closures
-    cases v
-    case bool c => cases c <;> simp_all [Flat.mem, flat]
-    all_goals simp_all [Flat.mem, flat]
-  · -- a closure of the summary: now "any closure"
-    cases v <;> simp only [sumMem] at h
-    obtain ⟨S, hS, -⟩ := h
-    simp [Flat.mem, flat, hS]
-
-theorem mem_join_l {a b : AVal A} {v : Value} (h : a.mem v) : (a.join b).mem v := by
-  unfold join
-  split
-  next S T hS hT =>
-    split
-    next hpre =>
-      rcases h with h | h
-      · exact .inl (Flat.mem_join_l h)
-      · -- the closure satisfies `S`, so also `(S.1, S.2 ⊔ T.2)`
-        cases v <;> simp only [sumMem] at h
-        obtain ⟨S', hS', hsat⟩ := h
-        rw [hS] at hS'; cases hS'
-        exact .inr ⟨_, rfl, fun v w μ μ' hv hev => Flat.mem_join_l (hsat v w μ μ' hv hev)⟩
-    next => exact .inl (Flat.mem_join_l (mem_flat h))
-  next S hS hT =>
-    rcases h with h | h
-    · exact .inl (Flat.mem_join_l h)
-    · exact .inr (sumMem_of_eq (by simp [hS]) h)
-  next s hS hT =>
-    rcases h with h | h
-    · exact .inl (Flat.mem_join_l h)
-    · cases v <;> simp_all [sumMem]
-
-theorem mem_join_r {a b : AVal A} {v : Value} (h : b.mem v) : (a.join b).mem v := by
-  unfold join
-  split
-  next S T hS hT =>
-    split
-    next hpre =>
-      simp only [Bool.and_eq_true] at hpre
-      rcases h with h | h
-      · exact .inl (Flat.mem_join_r h)
-      · -- the closure satisfies `T`, and `S.1 ⊆ T.1`, so also `(S.1, S.2 ⊔ T.2)`
-        cases v <;> simp only [sumMem] at h
-        obtain ⟨T', hT', hsat⟩ := h
-        rw [hT] at hT'; cases hT'
-        refine .inr ⟨_, rfl, fun v w μ μ' hv hev => ?_⟩
-        exact Flat.mem_join_r (hsat v w μ μ' (Flat.mem_leq hv hpre.1) hev)
-    next => exact .inl (Flat.mem_join_r (mem_flat h))
-  next S hS hT =>
-    rcases h with h | h
-    · exact .inl (Flat.mem_join_r h)
-    · cases v <;> simp_all [sumMem]
-  next s hS hT =>
-    rcases h with h | h
-    · exact .inl (Flat.mem_join_r h)
-    · exact .inr (sumMem_of_eq (by simp) h)
 
 instance [ToString A] : ToString (AVal A) where
   toString a :=
