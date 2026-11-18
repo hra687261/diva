@@ -8,7 +8,9 @@ import Diva.AbsInt.AVal
 kind; what isn't analysed yet (the store, catching exceptions) gives `top`.
 
 A comparison `l < r` (or `≤`, `>`, `≥`) in an `if` narrows the variables it
-compares in each branch, and a branch that can't be taken is skipped. Only
+compares in each branch, and a branch that can't be taken is skipped. `l = r`
+narrows only in the branch where it holds, and `l <> r` only in the branch where
+it doesn't: there, both sides keep only the values they share. Only
 variables and constants are looked at in the comparison: `x < 5` narrows `x`,
 `x + 1 < 5` doesn't.
 
@@ -24,6 +26,20 @@ A wrong claim gives `⊤`.
 namespace Diva.AbsInt
 
 open AbsDomain NumDomain
+
+/-- `(may be true, may be false)` for `x = y`, where `a` describes `x` and `b`
+    describes `y`. `=` compares integers, booleans and `()`. -/
+def eqCmp [NumDomain A] (a b : AVal A) : Bool × Bool :=
+  let i := cmpEq a.int b.int
+  (i.1 || (a.tt && b.tt) || (a.ff && b.ff) || (a.unit && b.unit),
+   i.2 || (a.tt && b.ff) || (a.ff && b.tt))
+
+/-- The values that both `a` and `b` describe, if `x = y` holds. Then `x` and `y`
+    are the same integer, boolean or `()`, so the other kinds are dropped. -/
+def eqMeet [NumDomain A] (a b : AVal A) : AVal A :=
+  AVal.ofFlat { (Flat.bot : Flat A) with
+    int := meet a.int b.int, tt := a.tt && b.tt, ff := a.ff && b.ff,
+    unit := a.unit && b.unit }
 
 /-- Abstract environment: what is known about each variable. -/
 abbrev AEnv (A : Type) := List (String × AVal A)
@@ -60,8 +76,15 @@ def refineLe (σ : AEnv A) (l r : Expr) : Option (AEnv A) :=
     some ((σ.bind r (AVal.ofInt p.2)).bind l (AVal.ofInt p.1))
   else none
 
+/-- `σ` narrowed by `l = r`: both sides get the values they share. -/
+def refineEq (σ : AEnv A) (l r : Expr) : Option (AEnv A) :=
+  let m := eqMeet (σ.atom l) (σ.atom r)
+  some ((σ.bind r m).bind l m)
+
 /-- `σ` narrowed by `c` evaluating to `b`, or `none` if it can't. -/
 def assume (σ : AEnv A) : Expr → Bool → Option (AEnv A)
+  | .binop .eq l r, true  => σ.refineEq l r
+  | .binop .ne l r, false => σ.refineEq l r
   | .binop .lt l r, true  => σ.refineLt l r
   | .binop .lt l r, false => σ.refineLe r l
   | .binop .le l r, true  => σ.refineLe l r
@@ -88,7 +111,8 @@ def abinop [NumDomain A] : BinOp → AVal A → AVal A → AVal A
   | .le, a, b => ofCmp (cmpLe a.int b.int)
   | .gt, a, b => ofCmp (cmpLt b.int a.int)
   | .ge, a, b => ofCmp (cmpLe b.int a.int)
-  | .eq, _, _ | .ne, _, _ => AVal.top   -- not analysed yet
+  | .eq, a, b => ofCmp (eqCmp a b)
+  | .ne, a, b => ofCmp (eqCmp a b).swap
 
 /-- Join the results of the branches that can be taken (`none`: dead branch). -/
 def joinOpt [NumDomain A] : Option (AVal A) → Option (AVal A) → AVal A
@@ -212,6 +236,10 @@ theorem mem_tt {a : AVal A} (h : a.mem (.bool true)) : a.tt = true := by
   | flat h => exact h
 
 theorem mem_ff {a : AVal A} (h : a.mem (.bool false)) : a.ff = true := by
+  cases h with
+  | flat h => exact h
+
+theorem mem_unit {a : AVal A} (h : a.mem .unit) : a.unit = true := by
   cases h with
   | flat h => exact h
 
@@ -351,6 +379,32 @@ theorem bind_sound {e : Expr} {a : AVal A} {μ μ' : Store} {v : Value} (hσ : �
         simpa [get, bind, List.lookup, hyx] using hσ y w hy
   all_goals exact hσ
 
+/-- If `x = y` holds, `x` and `y` are the same value, and `eqMeet` describes it. -/
+theorem eqMeet_sound {a b : AVal A} {va vb : Value} (ha : a.mem va) (hb : b.mem vb)
+    (h : BinOp.eq.denote va vb = .ok (.bool true)) : va = vb ∧ (eqMeet a b).mem va := by
+  cases va <;> cases vb <;> simp only [BinOp.denote] at h
+  case int.int x y =>
+    have hxy : x = y := by simpa using h
+    subst hxy
+    exact ⟨rfl, .flat (meet_sound (AVal.mem_int ha) (AVal.mem_int hb))⟩
+  case bool.bool x y =>
+    have hxy : x = y := by simpa using h
+    subst hxy
+    cases x
+    · exact ⟨rfl, .flat (by simp [eqMeet, AVal.ofFlat, Flat.mem, AVal.mem_ff ha, AVal.mem_ff hb])⟩
+    · exact ⟨rfl, .flat (by simp [eqMeet, AVal.ofFlat, Flat.mem, AVal.mem_tt ha, AVal.mem_tt hb])⟩
+  case unit.unit =>
+    exact ⟨rfl, .flat (by simp [eqMeet, AVal.ofFlat, Flat.mem, AVal.mem_unit ha, AVal.mem_unit hb])⟩
+  all_goals cases h
+
+theorem refineEq_sound {l r : Expr} {μ₁ μ₂ μ₃ μ₄ : Store} {va vb : Value}
+    (hσ : σ.Describes ρ) (hl : Eval ρ μ₁ l (.ok va) μ₂) (hr : Eval ρ μ₃ r (.ok vb) μ₄)
+    (h : BinOp.eq.denote va vb = .ok (.bool true)) :
+    ∃ σ', σ.refineEq l r = some σ' ∧ σ'.Describes ρ := by
+  -- both sides are the same value, which `eqMeet` describes
+  obtain ⟨rfl, hm⟩ := eqMeet_sound (atom_sound hσ hl) (atom_sound hσ hr) h
+  exact ⟨_, rfl, bind_sound (bind_sound hσ hr hm) hl hm⟩
+
 theorem refineLt_sound {l r : Expr} {μ₁ μ₂ μ₃ μ₄ : Store} {n m : Int}
     (hσ : σ.Describes ρ) (hl : Eval ρ μ₁ l (.ok (.int n)) μ₂)
     (hr : Eval ρ μ₃ r (.ok (.int m)) μ₄) (h : n < m) :
@@ -388,11 +442,67 @@ theorem denote_ints {op : BinOp} {va vb v : Value} (hop : op ≠ .eq ∧ op ≠ 
   case int.int x y => exact ⟨x, y, rfl, rfl⟩
   all_goals cases op <;> simp_all [BinOp.denote]
 
+/-- `=` gives a boolean. -/
+theorem denote_eq_bool {va vb v : Value} (h : BinOp.eq.denote va vb = .ok v) :
+    ∃ r, v = .bool r := by
+  cases va <;> cases vb <;> simp only [BinOp.denote] at h
+  case int.int => cases h; exact ⟨_, rfl⟩
+  case bool.bool => cases h; exact ⟨_, rfl⟩
+  case unit.unit => cases h; exact ⟨_, rfl⟩
+  all_goals cases h
+
+/-- `<>` gives a boolean, the opposite of what `=` gives. -/
+theorem denote_ne {va vb v : Value} (h : BinOp.ne.denote va vb = .ok v) :
+    ∃ r, v = .bool r ∧ BinOp.eq.denote va vb = .ok (.bool !r) := by
+  cases va <;> cases vb <;> simp only [BinOp.denote] at h
+  case int.int => cases h; exact ⟨_, rfl, by simp [BinOp.denote, bne]⟩
+  case bool.bool => cases h; exact ⟨_, rfl, by simp [BinOp.denote, bne]⟩
+  case unit.unit => cases h; exact ⟨_, rfl, rfl⟩
+  all_goals cases h
+
+theorem eqCmp_sound [NumDomain A] {a b : AVal A} {va vb : Value} {r : Bool}
+    (ha : a.mem va) (hb : b.mem vb) (h : BinOp.eq.denote va vb = .ok (.bool r)) :
+    (r = true → (eqCmp a b).1 = true) ∧ (r = false → (eqCmp a b).2 = true) := by
+  cases va <;> cases vb <;> simp only [BinOp.denote] at h
+  case int.int x y =>
+    cases h
+    have hi := cmpEq_sound (AVal.mem_int ha) (AVal.mem_int hb)
+    constructor
+    · intro hr
+      simp [eqCmp, hi.1 (by simpa using hr)]
+    · intro hr
+      simp [eqCmp, hi.2 (by simpa using hr)]
+  case bool.bool x y =>
+    cases h
+    cases x <;> cases y
+    case true.true => simp [eqCmp, AVal.mem_tt ha, AVal.mem_tt hb]
+    case true.false => simp [eqCmp, AVal.mem_tt ha, AVal.mem_ff hb]
+    case false.true => simp [eqCmp, AVal.mem_ff ha, AVal.mem_tt hb]
+    case false.false => simp [eqCmp, AVal.mem_ff ha, AVal.mem_ff hb]
+  case unit.unit =>
+    cases h
+    simp [eqCmp, AVal.mem_unit ha, AVal.mem_unit hb]
+  all_goals cases h
+
+theorem mem_ofCmp [NumDomain A] {p : Bool × Bool} {r : Bool}
+    (h : (r = true → p.1 = true) ∧ (r = false → p.2 = true)) :
+    (ofCmp p : AVal A).mem (.bool r) := by
+  cases r
+  · exact .flat (h.2 rfl)
+  · exact .flat (h.1 rfl)
+
 theorem abinop_sound [NumDomain A] {op : BinOp} {a b : AVal A} {va vb v : Value}
     (ha : a.mem va) (hb : b.mem vb) (h : op.denote va vb = .ok v) :
     (abinop op a b).mem v := by
   cases op
-  case eq | ne => exact AVal.mem_top _
+  case eq =>
+    obtain ⟨r, rfl⟩ := denote_eq_bool h
+    exact mem_ofCmp (eqCmp_sound ha hb h)
+  case ne =>
+    obtain ⟨r, rfl, he⟩ := denote_ne h
+    -- `<>` is `true` exactly when `=` is `false`
+    have hc := eqCmp_sound ha hb he
+    exact mem_ofCmp ⟨fun hr => hc.2 (by simp [hr]), fun hr => hc.1 (by simp [hr])⟩
   all_goals
     obtain ⟨x, y, rfl, rfl⟩ := denote_ints (by simp) h
     replace ha := AVal.mem_int ha
@@ -424,8 +534,19 @@ theorem AEnv.assume_sound [NumDomain A] {σ : AEnv A} {ρ : Env} {μ μ' : Store
     cases h with
     | binop hl hr =>
       cases op
-      -- arithmetic and `=`, `<>` don't narrow
-      case add | sub | mul | div | mod | eq | ne => exact ⟨σ, by cases b <;> rfl, hσ⟩
+      -- arithmetic doesn't narrow
+      case add | sub | mul | div | mod => exact ⟨σ, by cases b <;> rfl, hσ⟩
+      -- `=` narrows when it is `true`, `<>` when it is `false`
+      case eq =>
+        cases b
+        · exact ⟨σ, rfl, hσ⟩
+        · exact refineEq_sound hσ hl hr hres.symm
+      case ne =>
+        cases b
+        · obtain ⟨r, hr, he⟩ := denote_ne hres.symm
+          cases hr
+          exact refineEq_sound hσ hl hr he
+        · exact ⟨σ, rfl, hσ⟩
       -- comparisons: both sides are integers, and `hd` says how they compare
       all_goals
         obtain ⟨x, y, rfl, rfl⟩ := denote_ints (by simp) hres.symm

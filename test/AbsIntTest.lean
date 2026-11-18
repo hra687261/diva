@@ -43,12 +43,23 @@ private def analyse (s : String) : Option String :=
 #guard analyse "E 1"                             = some "exn"
 #guard analyse "x < 5"                           = some "bool"
 #guard analyse "x < 20"                          = some "true"
-#guard analyse "x = 3"                           = some "⊤"        -- `=`: not analysed yet
+#guard analyse "x = 3"                           = some "bool"
 #guard analyse "if x < 5 then true else ()"      = some "true | ()"
 #guard analyse "raise E"                         = some "⊥"        -- never gives a value
 #guard analyse "if x > 20 then raise E else 1"   = some "1"
 #guard analyse "if 1 then 2 else 3"              = some "⊥"        -- not a boolean: an error
 #guard analyse "let b = x < 20 in if b then 1 else 2" = some "1"   -- `b` is surely true
+
+-- `=` and `<>`: a boolean, and `=` narrows both sides in its `then` branch
+#guard analyse "x = 20"                          = some "false"
+#guard analyse "x <> 20"                         = some "true"
+#guard analyse "true = true"                     = some "true"
+#guard analyse "() = ()"                         = some "true"
+#guard analyse "if x = 3 then x else 0"          = some "[0, 3]"
+#guard analyse "if x = 3 then x + 1 else 4"      = some "4"
+#guard analyse "if x <> 3 then 0 else x"         = some "[0, 3]"
+#guard analyse "if x = 20 then 1 else 2"         = some "2"        -- then is dead
+#guard analyse "let y = x in if y = 3 then y else 3" = some "3"
 
 /-- Analyse `s` with `x ∈ [0, 10]` and the hints `H`. -/
 private def analyseH (H : List (String × Itv)) (s : String) : Option String :=
