@@ -10,7 +10,7 @@ private def parseStr (s : String) : Option String :=
 #guard parseStr "a = b"               = some "(a = b)"
 #guard parseStr "f x y"               = some "((f x) y)"
 #guard parseStr "let x = 40 in x + 2" = some "(let x = 40 in (x + 2))"
-#guard parseStr "fun x -> x + 1"      = some "(fun x -> (x + 1))"
+#guard parseStr "fun x -> x + 1"      = some "(fun x#0 -> (x#0 + 1))"
 #guard parseStr "if a then b else c"  = some "(if a then b else c)"
 #guard parseStr "if a then b"         = some "(if a then b else ())"
 #guard parseStr "if a then b; c"      = some "(let _ = (if a then b else ()) in c)"
@@ -35,20 +35,20 @@ private def parseStr (s : String) : Option String :=
 #guard parseStr "assert x"            = some "(assert x)"
 
 -- `let rec`, with the parameter before `=` or as a `fun`
-#guard parseStr "let rec f x = f x in f" = some "(let rec f x = (f x) in f)"
-#guard parseStr "let rec f = fun x -> x in f" = some "(let rec f x = x in f)"
+#guard parseStr "let rec f x = f x in f" = some "(let rec f#0 x#1 = (f#0 x#1) in f#0)"
+#guard parseStr "let rec f = fun x -> x in f" = some "(let rec f#0 x#1 = x#1 in f#0)"
 #guard parseStr "let rec f = 1 in f"  = none
 
 -- sugar
-#guard parseStr "fun x y -> x"        = some "(fun x -> (fun y -> x))"
-#guard parseStr "let f x y = x in f"  = some "(let f = (fun x -> (fun y -> x)) in f)"
+#guard parseStr "fun x y -> x"        = some "(fun x#0 -> (fun y#1 -> x#0))"
+#guard parseStr "let f x y = x in f"  = some "(let f = (fun x#0 -> (fun y#1 -> x#0)) in f)"
 #guard parseStr "a && b"              = some "(if a then b else false)"
 #guard parseStr "a || b"              = some "(if a then true else b)"
 #guard parseStr "a || b && c"         = some "(if a then true else (if b then c else false))"
 #guard parseStr "not a"               = some "(if a then false else true)"
 #guard parseStr "a; b"                = some "(let _ = a in b)"
 #guard parseStr "let _ = a in b"      = some "(let _ = a in b)"
-#guard parseStr "fun _ -> 1"          = some "(fun _ -> 1)"
+#guard parseStr "fun _ -> 1"          = some "(fun _#0 -> 1)"
 #guard parseStr "1; _"                = none  -- `_` binds but can't be used
 
 -- lists: `::` is right-associative and looser than `+`
@@ -92,9 +92,9 @@ private def parseStr (s : String) : Option String :=
 
 -- loops desugar to recursive functions whose names (`%for`) users cannot write
 #guard parseStr "for i = 1 to n do f i done" =
-  some "(let rec %for i = (if (i <= n) then (let _ = (f i) in (%for (i + 1))) else ()) in (%for 1))"
+  some "(let %lo = 1 in (let %hi = n in (let rec %for#0 i#1 = (if (i#1 <= %hi) then (let _ = (f i#1) in (%for#0 (i#1 + 1))) else ()) in (%for#0 %lo))))"
 #guard parseStr "while c do f () done" =
-  some "(let rec %while _ = (if c then (let _ = (f ()) in (%while ())) else ()) in (%while ()))"
+  some "(let rec %while#0 _#1 = (if c then (let _ = (f ()) in (%while#0 ())) else ()) in (%while#0 ()))"
 #guard parseStr "__for"               = some "__for"
 
 -- allocation sites are numbered in source order
@@ -115,3 +115,10 @@ private def parseStr (s : String) : Option String :=
   some "(try a with %exn -> (match %exn with E x -> b | _ -> (let _ = %exn in c)))"
 #guard parseStr "try a with | E -> b" =
   some "(try a with %exn -> (match %exn with E _ -> b | _ -> (raise %exn)))"
+
+-- every parameter and recursive function gets a name of its own
+#guard parseStr "(fun y -> y) (fun y -> y)" = some "((fun y#0 -> y#0) (fun y#1 -> y#1))"
+#guard parseStr "fun y -> fun y -> y" = some "(fun y#0 -> (fun y#1 -> y#1))"
+#guard parseStr "let rec f y = f y in let rec f y = f (y + 1) in f 0" =
+  some "(let rec f#0 y#1 = (f#0 y#1) in (let rec f#2 y#3 = (f#2 (y#3 + 1)) in (f#2 0)))"
+#guard parseStr "let y = 1 in fun y -> y" = some "(let y = 1 in (fun y#0 -> y#0))"  -- only parameters

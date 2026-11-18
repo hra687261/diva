@@ -56,14 +56,14 @@ private def analyseH (H : List (String × Itv)) (s : String) : Option String :=
       ([("x", AVal.ofInt (itv 0 10))] : AEnv Itv) e)
 
 -- functions: a summary from the parameter's precondition
-#guard analyseH [("y", itv 0 10)] "fun y -> y + 1"           = some "fun [0, 10] -> [1, 11]"
-#guard analyseH [("y", itv 0 10)] "(fun y -> y + 1) x"       = some "[1, 11]"
-#guard analyseH [("y", itv 0 10)] "let f = fun y -> y + 1 in f (f x)" = some "⊤"  -- `f x` ∉ [0, 10]
-#guard analyseH [("y", itv 0 10)] "let f = fun y -> y + 1 in f 20"    = some "⊤"  -- 20 ∉ [0, 10]
-#guard analyseH [("y", itv 0 20)] "let f = fun y -> y / 2 in f (f x)" = some "[0, 10]"
+#guard analyseH [("y#0", itv 0 10)] "fun y -> y + 1"           = some "fun [0, 10] -> [1, 11]"
+#guard analyseH [("y#0", itv 0 10)] "(fun y -> y + 1) x"       = some "[1, 11]"
+#guard analyseH [("y#0", itv 0 10)] "let f = fun y -> y + 1 in f (f x)" = some "⊤"  -- `f x` ∉ [0, 10]
+#guard analyseH [("y#0", itv 0 10)] "let f = fun y -> y + 1 in f 20"    = some "⊤"  -- 20 ∉ [0, 10]
+#guard analyseH [("y#0", itv 0 20)] "let f = fun y -> y / 2 in f (f x)" = some "[0, 10]"
 
 -- recursive functions: the claimed result (`$f`) is checked against the body
 private def countdown := "let rec f y = if y <= 0 then 0 else f (y - 1) in f x"
-#guard analyseH [("y", itv 0 10), ("$f", itv 0 0)] countdown  = some "0"
-#guard analyseH [("y", itv 0 10), ("$f", itv 5 5)] countdown  = some "⊤"  -- wrong claim: dropped
-#guard analyseH [("y", itv 0 10)] countdown                    = some "⊤"  -- no claim
+#guard analyseH [("y#1", itv 0 10), ("$f#0", itv 0 0)] countdown  = some "0"
+#guard analyseH [("y#1", itv 0 10), ("$f#0", itv 5 5)] countdown  = some "⊤"  -- wrong claim: dropped
+#guard analyseH [("y#1", itv 0 10)] countdown                    = some "⊤"  -- no claim

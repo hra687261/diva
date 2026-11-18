@@ -83,7 +83,7 @@ inductive Handler where
   | tag : String → String → Handler
   | any : String → Handler
 
-/-- `try e with p1 -> h1 | … | pn -> hn` catches the exception as `%exn` (a name
+/-- `try e with p1 -> h1 | ... | pn -> hn` catches the exception as `%exn` (a name
     users cannot write), then tries the handlers in order.
     An exception no handler matches is raised again. -/
 def tryWith (e : Expr) (arms : List (Handler × Expr)) : Expr :=
@@ -108,7 +108,7 @@ partial def expr : P Expr :=
   letinxpr <|> funExpr <|> itexpr <|> matchExpr <|> forExpr <|> whileExpr <|> tryExpr
     <|> assignExpr
 
-/-- `let [rec] f x y = e`, shared by `let … in` and top-level declarations. -/
+/-- `let [rec] f x y = e`, shared by `let ... in` and top-level declarations. -/
 partial def binding : P (String × (Expr → Expr)) := do
   keyword "let"
   let isRec := (← option? (keyword "rec")).isSome
@@ -162,7 +162,7 @@ partial def matchExpr : P Expr := do
   let c ← seqExpr
   return .matchList s n x xs c
 
-/-- `try e with p -> h | …`, see `tryWith`. -/
+/-- `try e with p -> h | ...`, see `tryWith`. -/
 partial def tryExpr : P Expr := do
   keyword "try"
   let e ← seqExpr
@@ -179,9 +179,12 @@ partial def handler : P (Handler × Expr) := do
   let h ← seqExpr
   return (p, h)
 
--- The loops below desugar to a recursive function named `%for` / `%while`
+-- The loops below desugar to a recursive function named `%for` / `%while`. Names
+-- starting with `%` can't be written in a program, so they capture nothing.
 /-- `for i = a to b do e done` is
-    `let rec %for i = if i <= b then (e; %for (i + 1)) else () in %for a`. -/
+    `let %lo = a in let %hi = b in
+     let rec %for i = if i <= %hi then (e; %for (i + 1)) else () in %for %lo`.
+    The bounds are evaluated once, before the loop, as in OCaml. -/
 partial def forExpr : P Expr := do
   keyword "for"
   let i ← binderTok
@@ -193,8 +196,10 @@ partial def forExpr : P Expr := do
   let e ← seqExpr
   keyword "done"
   let next := Expr.app (.var "%for") (.binop .add (.var i) (.int 1))
-  return .letrec "%for" i (.ite (.binop .le (.var i) b) (.letin "_" e next) .unit)
-    (.app (.var "%for") a)
+  let loop := Expr.letrec "%for" i
+    (.ite (.binop .le (.var i) (.var "%hi")) (.letin "_" e next) .unit)
+    (.app (.var "%for") (.var "%lo"))
+  return .letin "%lo" a (.letin "%hi" b loop)
 
 /-- `while c do e done` is
     `let rec %while _ = if c then (e; %while ()) else () in %while ()`. -/
@@ -387,47 +392,71 @@ def program : P Expr := do
   let _ ← dropMany (symbol ";;")
   return Item.toExpr (first.toList ++ rest.toList)
 
+/-- The state of `resolve`: the next site number and the next name number. -/
+structure Fresh where
+  /-- The next allocation-site number. -/
+  site : Nat := 0
+  /-- The next number for a function parameter or recursive-function name. -/
+  name : Nat := 0
+
 /-- A fresh allocation-site number. -/
-def freshSite : StateM Nat Nat := modifyGet fun n => (n, n + 1)
+def freshSite : StateM Fresh Nat :=
+  modifyGet fun s => (s.site, { s with site := s.site + 1 })
 
-/-- Number the allocation sites (`Array.make`, `ref`) 0, 1, 2, ... in source order.
-    The parser leaves them all at 0.
+/-- A fresh name `x#n` for the parameter or recursive function `x`. `#` can't appear
+    in an identifier, so `x#n` is unique. -/
+def freshName (x : String) : StateM Fresh String :=
+  modifyGet fun s => (s!"{x}#{s.name}", { s with name := s.name + 1 })
 
-    TODO: somehow avoid the pass
--/
-def numberSites : Expr → StateM Nat Expr
+/-- The pass after parsing:
+    - number the allocation sites (`Array.make`, `ref`) 0, 1, 2, ... in source order
+      (the parser leaves them at 0);
+    - give every function parameter and recursive function a name of its own. The
+      analysis keys its hints by these names, so two functions with a parameter `y`
+      would otherwise share one precondition.
+
+    `sc` maps each variable in scope to its new name. -/
+def resolve (sc : List (String × String)) : Expr → StateM Fresh Expr
+  | .var x => return .var ((sc.lookup x).getD x)
+  | .lam x b => do
+    let x' ← freshName x
+    return .lam x' (← resolve ((x, x') :: sc) b)
+  | .letrec f x b e2 => do
+    let f' ← freshName f
+    let x' ← freshName x
+    return .letrec f' x' (← resolve ((x, x') :: (f, f') :: sc) b) (← resolve ((f, f') :: sc) e2)
+  -- the other binders keep their name, but hide an outer variable of that name
+  | .letin x a b => return .letin x (← resolve sc a) (← resolve ((x, x) :: sc) b)
+  | .matchList s n x xs c =>
+    return .matchList (← resolve sc s) (← resolve sc n) x xs
+      (← resolve ((xs, xs) :: (x, x) :: sc) c)
+  | .tryw e k h => return .tryw (← resolve sc e) k (← resolve ((k, k) :: sc) h)
+  | .exnCase s c x h m =>
+    return .exnCase (← resolve sc s) c x (← resolve ((x, x) :: sc) h) (← resolve sc m)
   | .alloc _ n v => do
     let s ← freshSite
-    return .alloc s (← numberSites n) (← numberSites v)
+    return .alloc s (← resolve sc n) (← resolve sc v)
   | .ref _ v => do
     let s ← freshSite
-    return .ref s (← numberSites v)
-  | .app f a => return .app (← numberSites f) (← numberSites a)
-  | .lam x b => return .lam x (← numberSites b)
-  | .letin x a b => return .letin x (← numberSites a) (← numberSites b)
-  | .letrec f x a b => return .letrec f x (← numberSites a) (← numberSites b)
-  | .ite c t e => return .ite (← numberSites c) (← numberSites t) (← numberSites e)
-  | .binop op a b => return .binop op (← numberSites a) (← numberSites b)
-  | .cons a b => return .cons (← numberSites a) (← numberSites b)
-  | .matchList s n x xs c =>
-    return .matchList (← numberSites s) (← numberSites n) x xs (← numberSites c)
-  | .assert c => return .assert (← numberSites c)
-  | .get a i => return .get (← numberSites a) (← numberSites i)
-  | .set a i v => return .set (← numberSites a) (← numberSites i) (← numberSites v)
-  | .len a => return .len (← numberSites a)
-  | .deref r => return .deref (← numberSites r)
-  | .assign r v => return .assign (← numberSites r) (← numberSites v)
-  | .exn c e => return .exn c (← numberSites e)
-  | .raise e => return .raise (← numberSites e)
-  | .tryw e x h => return .tryw (← numberSites e) x (← numberSites h)
-  | .exnCase s c x h m =>
-    return .exnCase (← numberSites s) c x (← numberSites h) (← numberSites m)
+    return .ref s (← resolve sc v)
+  | .app f a => return .app (← resolve sc f) (← resolve sc a)
+  | .ite c t e => return .ite (← resolve sc c) (← resolve sc t) (← resolve sc e)
+  | .binop op a b => return .binop op (← resolve sc a) (← resolve sc b)
+  | .cons a b => return .cons (← resolve sc a) (← resolve sc b)
+  | .assert c => return .assert (← resolve sc c)
+  | .get a i => return .get (← resolve sc a) (← resolve sc i)
+  | .set a i v => return .set (← resolve sc a) (← resolve sc i) (← resolve sc v)
+  | .len a => return .len (← resolve sc a)
+  | .deref r => return .deref (← resolve sc r)
+  | .assign r v => return .assign (← resolve sc r) (← resolve sc v)
+  | .exn c e => return .exn c (← resolve sc e)
+  | .raise e => return .raise (← resolve sc e)
   | e => return e
 
 /-- Parse a complete program. -/
 def parse (s : String) : Except String Expr :=
   match (whitespace *> program <* endOfInput).parseString s with
-  | .ok e => .ok ((numberSites e).run' 0)
+  | .ok e => .ok ((resolve [] e).run' {})
   | .error err => .error s!"Parse error near byte {err.pos.byteIdx}"
 
 end Diva
