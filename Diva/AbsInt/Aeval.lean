@@ -108,40 +108,57 @@ def Hints.param [NumDomain A] (H : Hints A) (x : String) : Flat A :=
 def Hints.result [NumDomain A] (H : Hints A) (f : String) : Flat A :=
   (H.lookup ("$" ++ f)).getD Flat.top
 
-/-- A call: the summary's result, if the function is certainly described by its
-    summary and the argument meets the precondition, anything otherwise. -/
-def apply [NumDomain A] (af aa : AVal A) : AVal A :=
+/-- The value of a call of `af` on `aa`. `af`'s summary `(P, R)` says: for an
+    argument in `P`, the function returns a value in `R`.
+
+    Normally, the call gives `R` if two checks pass: `af` is certainly a function
+    described by this summary, and `aa` is in `P`. Otherwise it gives `top`.
+
+    With `opt`, which only the inference uses, the checks are skipped and the call
+    always gives `R`. -/
+def apply [NumDomain A] (opt : Bool) (af aa : AVal A) : AVal A :=
   match af.sum with
-  | some (P, R) => if !af.fn && aa.flat.leq P then AVal.ofFlat R else AVal.top
+  | some (P, R) => if opt || (!af.fn && aa.flat.leq P) then AVal.ofFlat R else AVal.top
   | none => AVal.top
 
-def aeval [NumDomain A] (H : Hints A) (σ : AEnv A) : Expr → AVal A
+/-- The analysis, checking the claims of `H`. The checker is `aeval` (`opt = false`).
+
+    With `opt`, a claim is used even if it fails its check: a call gives the
+    summary's result even if the argument isn't in the precondition. This isn't
+    sound. Only the inference uses it, because its first guesses are always wrong:
+    with checking, they would give `top`, and the next guesses would be `top`. -/
+def aevalM [NumDomain A] (opt : Bool) (H : Hints A) (σ : AEnv A) : Expr → AVal A
   | .int n => AVal.ofInt (const n)
   | .bool b => AVal.bools b !b
   | .unit => AVal.unitV
   | .nil | .cons _ _ => AVal.listV
   | .var x => σ.get x
-  | .binop op a b => abinop op (aeval H σ a) (aeval H σ b)
-  | .letin x e1 e2 => aeval H ((x, aeval H σ e1) :: σ) e2
+  | .binop op a b => abinop op (aevalM opt H σ a) (aevalM opt H σ b)
+  | .letin x e1 e2 => aevalM opt H ((x, aevalM opt H σ e1) :: σ) e2
   | .lam x b =>
     -- the body, analysed with `x` in its precondition
     let P := H.param x
-    AVal.summary (P, (aeval H ((x, AVal.ofFlat P) :: σ) b).flat)
-  | .app f a => apply (aeval H σ f) (aeval H σ a)
+    AVal.summary (P, (aevalM opt H ((x, AVal.ofFlat P) :: σ) b).flat)
+  | .app f a => apply opt (aevalM opt H σ f) (aevalM opt H σ a)
   | .letrec f x b e2 =>
     -- the claimed summary, checked against the body (which may call `f`)
     let S : Summary A := (H.param x, H.result f)
-    let holds := (aeval H ((x, AVal.ofFlat S.1) :: (f, AVal.summary S) :: σ) b).flat.leq S.2
-    aeval H ((f, if holds then AVal.summary S else AVal.fnV) :: σ) e2
+    let holds :=
+      (aevalM opt H ((x, AVal.ofFlat S.1) :: (f, AVal.summary S) :: σ) b).flat.leq S.2
+    aevalM opt H ((f, if opt || holds then AVal.summary S else AVal.fnV) :: σ) e2
   | .ite c t e =>
     -- a branch is taken only if the condition may have that value
     joinOpt
-      (if (aeval H σ c).tt then (σ.assume c true).map (aeval H · t) else none)
-      (if (aeval H σ c).ff then (σ.assume c false).map (aeval H · e) else none)
+      (if (aevalM opt H σ c).tt then (σ.assume c true).map (aevalM opt H · t) else none)
+      (if (aevalM opt H σ c).ff then (σ.assume c false).map (aevalM opt H · e) else none)
   | .assert _ => AVal.unitV
   | .exn _ _ => AVal.exnV
   | .raise _ => AVal.bot   -- never gives a value
   | _ => AVal.top
+
+/-- The checker. -/
+abbrev aeval [NumDomain A] (H : Hints A) (σ : AEnv A) (e : Expr) : AVal A :=
+  aevalM false H σ e
 
 /-! ## Concretisation -/
 
@@ -445,13 +462,13 @@ theorem apply_sound [NumDomain A] {af aa : AVal A} {s : Option String} {x : Stri
     (hf : af.mem (.clos s x b ρ')) (ha : aa.mem va)
     (hb : ∀ (H : Hints A) (σ : AEnv A), σ.Describes (callEnv s x b ρ' va) →
       (aeval H σ b).mem v) :
-    (apply af aa).mem v := by
+    (apply false af aa).mem v := by
   unfold apply
   split
   next P R hS =>
     split
     next hcall =>
-      simp only [Bool.and_eq_true, Bool.not_eq_true'] at hcall
+      simp only [Bool.false_or, Bool.and_eq_true, Bool.not_eq_true'] at hcall
       cases hf with
       | flat hf =>
         -- "any closure" is impossible, since `af.fn = false`: `hf` is `False`
@@ -505,15 +522,15 @@ theorem aeval_sound_aux [NumDomain A] {ρ : Env} {μ μ' : Store} {e : Expr} {r 
     next => exact .flat rfl
   | ifT hc _ ihc iht =>
     intro H σ v hσ hr
-    have htt : (aeval H σ _).tt = true := AVal.mem_tt (ihc hσ rfl)
+    have htt : (aevalM false H σ _).tt = true := AVal.mem_tt (ihc hσ rfl)
     obtain ⟨σt, hst, hdt⟩ := σ.assume_sound hσ hc
-    simp only [aeval, htt, hst, Option.map_some, ↓reduceIte]
+    simp only [aeval, aevalM, htt, hst, Option.map_some, ↓reduceIte]
     exact joinOpt_sound_l (iht hdt hr)
   | ifF hc _ ihc ihe =>
     intro H σ v hσ hr
-    have hff : (aeval H σ _).ff = true := AVal.mem_ff (ihc hσ rfl)
+    have hff : (aevalM false H σ _).ff = true := AVal.mem_ff (ihc hσ rfl)
     obtain ⟨σe, hse, hde⟩ := σ.assume_sound hσ hc
-    simp only [aeval, hff, hse, Option.map_some, ↓reduceIte]
+    simp only [aeval, aevalM, hff, hse, Option.map_some, ↓reduceIte]
     exact joinOpt_sound_r (ihe hde hr)
   | assert | exn => intro H σ v hσ hr; cases hr; exact .flat rfl
   -- the rules giving an error: no value

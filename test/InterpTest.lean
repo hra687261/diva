@@ -117,6 +117,9 @@ private def run (s : String) : Option String := do
 
 -- nested loops: the inner `%for` does not capture the outer one
 #guard run "let s = ref 0 in for i = 1 to 3 do for j = 1 to 2 do incr s done done; !s" = some "6"
+-- the bounds are evaluated once, before the loop, and not under the loop variable
+#guard run "let n = ref 0 in let i = 3 in (for i = 0 to i do incr n done); !n" = some "4"
+#guard run "let n = ref 0 in let r = ref 2 in (for i = 0 to (incr r; !r) do incr n done); !n" = some "4"
 #guard run "let a = Array.make 3 0 in for i = 0 to 3 do a.(i) <- i done" = some "error: index out of bounds"
 
 -- exceptions are values; raising one stops the program

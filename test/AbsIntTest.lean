@@ -1,6 +1,7 @@
 import Diva.Parser
 import Diva.AbsInt.ItvDomain
 import Diva.AbsInt.Aeval
+import Diva.AbsInt.Infer
 
 open Diva Diva.AbsInt
 
@@ -67,3 +68,42 @@ private def countdown := "let rec f y = if y <= 0 then 0 else f (y - 1) in f x"
 #guard analyseH [("y#1", itv 0 10), ("$f#0", itv 0 0)] countdown  = some "0"
 #guard analyseH [("y#1", itv 0 10), ("$f#0", itv 5 5)] countdown  = some "⊤"  -- wrong claim: dropped
 #guard analyseH [("y#1", itv 0 10)] countdown                    = some "⊤"  -- no claim
+
+/-! ## Inferred hints -/
+
+private def σx : AEnv Itv := [("x", AVal.ofInt (itv 0 10))]
+
+/-- The hints inferred for `s`, with `x ∈ [0, 10]`. -/
+private def hintsOf (s : String) : Option String :=
+  (Diva.parse s).toOption.map fun e =>
+    toString ((inferHints σx e).map fun (k, a) => s!"{k}: {a}")
+
+/-- Analyse `s` with the hints inferred for it. -/
+private def analyseI (s : String) : Option String :=
+  (Diva.parse s).toOption.map fun e => toString (aeval (inferHints σx e) σx e)
+
+-- preconditions: the join of the arguments
+#guard hintsOf "let f = fun y -> y + 1 in f x"          = some "[y#0: [0, 10]]"
+#guard analyseI "let f = fun y -> y + 1 in f x"         = some "[1, 11]"
+#guard hintsOf "let f = fun y -> y / 2 in f (f x)"      = some "[y#0: [0, 10]]"
+#guard analyseI "let f = fun y -> y / 2 in f (f x)"     = some "[0, 5]"
+-- `y` must cover `y + 1`: widened to `+∞`
+#guard hintsOf "let f = fun y -> y + 1 in f (f x)"      = some "[y#0: [0, +∞]]"
+#guard analyseI "let f = fun y -> y + 1 in f (f x)"     = some "[1, +∞]"
+-- a function reached through another variable
+#guard analyseI "let g = fun y -> y in let h = g in h 3" = some "3"
+-- a parameter that no call reaches: no hint (anything)
+#guard hintsOf "fun y -> y"                             = some "[]"
+
+-- recursive functions: the precondition covers the recursive calls too
+#guard hintsOf countdown                                = some "[y#1: [0, 10], $f#0: 0]"
+#guard analyseI countdown                               = some "0"
+private def count := "let rec f y = if y <= 0 then 0 else 1 + f (y - 1) in f x"
+#guard hintsOf count                                    = some "[y#1: [0, 10], $f#0: [0, +∞]]"
+#guard analyseI count                                   = some "[0, +∞]"
+-- never returns
+#guard analyseI "let rec f y = f y in f x"              = some "⊥"
+-- two parameters named `y` get a hint each
+private def twoY := "let f = fun y -> y + 1 in let g = fun y -> if y then 1 else 2 in f 3 + g true"
+#guard hintsOf twoY  = some "[y#0: 3, y#1: true]"
+#guard analyseI twoY = some "5"
