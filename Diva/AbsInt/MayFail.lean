@@ -1,17 +1,15 @@
 import Diva.AbsInt.Aeval
 
 /-!
-# Possible errors
+# Possible errors: soundness
 
-`mayFail H σ e` says whether `e` may end in an error: division by zero, a failed
-`assert`, a type error (like `1 + true`), an unbound variable, or an exception.
-`false` means `e` certainly doesn't fail, and `mayFail_sound` proves it.
+`mayFail H σ e` (in `Aeval.lean`) says whether `e` may end in an error: division by
+zero, a failed `assert`, a type error (like `1 + true`), an unbound variable, or an
+exception. `false` means `e` certainly doesn't fail, and `mayFail_sound` proves it.
 
 It uses `aeval` for the values of the parts of `e`. For example, `10 / x` may fail
-only if `x` may be `0`.
-
-Not done yet: a function call always may fail, because summaries don't say whether
-the function's body may fail.
+only if `x` may be `0`. A call may fail unless the function's summary says that its
+body doesn't fail, and the argument is in the summary's precondition.
 -/
 
 namespace Diva.AbsInt
@@ -20,148 +18,12 @@ open AbsDomain NumDomain
 
 variable {A : Type} [NumDomain A]
 
-/-! ## Kinds of values -/
-
-/-- Any integer, and nothing else. -/
-def Flat.ints : Flat A := Flat.ofInt AbsDomain.top
-
-/-- Any boolean, and nothing else. -/
-def Flat.anyBool : Flat A := Flat.bools true true
-
-/-- `a` describes only values that `k` describes. -/
-def AVal.within (a : AVal A) (k : Flat A) : Bool := a.flat.leq k
-
-/-- `op` may fail on values that `a` and `b` describe. -/
-def opMayFail : BinOp → AVal A → AVal A → Bool
-  | .add, a, b | .sub, a, b | .mul, a, b | .lt, a, b | .le, a, b | .gt, a, b
-  | .ge, a, b => !(a.within Flat.ints && b.within Flat.ints)
-  -- also when the divisor may be `0`
-  | .div, a, b | .mod, a, b =>
-    !(a.within Flat.ints && b.within Flat.ints) || (cmpEq b.int (const 0)).1
-  -- `=` needs two integers or two booleans (or two `()`, not looked at here)
-  | .eq, a, b | .ne, a, b =>
-    !((a.within Flat.ints && b.within Flat.ints) ||
-      (a.within Flat.anyBool && b.within Flat.anyBool))
-
-/-- Whether `e` may end in an error, when `σ` describes the variables. -/
-def mayFail (H : Hints A) (σ : AEnv A) : Expr → Bool
-  | .int _ | .bool _ | .unit | .nil | .lam _ _ => false
-  -- a variable `σ` knows is bound (see `AEnv.Bound`)
-  | .var x => (σ.lookup x).isNone
-  | .binop op a b =>
-    mayFail H σ a || mayFail H σ b || opMayFail op (aeval H σ a) (aeval H σ b)
-  | .cons a b => mayFail H σ a || mayFail H σ b || !(aeval H σ b).within Flat.listV
-  | .letin x e1 e2 => mayFail H σ e1 || mayFail H ((x, aeval H σ e1) :: σ) e2
-  | .letrec f _ _ e2 => mayFail H ((f, AVal.fnV) :: σ) e2
-  | .ite c t e =>
-    -- a branch counts only if it can be taken
-    let ac := aeval H σ c
-    mayFail H σ c || !ac.within Flat.anyBool ||
-      (ac.tt && ((σ.assume c true).map (mayFail H · t)).getD false) ||
-      (ac.ff && ((σ.assume c false).map (mayFail H · e)).getD false)
-  | .assert c =>
-    let ac := aeval H σ c
-    mayFail H σ c || !ac.within Flat.anyBool || ac.ff
-  | .exn _ e => mayFail H σ e
-  -- calls, `raise`, `try`, lists, arrays and refs: not analysed yet
-  | _ => true
-
-/-! ## Soundness -/
-
-/-- Every variable that `σ` knows is bound in `ρ`. -/
-def AEnv.Bound (σ : AEnv A) (ρ : Env) : Prop :=
-  ∀ x, (σ.lookup x).isSome = true → (ρ.lookup x).isSome = true
-
-namespace AEnv
-
-variable {σ σ' : AEnv A} {ρ : Env}
-
-omit [NumDomain A] in
-theorem Bound.cons {x : String} {a : AVal A} {v : Value} (hb : σ.Bound ρ) :
-    AEnv.Bound ((x, a) :: σ) ((x, v) :: ρ) := by
-  intro y hy
-  by_cases hxy : y = x
-  · subst hxy
-    simp [List.lookup]
-  · have hne : (y == x) = false := by simpa using hxy
-    simp only [List.lookup, hne] at hy ⊢
-    exact hb y hy
-
-omit [NumDomain A] in
-/-- A variable that isn't bound is unknown to `σ`. -/
-theorem Bound.none {x : String} (hb : σ.Bound ρ) (hx : ρ.lookup x = none) :
-    (σ.lookup x).isNone = true := by
-  cases hs : σ.lookup x
-  · rfl
-  · have h := hb x (by simp [hs])
-    simp [hx] at h
-
-omit [NumDomain A] in
-theorem bind_bound {e : Expr} {a : AVal A} (hb : σ.Bound ρ) : (σ.bind e a).Bound ρ := by
-  cases e
-  case var x =>
-    by_cases hk : (σ.lookup x).isSome
-    · -- `x` was already known
-      simp only [bind, hk, ↓reduceIte]
-      intro y hy
-      by_cases hxy : y = x
-      · subst hxy
-        exact hb y hk
-      · have hne : (y == x) = false := by simpa using hxy
-        simp only [List.lookup, hne] at hy
-        exact hb y hy
-    · simp only [bind, hk]
-      exact hb
-  all_goals exact hb
-
-theorem refineLt_bound {l r : Expr} (hb : σ.Bound ρ) (h : σ.refineLt l r = some σ') :
-    σ'.Bound ρ := by
-  unfold refineLt at h
-  split at h
-  · cases h
-    exact bind_bound (bind_bound hb)
-  · cases h
-
-theorem refineLe_bound {l r : Expr} (hb : σ.Bound ρ) (h : σ.refineLe l r = some σ') :
-    σ'.Bound ρ := by
-  unfold refineLe at h
-  split at h
-  · cases h
-    exact bind_bound (bind_bound hb)
-  · cases h
-
-theorem refineEq_bound {l r : Expr} (hb : σ.Bound ρ) (h : σ.refineEq l r = some σ') :
-    σ'.Bound ρ := by
-  unfold refineEq at h
-  cases h
-  exact bind_bound (bind_bound hb)
-
-/-- Narrowing doesn't add variables. -/
-theorem assume_bound {c : Expr} {b : Bool} (hb : σ.Bound ρ) (h : σ.assume c b = some σ') :
-    σ'.Bound ρ := by
-  cases c
-  case binop op l r =>
-    cases op <;> cases b <;> simp only [assume] at h
-    case lt.true  => exact refineLt_bound hb h
-    case lt.false => exact refineLe_bound hb h
-    case le.true  => exact refineLe_bound hb h
-    case le.false => exact refineLt_bound hb h
-    case gt.true  => exact refineLt_bound hb h
-    case gt.false => exact refineLe_bound hb h
-    case ge.true  => exact refineLe_bound hb h
-    case ge.false => exact refineLt_bound hb h
-    case eq.true  => exact refineEq_bound hb h
-    case ne.false => exact refineEq_bound hb h
-    -- the other conditions don't narrow
-    all_goals
-      cases h
-      exact hb
-  all_goals
-    simp only [assume] at h
-    cases h
-    exact hb
-
-end AEnv
+theorem Flat.not_mem_bot {v : Value} : ¬ (Flat.bot : Flat A).mem v := by
+  intro h
+  cases v
+  case int n => exact bot_sound n h
+  case bool b => cases b <;> simp [Flat.mem, Flat.bot] at h
+  all_goals simp [Flat.mem, Flat.bot] at h
 
 theorem within_mem {a : AVal A} {k : Flat A} {v : Value} (hw : a.within k = true)
     (h : a.mem v) : k.mem v :=
@@ -239,6 +101,53 @@ theorem opMayFail_sound {op : BinOp} {a b : AVal A} {va vb : Value} {k : Err}
       obtain ⟨y, rfl⟩ := int_of_within hm.2 hb
       simp [BinOp.denote] at h
 
+/-- A call of something that isn't a closure may fail. -/
+theorem callMayFail_notFn {af aa : AVal A} {vf : Value} (hf : af.mem vf)
+    (hv : vf.isClos = false) : callMayFail af aa = true := by
+  unfold callMayFail
+  split
+  next S hS =>
+    cases hc : af.toFlat.leq Flat.bot && aa.flat.leq S.pre && !S.fails
+    · rfl
+    · simp only [Bool.and_eq_true] at hc
+      cases hf with
+      | flat hf =>
+        -- `af` describes no value but closures of its summary
+        exact absurd (Flat.mem_leq hf hc.1.1) Flat.not_mem_bot
+      | sum =>
+        -- a closure
+        simp [Value.isClos] at hv
+  next => rfl
+
+/-- A call whose body fails may fail. `hb`: any check of the body says that it may
+    fail (the induction hypothesis of `mayFail_sound_aux`). -/
+theorem callMayFail_sound {af aa : AVal A} {s : Option String} {x : String} {b : Expr}
+    {ρ' : Env} {va : Value} (hf : af.mem (.clos s x b ρ')) (ha : aa.mem va)
+    (hb : ∀ (H : Hints A) (σ : AEnv A), σ.Describes (callEnv s x b ρ' va) →
+      σ.Bound (callEnv s x b ρ' va) → mayFail H σ b = true) :
+    callMayFail af aa = true := by
+  unfold callMayFail
+  split
+  next S hS =>
+    cases hc : af.toFlat.leq Flat.bot && aa.flat.leq S.pre && !S.fails
+    · rfl
+    · -- the three checks pass
+      simp only [Bool.and_eq_true, Bool.not_eq_true'] at hc
+      obtain ⟨⟨hbot, hpre⟩, hF⟩ := hc
+      cases hf with
+      | flat hf => exact absurd (Flat.mem_leq hf hbot) Flat.not_mem_bot
+      | sum H σ hS' hP _ hF' hd hB hcheck hcheckF =>
+        -- the closure's summary is `S`
+        rw [hS] at hS'
+        cases hS'
+        -- the body was checked not to fail with an argument in `S₀.pre`
+        have hv := hP va (Flat.mem_leq (AVal.mem_flat ha) hpre)
+        have hok := hcheckF (hF' hF)
+        -- but it fails
+        have hfail := hb H _ (AEnv.Describes.body hd hB hcheck hcheckF hv) (AEnv.Bound.body hB)
+        simp [hok] at hfail
+  next => rfl
+
 theorem mayFail_sound_aux {ρ : Env} {μ μ' : Store} {e : Expr} {r : Outcome}
     (h : Eval ρ μ e r μ') :
     ∀ {H : Hints A} {σ : AEnv A} {k : Err}, σ.Describes ρ → σ.Bound ρ → r = .err k →
@@ -251,69 +160,87 @@ theorem mayFail_sound_aux {ρ : Env} {μ μ' : Store} {e : Expr} {r : Outcome}
   | varErr hx =>
     intro H σ k hσ hB hr
     exact hB.none hx
+  | app hf ha _ _ _ ihb =>
+    intro H σ k hσ hB hr
+    simp only [mayFail, mayFailM, Bool.or_eq_true]
+    refine Or.inr (callMayFail_sound (aeval_sound hσ hB hf) (aeval_sound hσ hB ha) ?_)
+    intro H' σ' hd hb
+    exact ihb (H := H') hd hb hr
+  | appNotFn hf hv =>
+    intro H σ k hσ hB hr
+    simp only [mayFail, mayFailM, Bool.or_eq_true]
+    exact Or.inr (callMayFail_notFn (aeval_sound hσ hB hf) hv)
+  | appErrF _ ih =>
+    intro H σ k hσ hB hr
+    simp only [mayFail, mayFailM, Bool.or_eq_true]
+    exact Or.inl (Or.inl (ih hσ hB hr))
+  | appErrA _ _ _ ih =>
+    intro H σ k hσ hB hr
+    simp only [mayFail, mayFailM, Bool.or_eq_true]
+    exact Or.inl (Or.inr (ih hσ hB hr))
   | letin h1 _ _ ih2 =>
     intro H σ k hσ hB hr
-    simp only [mayFail, Bool.or_eq_true]
-    exact Or.inr (ih2 (hσ.cons (aeval_sound hσ h1)) hB.cons hr)
+    simp only [mayFail, mayFailM, Bool.or_eq_true]
+    exact Or.inr (ih2 (hσ.cons (aeval_sound hσ hB h1)) hB.cons hr)
   | letinErr _ ih =>
     intro H σ k hσ hB hr
-    simp only [mayFail, Bool.or_eq_true]
+    simp only [mayFail, mayFailM, Bool.or_eq_true]
     exact Or.inl (ih hσ hB hr)
   | letrec _ ih =>
     intro H σ k hσ hB hr
-    -- `f` is a closure, which `fnV` describes
-    exact ih (hσ.cons (.flat rfl)) hB.cons hr
+    -- `f` has the same value as in `aeval`
+    exact ih (hσ.cons (letrecVal_mem hσ hB)) hB.cons hr
   | binop ha hb =>
     intro H σ k hσ hB hr
-    simp only [mayFail, Bool.or_eq_true]
-    exact Or.inr (opMayFail_sound (aeval_sound hσ ha) (aeval_sound hσ hb) hr)
+    simp only [mayFail, mayFailM, Bool.or_eq_true]
+    exact Or.inr (opMayFail_sound (aeval_sound hσ hB ha) (aeval_sound hσ hB hb) hr)
   | binopErrL _ ih =>
     intro H σ k hσ hB hr
-    simp only [mayFail, Bool.or_eq_true]
+    simp only [mayFail, mayFailM, Bool.or_eq_true]
     exact Or.inl (Or.inl (ih hσ hB hr))
   | binopErrR _ _ _ ih =>
     intro H σ k hσ hB hr
-    simp only [mayFail, Bool.or_eq_true]
+    simp only [mayFail, mayFailM, Bool.or_eq_true]
     exact Or.inl (Or.inr (ih hσ hB hr))
   | consNotList _ hb hv =>
     intro H σ k hσ hB hr
-    simp [mayFail, not_within_list (aeval_sound hσ hb) hv]
+    simp [mayFail, mayFailM, not_within_list (aeval_sound hσ hB hb) hv]
   | consErrL _ ih =>
     intro H σ k hσ hB hr
-    simp only [mayFail, Bool.or_eq_true]
+    simp only [mayFail, mayFailM, Bool.or_eq_true]
     exact Or.inl (Or.inl (ih hσ hB hr))
   | consErrR _ _ _ ih =>
     intro H σ k hσ hB hr
-    simp only [mayFail, Bool.or_eq_true]
+    simp only [mayFail, mayFailM, Bool.or_eq_true]
     exact Or.inl (Or.inr (ih hσ hB hr))
   | ifT hc _ _ iht =>
     intro H σ k hσ hB hr
     -- the `then` branch can be taken, and it fails
-    have htt : (aeval H σ _).tt = true := AVal.mem_tt (aeval_sound hσ hc)
+    have htt : (aevalM false H σ _).tt = true := AVal.mem_tt (aeval_sound hσ hB hc)
     obtain ⟨σt, hst, hdt⟩ := σ.assume_sound hσ hc
     have hft := iht (H := H) hdt (AEnv.assume_bound hB hst) hr
-    simp [mayFail, htt, hst, hft]
+    simp [mayFail, mayFailM, htt, hst, hft]
   | ifF hc _ _ ihe =>
     intro H σ k hσ hB hr
-    have hff : (aeval H σ _).ff = true := AVal.mem_ff (aeval_sound hσ hc)
+    have hff : (aevalM false H σ _).ff = true := AVal.mem_ff (aeval_sound hσ hB hc)
     obtain ⟨σe, hse, hde⟩ := σ.assume_sound hσ hc
     have hfe := ihe (H := H) hde (AEnv.assume_bound hB hse) hr
-    simp [mayFail, hff, hse, hfe]
+    simp [mayFail, mayFailM, hff, hse, hfe]
   | ifNotBool hc hv =>
     intro H σ k hσ hB hr
-    simp [mayFail, not_within_bool (aeval_sound hσ hc) hv]
+    simp [mayFail, mayFailM, not_within_bool (aeval_sound hσ hB hc) hv]
   | ifErr _ ih =>
     intro H σ k hσ hB hr
-    simp [mayFail, ih hσ hB hr]
+    simp [mayFail, mayFailM, ih hσ hB hr]
   | assertF hc =>
     intro H σ k hσ hB hr
-    simp [mayFail, AVal.mem_ff (aeval_sound hσ hc)]
+    simp [mayFail, mayFailM, AVal.mem_ff (aeval_sound hσ hB hc)]
   | assertNotBool hc hv =>
     intro H σ k hσ hB hr
-    simp [mayFail, not_within_bool (aeval_sound hσ hc) hv]
+    simp [mayFail, mayFailM, not_within_bool (aeval_sound hσ hB hc) hv]
   | assertErr _ ih =>
     intro H σ k hσ hB hr
-    simp [mayFail, ih hσ hB hr]
+    simp [mayFail, mayFailM, ih hσ hB hr]
   | exnErr _ ih =>
     intro H σ k hσ hB hr
     exact ih hσ hB hr

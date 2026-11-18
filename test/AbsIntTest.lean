@@ -145,4 +145,35 @@ private def mayFailS (s : String) : Option Bool :=
 #guard mayFailS "x :: 1"                          = some true
 #guard mayFailS "raise E"                         = some true
 #guard mayFailS "let rec f y = f y in x"          = some false
-#guard mayFailS "(fun y -> y) 1"                  = some true   -- calls: not yet
+#guard mayFailS "(fun y -> y) 1"                  = some false
+-- with no hint, a parameter may be anything: `10 / y` may fail
+#guard mayFailS "(fun y -> 10 / y) 1"             = some true
+
+/-- Whether `s` may fail, with `x ∈ [0, 10]` and the hints `H`. -/
+private def mayFailH (H : List (String × Itv)) (s : String) : Option Bool :=
+  (Diva.parse s).toOption.map fun e => mayFail (H.map fun (k, i) => (k, Flat.ofInt i)) σx e
+
+/-- Whether `s` may fail, with `x ∈ [0, 10]` and the hints inferred for it. -/
+private def mayFailI (s : String) : Option Bool :=
+  (Diva.parse s).toOption.map fun e => mayFail (inferHints σx e) σx e
+
+-- calls: they fail only if the body may, for an argument in the precondition
+#guard mayFailH [("y#0", itv 1 11)] "(fun y -> 10 / y) (x + 1)"           = some false
+#guard mayFailH [("y#0", itv 1 10)] "(fun y -> 10 / y) x"                 = some true  -- `x` ∉ [1, 10]
+#guard mayFailH [("y#0", itv 0 10)] "(fun y -> 10 / y) (x + 1)"           = some true  -- the body may fail
+#guard mayFailH [("y#0", itv 1 10)] "let f = fun y -> 10 / y in f 3 + f 5" = some false
+#guard mayFailS "1 2"                                                     = some true  -- not a function
+-- recursive functions: the body is checked assuming the recursive calls don't fail
+#guard mayFailH [("y#1", itv 0 10), ("$f#0", itv 0 0)] countdown = some false
+
+private def divRec :=
+  "let rec f y = if y <= 0 then 0 else (let z = 10 / y in f (y - 1)) in f x"
+#guard mayFailH [("y#1", itv 0 10), ("$f#0", itv 0 0)] divRec    = some false
+
+private def divDown :=
+  "let rec f y = if y < 0 then 0 else (let z = 10 / y in f (y - 1)) in f x"
+#guard mayFailH [("y#1", itv 0 10), ("$f#0", itv 0 0)] divDown   = some true
+-- `y` may be `0` with inferred hints
+
+#guard mayFailI countdown                                       = some false
+#guard mayFailI "let f = fun y -> 10 / y in f (x + 1)"          = some false

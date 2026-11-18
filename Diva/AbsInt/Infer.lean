@@ -62,8 +62,9 @@ def claims (H : Hints A) (C : Callees) (σ : AEnv A) : Expr → List (String × 
       | none => []
     arg ++ claims H C σ f ++ claims H C σ a
   | .letrec f x b e2 =>
-    let S : Summary A := (H.param x, H.result f)
-    let σb := (x, AVal.ofFlat S.1) :: (f, AVal.summary S) :: σ
+    -- `fails` doesn't change values, which are all the inference looks at
+    let S : Summary A := ⟨H.param x, H.result f, false⟩
+    let σb := (x, AVal.ofFlat S.pre) :: (f, AVal.summary S) :: σ
     let Cb := (x, none) :: (f, some x) :: C
     ("$" ++ f, (aevalM true H σb b).flat) :: claims H Cb σb b ++
       claims H ((f, some x) :: C) ((f, AVal.summary S) :: σ) e2

@@ -8,10 +8,11 @@ A `Flat A` describes a set of values of any kind: the integers by the numeric do
 `A`, booleans by value (`tt`, `ff`), and every other kind by a flag saying whether
 the value may be of that kind.
 
-An `AVal A` adds a *summary* `(P, R)` for the closures it may be: called with an
-argument in `P`, they return a value in `R` (if they return). Summaries are over
-`Flat`, so a closure returned by a closure loses its summary. Which values an
-`AVal` describes is defined with `aeval` (`AVal.mem`, in `Aeval.lean`).
+An `AVal A` adds a *summary* for the closures it may be: called with an argument in
+`pre`, they return a value in `res` (if they return), and fail only if `fails` is `true`.
+Summaries are over `Flat`, so a closure returned by a closure loses its summary.
+Which values an `AVal` describes is defined with `aeval` (`AVal.mem`, in
+`Aeval.lean`).
 -/
 
 namespace Diva.AbsInt
@@ -125,14 +126,18 @@ end Flat
 
 /-! ## Function summaries -/
 
-/-- `(P, R)`: called with an argument in `P`, a closure returns a value in `R` (if it
-    returns). -/
-abbrev Summary (A : Type) := Flat A × Flat A
+/-- What calling a closure gives, for an argument in `pre`: a value in `res` (if it
+    returns), and an error only if `fails` is `true`. -/
+structure Summary (A : Type) where
+  pre : Flat A
+  res : Flat A
+  fails : Bool
+  deriving Inhabited
 
 /-- The closure `clos s x b ρ` satisfies the summary `S`. -/
 def Sat [NumDomain A] (S : Summary A) (s : Option String) (x : String) (b : Expr)
     (ρ : Env) : Prop :=
-  ∀ v w μ μ', S.1.mem v → Eval (callEnv s x b ρ v) μ b (.ok w) μ' → S.2.mem w
+  ∀ v w μ μ', S.pre.mem v → Eval (callEnv s x b ρ v) μ b (.ok w) μ' → S.res.mem w
 
 /-- `Flat`, plus a summary that the closures it may be satisfy (`fn`: any closure). -/
 structure AVal (A : Type) extends Flat A where
@@ -164,8 +169,9 @@ def flat (a : AVal A) : Flat A := { a.toFlat with fn := a.fn || a.sum.isSome }
 def join (a b : AVal A) : AVal A :=
   match a.sum, b.sum with
   | some S, some T =>
-    if S.1.leq T.1 && T.1.leq S.1 then
-      { toFlat := a.toFlat.join b.toFlat, sum := some (S.1, S.2.join T.2) }
+    if S.pre.leq T.pre && T.pre.leq S.pre then
+      { toFlat := a.toFlat.join b.toFlat,
+        sum := some ⟨S.pre, S.res.join T.res, S.fails || T.fails⟩ }
     else ofFlat (a.flat.join b.flat)
   | some S, none => { toFlat := a.toFlat.join b.toFlat, sum := some S }
   | none, s => { toFlat := a.toFlat.join b.toFlat, sum := s }
@@ -174,8 +180,8 @@ instance [ToString A] : ToString (AVal A) where
   toString a :=
     match a.sum with
     | none => toString a.toFlat
-    | some (P, R) =>
-      let f := s!"fun {P} -> {R}"
+    | some S =>
+      let f := s!"fun {S.pre} -> {S.res}"
       if toString a.toFlat == "⊥" then f else s!"{a.toFlat} | {f}"
 
 end AVal
