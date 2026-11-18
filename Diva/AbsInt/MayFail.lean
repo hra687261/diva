@@ -256,4 +256,25 @@ theorem mayFail_sound {H : Hints A} {σ : AEnv A} {ρ : Env} {μ μ' : Store} {e
     mayFail H σ e = true :=
   mayFail_sound_aux h hσ hB rfl
 
+/-- The empty abstract environment describes the empty environment. -/
+theorem AEnv.Describes.nil : AEnv.Describes ([] : AEnv A) [] := by
+  intro x v hx
+  simp [List.lookup] at hx
+
+omit [NumDomain A] in
+/-- The empty abstract environment knows no variable. -/
+theorem AEnv.Bound.nil : AEnv.Bound ([] : AEnv A) [] := by
+  intro x hx
+  simp [List.lookup] at hx
+
+/-- **Safety**: a program without free variables that `mayFail` accepts never ends
+    in an error, whatever the hints and the starting store. -/
+theorem safe {H : Hints A} {e : Expr} {μ μ' : Store} {k : Err}
+    (hok : mayFail H [] e = false) : ¬ Eval [] μ e (.err k) μ' := by
+  intro h
+  -- if it did, `mayFail` would say `true`
+  have hfail := mayFail_sound (H := H) AEnv.Describes.nil AEnv.Bound.nil h
+  rw [hok] at hfail
+  cases hfail
+
 end Diva.AbsInt

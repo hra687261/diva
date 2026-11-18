@@ -177,3 +177,10 @@ private def divDown :=
 
 #guard mayFailI countdown                                       = some false
 #guard mayFailI "let f = fun y -> 10 / y in f (x + 1)"          = some false
+
+/-! ## Safety, checked by the kernel -/
+
+-- `safe` turns the checker's answer into a theorem about every run of the program
+example {μ μ' : Store} {k : Err} :
+    ¬ Eval [] μ (.binop .div (.int 10) (.binop .add (.int 1) (.int 1))) (.err k) μ' :=
+  safe (H := ([] : Hints Itv)) (by decide)
