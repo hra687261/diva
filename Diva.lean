@@ -9,3 +9,4 @@ import Diva.AbsInt.AVal
 import Diva.AbsInt.ItvDomain
 import Diva.AbsInt.Aeval
 import Diva.AbsInt.Infer
+import Diva.AbsInt.MayFail

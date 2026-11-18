@@ -2,6 +2,7 @@ import Diva.Parser
 import Diva.AbsInt.ItvDomain
 import Diva.AbsInt.Aeval
 import Diva.AbsInt.Infer
+import Diva.AbsInt.MayFail
 
 open Diva Diva.AbsInt
 
@@ -118,3 +119,30 @@ private def count := "let rec f y = if y <= 0 then 0 else 1 + f (y - 1) in f x"
 private def twoY := "let f = fun y -> y + 1 in let g = fun y -> if y then 1 else 2 in f 3 + g true"
 #guard hintsOf twoY  = some "[y#0: 3, y#1: true]"
 #guard analyseI twoY = some "5"
+
+/-! ## Possible errors -/
+
+/-- Whether `s` may fail, with `x ∈ [0, 10]`. -/
+private def mayFailS (s : String) : Option Bool :=
+  (Diva.parse s).toOption.map fun e => mayFail ([] : Hints Itv) σx e
+
+#guard mayFailS "x + 1"                           = some false
+#guard mayFailS "10 / x"                          = some true   -- `x` may be `0`
+#guard mayFailS "10 / (x + 1)"                    = some false
+#guard mayFailS "if x > 0 then 10 / x else 0"     = some false  -- `x` is narrowed
+#guard mayFailS "if x < 5 then 10 / x else 0"     = some true
+#guard mayFailS "x"                               = some false  -- bound
+#guard mayFailS "y"                               = some true   -- unbound
+#guard mayFailS "1 + true"                        = some true   -- type error
+#guard mayFailS "x = 3"                           = some false
+#guard mayFailS "x = true"                        = some true
+#guard mayFailS "assert (x < 20)"                 = some false
+#guard mayFailS "assert (x < 5)"                  = some true
+#guard mayFailS "if 1 then 2 else 3"              = some true
+#guard mayFailS "if x > 20 then 1 / 0 else 1"     = some false  -- dead branch
+#guard mayFailS "let y = x - 1 in 10 / y"         = some true   -- `y` may be `0`
+#guard mayFailS "x :: [1]"                        = some false
+#guard mayFailS "x :: 1"                          = some true
+#guard mayFailS "raise E"                         = some true
+#guard mayFailS "let rec f y = f y in x"          = some false
+#guard mayFailS "(fun y -> y) 1"                  = some true   -- calls: not yet

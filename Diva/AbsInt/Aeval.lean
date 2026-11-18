@@ -57,9 +57,10 @@ def atom (σ : AEnv A) : Expr → AVal A
   | .int k => AVal.ofInt (const k)
   | _ => AVal.top
 
-/-- Record `a` for `e` if it is a variable. -/
+/-- Record `a` for `e` if `e` is a variable that `σ` knows. A variable `σ` doesn't
+    know is left out, so that `σ` keeps the same variables. -/
 def bind (σ : AEnv A) : Expr → AVal A → AEnv A
-  | .var x, a => (x, a) :: σ
+  | .var x, a => if (σ.lookup x).isSome then (x, a) :: σ else σ
   | _, _ => σ
 
 /-- `σ` narrowed by `l < r`, or `none` if `l < r` can't hold. -/
@@ -370,13 +371,19 @@ theorem bind_sound {e : Expr} {a : AVal A} {μ μ' : Store} {v : Value} (hσ : �
   case var x =>
     cases h with
     | var hx =>
-      intro y w hy
-      by_cases hxy : x = y
-      · subst hxy
-        rw [hx] at hy; cases hy
-        simpa [get, bind, List.lookup] using ha
-      · have hyx : (y == x) = false := by simp; exact Ne.symm hxy
-        simpa [get, bind, List.lookup, hyx] using hσ y w hy
+      by_cases hk : (σ.lookup x).isSome
+      · -- `x` is recorded with `a`
+        simp only [bind, hk, ↓reduceIte]
+        intro y w hy
+        by_cases hxy : x = y
+        · subst hxy
+          rw [hx] at hy; cases hy
+          simpa [get, List.lookup] using ha
+        · have hyx : (y == x) = false := by simp; exact Ne.symm hxy
+          simpa [get, List.lookup, hyx] using hσ y w hy
+      · -- `σ` doesn't know `x`: nothing changes
+        simp only [bind, hk]
+        exact hσ
   all_goals exact hσ
 
 /-- If `x = y` holds, `x` and `y` are the same value, and `eqMeet` describes it. -/
