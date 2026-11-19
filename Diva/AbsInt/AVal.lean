@@ -71,6 +71,13 @@ def mem (a : Flat A) : Value → Prop
   | .arr _ | .ref _ => a.loc = true
   | .exn _ _ => a.exn = true
 
+theorem not_mem_bot {v : Value} : ¬ (bot : Flat A).mem v := by
+  intro h
+  cases v
+  case int n => exact bot_sound n h
+  case bool b => cases b <;> simp [mem, bot] at h
+  all_goals simp [mem, bot] at h
+
 theorem mem_top (v : Value) : (top : Flat A).mem v := by
   cases v
   case int n => exact top_sound n
@@ -100,6 +107,20 @@ theorem mem_leq {a b : Flat A} {v : Value} (h : a.mem v) (hl : a.leq b = true) :
 def sub (a b : Flat A) : Prop := ∀ v, a.mem v → b.mem v
 
 theorem sub_refl (a : Flat A) : a.sub a := fun _ h => h
+
+/-- `v` is a list whose elements are all in `e`. -/
+def listMem (e : Flat A) : Value → Prop
+  | .nil => True
+  | .cons h t => e.mem h ∧ e.listMem t
+  | _ => False
+
+theorem listMem_mono {e e' : Flat A} (he : e.sub e') :
+    (v : Value) → e.listMem v → e'.listMem v
+  | .nil, _ => trivial
+  | .cons h t, ⟨hh, ht⟩ => ⟨he h hh, listMem_mono he t ht⟩
+
+theorem listMem_isList {e : Flat A} : (v : Value) → e.listMem v → v.isList = true
+  | .nil, _ | .cons _ _, _ => rfl
 
 /-- Each element of `as` does not describe more values than the one at the same
     place in `bs`, and the lists have the same length. -/
@@ -169,9 +190,13 @@ def Sat [NumDomain A] (S : Summary A) (s : Option String) (x : String) (b : Expr
     (ρ : Env) : Prop :=
   ∀ v w μ μ', S.pre.mem v → Eval (callEnv s x b ρ v) μ b (.ok w) μ' → S.res.mem w
 
-/-- `Flat`, plus a summary that the closures it may be satisfy (`fn`: any closure). -/
+/-- `Flat`, plus a summary that the closures it may be satisfy (`fn`: any closure),
+    and a description of the elements of the lists it may be (`list`: any list).
+    The lists described by `elems` may be `[]` only if `mayNil` is `true`. -/
 structure AVal (A : Type) extends Flat A where
   sum : Option (Summary A)
+  elems : Option (Flat A) := none
+  mayNil : Bool := true
   deriving Inhabited
 
 namespace AVal
@@ -191,12 +216,22 @@ def fnV : AVal A := ofFlat Flat.fnV
 def exnV : AVal A := ofFlat Flat.exnV
 /-- The closures that satisfy `S`. -/
 def summary (S : Summary A) : AVal A := { toFlat := Flat.bot, sum := some S }
+/-- The lists whose elements are in `e`, and that may be `[]` only if `mayNil`. -/
+def listOf (e : Flat A) (mayNil : Bool := true) : AVal A :=
+  { toFlat := Flat.bot, sum := none, elems := some e, mayNil := mayNil }
 
-/-- Forget the summary: its closures become "any closure". -/
-def flat (a : AVal A) : Flat A := { a.toFlat with fn := a.fn || a.sum.isSome }
+/-- Forget the summary and the elements: "any closure" and "any list". -/
+def flat (a : AVal A) : Flat A :=
+  { a.toFlat with fn := a.fn || a.sum.isSome, list := a.list || a.elems.isSome }
 
-/-- Summaries are kept when they have the same preconditions, forgotten otherwise. -/
+/-- Summaries are kept when they have the same preconditions, forgotten otherwise.
+    Elements are joined. The lists may be `[]` if those of `a` or of `b` may. -/
 def join (a b : AVal A) : AVal A :=
+  { joinSum a b with
+    elems := Option.merge Flat.join a.elems b.elems,
+    mayNil := (a.elems.isSome && a.mayNil) || (b.elems.isSome && b.mayNil) }
+where
+  joinSum (a b : AVal A) : AVal A :=
   match a.sum, b.sum with
   | some S, some T =>
     if S.pre.leq T.pre && T.pre.leq S.pre && Flat.leqs S.rest T.rest &&
@@ -207,13 +242,38 @@ def join (a b : AVal A) : AVal A :=
   | some S, none => { toFlat := a.toFlat.join b.toFlat, sum := some S }
   | none, s => { toFlat := a.toFlat.join b.toFlat, sum := s }
 
+/-! ### Lists -/
+
+/-- `h :: t`: the elements of `t`, and `h`. If `t` may be any list, any list. -/
+def cons (h t : AVal A) : AVal A :=
+  if t.list then listV
+  else match t.elems with
+    | some e => listOf (e.join h.flat) (mayNil := false)
+    | none => bot   -- `t` is not a list: an error, no value
+
+/-- `a` may be `[]`. -/
+def mayBeNil (a : AVal A) : Bool := a.list || (a.elems.isSome && a.mayNil)
+
+/-- The first elements of the lists `a` describes. -/
+def heads (a : AVal A) : Flat A :=
+  if a.list then Flat.top else a.elems.getD Flat.bot
+
+/-- The tails of the lists `a` describes. If `a` may be any list, `top`: a `Value.cons`
+    may have a tail that is not a list. -/
+def tails (a : AVal A) : AVal A :=
+  if a.list then top else (a.elems.map fun e => listOf e).getD bot
+
 instance [ToString A] : ToString (AVal A) where
   toString a :=
-    match a.sum with
-    | none => toString a.toFlat
-    | some S =>
-      let f := s!"fun {" -> ".intercalate ((S.pre :: S.rest).map toString)} -> {S.res}"
-      if toString a.toFlat == "⊥" then f else s!"{a.toFlat} | {f}"
+    let parts :=
+      (if toString a.toFlat == "⊥" then [] else [toString a.toFlat]) ++
+      (match a.sum with
+        | none => []
+        | some S => [s!"fun {" -> ".intercalate ((S.pre :: S.rest).map toString)} -> {S.res}"]) ++
+      (match a.elems with
+        | none => []
+        | some e => [if a.mayNil then s!"list of {e}" else s!"non-empty list of {e}"])
+    if parts.isEmpty then "⊥" else " | ".intercalate parts
 
 end AVal
 

@@ -38,7 +38,7 @@ private def analyse (s : String) : Option String :=
 -- other kinds of values
 #guard analyse "true"                            = some "true"
 #guard analyse "()"                              = some "()"
-#guard analyse "[1; 2]"                          = some "list"
+#guard analyse "[1; 2]"                          = some "non-empty list of [1, 2]"
 #guard analyse "fun y -> y"                      = some "fun ⊤ -> ⊤"
 #guard analyse "let rec f y = y in f"            = some "fun ⊤ -> ⊤"
 #guard analyse "E 1"                             = some "exn"
@@ -204,6 +204,19 @@ private def countAcc := "let rec f n acc = if n <= 0 then acc else f (n - 1) (ac
 #guard hintsOf countAcc  = some "[n#1: [0, 10], $f#0: [0, +∞], acc#2: [0, +∞]]"
 #guard analyseI countAcc = some "[0, +∞]"
 #guard mayFailI countAcc = some false
+-- lists: described by their elements
+#guard analyse "[]"                                   = some "list of ⊥"
+#guard analyse "x :: [3]"                             = some "non-empty list of [0, 10]"
+#guard analyse "if x < 5 then [1] else [2]"           = some "non-empty list of [1, 2]"
+#guard analyse "match [x; 3] with [] -> 0 | h :: t -> h + 1" = some "[1, 11]"  -- never `[]`
+#guard analyse "match [x] with [] -> [] | h :: t -> t"       = some "list of [0, 10]"
+#guard analyse "match y with [] -> 0 | h :: t -> h"          = some "⊤"  -- `y` unknown
+#guard analyse "match [] with [] -> 0 | h :: t -> h"         = some "0"  -- always `[]`
+#guard analyse "match (if x < 5 then [] else [x]) with [] -> 0 | h :: t -> h" = some "[0, 10]"
+-- the inference looks inside `match`
+#guard analyseI "let f = fun y -> y + 1 in match [x] with [] -> 0 | h :: t -> f h"
+  = some "[1, 11]"
+
 /-! ## Safety, checked by the kernel -/
 
 -- `safe` turns the checker's answer into a theorem about every run of the program

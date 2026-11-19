@@ -209,7 +209,9 @@ def opMayFail [NumDomain A] : BinOp → AVal A → AVal A → Bool
     doesn't fail. -/
 def callMayFail [NumDomain A] (af aa : AVal A) : Bool :=
   match af.sum with
-  | some S => !(af.toFlat.leq Flat.bot && aa.flat.leq S.pre && (!S.rest.isEmpty || !S.fails))
+  | some S =>
+    !(af.toFlat.leq Flat.bot && af.elems.isNone && aa.flat.leq S.pre &&
+      (!S.rest.isEmpty || !S.fails))
   | none => true
 
 mutual
@@ -224,7 +226,8 @@ def aevalM [NumDomain A] (opt : Bool) (H : Hints A) (σ : AEnv A) : Expr → AVa
   | .int n => AVal.ofInt (const n)
   | .bool b => AVal.bools b !b
   | .unit => AVal.unitV
-  | .nil | .cons _ _ => AVal.listV
+  | .nil => AVal.listOf Flat.bot
+  | .cons a b => (aevalM opt H σ a).cons (aevalM opt H σ b)
   | .var x => σ.get x
   | .binop op a b => abinop op (aevalM opt H σ a) (aevalM opt H σ b)
   | .letin x e1 e2 => aevalM opt H ((x, aevalM opt H σ e1) :: σ) e2
@@ -260,6 +263,13 @@ def aevalM [NumDomain A] (opt : Bool) (H : Hints A) (σ : AEnv A) : Expr → AVa
   | .assert _ => AVal.unitV
   | .exn _ _ => AVal.exnV
   | .raise _ => AVal.bot   -- never gives a value
+  | .matchList s n x xs c =>
+    -- a branch is taken only if the list may be `[]`, or may have a first element
+    let vs := aevalM opt H σ s
+    joinOpt
+      (if vs.mayBeNil then some (aevalM opt H σ n) else none)
+      (if vs.heads.leq Flat.bot then none
+       else some (aevalM opt H ((xs, vs.tails) :: (x, AVal.ofFlat vs.heads) :: σ) c))
   | _ => AVal.top
 
 /-- Whether `e` may end in an error: division by zero, a failed `assert`, a type
@@ -346,7 +356,9 @@ def Checked [NumDomain A] (H : Hints A) :
     directly: soundness can then be proved by induction on the evaluation, and `Sat`
     follows (`letrec_sat`). -/
 inductive AVal.mem {A : Type} [NumDomain A] : AVal A → Value → Prop where
+  -- a value described by the flags and the integers of `a`
   | flat {a : AVal A} {v : Value} : a.toFlat.mem v → AVal.mem a v
+  -- a closure described by the summary `a.sum`
   | sum {a : AVal A} {S S₀ : Summary A} {s : Option String} {x : String} {b : Expr}
       {ρ : Env} (H : Hints A) (σ : AEnv A) :
       a.sum = some S →
@@ -359,6 +371,9 @@ inductive AVal.mem {A : Type} [NumDomain A] : AVal A → Value → Prop where
       -- the body was checked against `S₀`
       Checked H (bodyEnv s x S₀ σ) b S₀.rest S₀.res S₀.fails →
       AVal.mem a (.clos s x b ρ)
+  -- a list whose elements are in `a.elems`, and that is `[]` only if `a.mayNil`
+  | list {a : AVal A} {e : Flat A} {v : Value} :
+      a.elems = some e → e.listMem v → (v = .nil → a.mayNil = true) → AVal.mem a v
 
 namespace AVal
 
@@ -378,18 +393,22 @@ theorem mem_bools {p : Bool × Bool} {P : Prop} [Decidable P]
 theorem mem_int {a : AVal A} {n : Int} (h : a.mem (.int n)) : γ a.int n := by
   cases h with
   | flat h => exact h
+  | list _ hm _ => exact hm.elim   -- not a list
 
 theorem mem_tt {a : AVal A} (h : a.mem (.bool true)) : a.tt = true := by
   cases h with
   | flat h => exact h
+  | list _ hm _ => exact hm.elim   -- not a list
 
 theorem mem_ff {a : AVal A} (h : a.mem (.bool false)) : a.ff = true := by
   cases h with
   | flat h => exact h
+  | list _ hm _ => exact hm.elim   -- not a list
 
 theorem mem_unit {a : AVal A} (h : a.mem .unit) : a.unit = true := by
   cases h with
   | flat h => exact h
+  | list _ hm _ => exact hm.elim   -- not a list
 
 theorem mem_flat {a : AVal A} {v : Value} (h : a.mem v) : a.flat.mem v := by
   cases h with
@@ -401,15 +420,49 @@ theorem mem_flat {a : AVal A} {v : Value} (h : a.mem v) : a.flat.mem v := by
   | sum _ _ hS =>
     -- a closure of the summary: now "any closure"
     simp [Flat.mem, flat, hS]
+  | list hE hm _ =>
+    -- a list of `a.elems`: now "any list"
+    cases v
+    case nil | cons => simp [Flat.mem, flat, hE]
+    all_goals exact hm.elim
+
+/-- A list described by `a.elems` is described by an `AVal` whose `elems` and
+    `mayNil` are those of `join a b`. -/
+theorem mem_elems_l {a b : AVal A} {t : Flat A} {s : Option (Summary A)} {e : Flat A}
+    {v : Value} (he : a.elems = some e) (hm : e.listMem v) (hn : v = .nil → a.mayNil = true) :
+    ({ toFlat := t, sum := s, elems := Option.merge Flat.join a.elems b.elems,
+       mayNil := (a.elems.isSome && a.mayNil) || (b.elems.isSome && b.mayNil) } : AVal A).mem v := by
+  rw [he]
+  -- `[]` only if `a.mayNil`
+  cases b.elems with
+  | none => exact .list rfl hm (fun hv => by simp [hn hv])
+  | some e' =>
+    exact .list rfl (Flat.listMem_mono (fun w hw => Flat.mem_join_l hw) v hm)
+      (fun hv => by simp [hn hv])
+
+/-- A list described by `b.elems` is described by an `AVal` whose `elems` and
+    `mayNil` are those of `join a b`. -/
+theorem mem_elems_r {a b : AVal A} {t : Flat A} {s : Option (Summary A)} {e : Flat A}
+    {v : Value} (he : b.elems = some e) (hm : e.listMem v) (hn : v = .nil → b.mayNil = true) :
+    ({ toFlat := t, sum := s, elems := Option.merge Flat.join a.elems b.elems,
+       mayNil := (a.elems.isSome && a.mayNil) || (b.elems.isSome && b.mayNil) } : AVal A).mem v := by
+  rw [he]
+  -- `[]` only if `b.mayNil`
+  cases a.elems with
+  | none => exact .list rfl hm (fun hv => by simp [hn hv])
+  | some e' =>
+    exact .list rfl (Flat.listMem_mono (fun w hw => Flat.mem_join_r hw) v hm)
+      (fun hv => by simp [hn hv])
 
 theorem mem_join_l {a b : AVal A} {v : Value} (h : a.mem v) : (a.join b).mem v := by
-  unfold join
+  dsimp only [join, join.joinSum]
   split
   next S T hS hT =>
     split
     next hpre =>
       cases h with
       | flat h => exact .flat (Flat.mem_join_l h)
+      | list hE hm hn => exact mem_elems_l hE hm hn
       | sum H σ hS' hP hPs hR hF hd hB hchk =>
         -- The closure is described by `a`'s summary `S`. We show that it is also
         -- described by the joined summary
@@ -426,6 +479,7 @@ theorem mem_join_l {a b : AVal A} {v : Value} (h : a.mem v) : (a.join b).mem v :
   next S hS hT =>
     cases h with
     | flat h => exact .flat (Flat.mem_join_l h)
+    | list hE hm hn => exact mem_elems_l hE hm hn
     | sum H σ hS' hP hPs hR hF hd hB hchk =>
       -- the summary is kept
       rw [hS] at hS'
@@ -433,13 +487,14 @@ theorem mem_join_l {a b : AVal A} {v : Value} (h : a.mem v) : (a.join b).mem v :
   next _ _ hS =>
     cases h with
     | flat h => exact .flat (Flat.mem_join_l h)
+    | list hE hm hn => exact mem_elems_l hE hm hn
     | sum _ _ hS' =>
       -- `a` has no summary
       rw [hS] at hS'
       cases hS'
 
 theorem mem_join_r {a b : AVal A} {v : Value} (h : b.mem v) : (a.join b).mem v := by
-  unfold join
+  dsimp only [join, join.joinSum]
   split
   next S T hS hT =>
     split
@@ -447,6 +502,7 @@ theorem mem_join_r {a b : AVal A} {v : Value} (h : b.mem v) : (a.join b).mem v :
       simp only [Bool.and_eq_true] at hpre
       cases h with
       | flat h => exact .flat (Flat.mem_join_r h)
+      | list hE hm hn => exact mem_elems_r hE hm hn
       | sum H σ hT' hP hPs hR hF hd hB hchk =>
         -- The closure is described by `b`'s summary `T`. We show that it is also
         -- described by the joined summary
@@ -466,6 +522,7 @@ theorem mem_join_r {a b : AVal A} {v : Value} (h : b.mem v) : (a.join b).mem v :
   next S hS hT =>
     cases h with
     | flat h => exact .flat (Flat.mem_join_r h)
+    | list hE hm hn => exact mem_elems_r hE hm hn
     | sum _ _ hT' =>
       -- `b` has no summary
       rw [hT] at hT'
@@ -473,9 +530,88 @@ theorem mem_join_r {a b : AVal A} {v : Value} (h : b.mem v) : (a.join b).mem v :
   next =>
     cases h with
     | flat h => exact .flat (Flat.mem_join_r h)
+    | list hE hm hn => exact mem_elems_r hE hm hn
     | sum H σ hT' hP hPs hR hF hd hB hchk =>
       -- the summary is kept
       exact .sum H σ hT' hP hPs hR hF hd hB hchk
+
+/-! ### Lists -/
+
+/-- `cons` describes `vh :: vt`. -/
+theorem mem_cons {h t : AVal A} {vh vt : Value} (hh : h.mem vh) (ht : t.mem vt)
+    (hl : vt.isList = true) : (h.cons t).mem (.cons vh vt) := by
+  unfold cons
+  split
+  case isTrue =>
+    exact .flat rfl
+  case isFalse hnl =>
+    cases ht
+    case flat ht =>
+      -- `vt` is a list, so `t` may be any list: excluded by the `if`
+      cases vt
+      case nil | cons => exact absurd ht hnl
+      all_goals simp [Value.isList] at hl
+    case sum =>
+      -- `vt` is a closure, not a list
+      simp [Value.isList] at hl
+    case list hE hm hn =>
+      -- the elements of `t`, joined with `h`
+      rw [hE]
+      refine AVal.mem.list rfl ?_ ?_
+      · -- `listMem` of `vh :: vt`: `vh` and the elements of `vt` are in the join
+        unfold Flat.listMem
+        constructor
+        · -- `vh` is in `h`, so in the join
+          exact Flat.mem_join_r (mem_flat hh)
+        · -- the elements of `vt` are in `e`, so in the join
+          exact Flat.listMem_mono (fun w hw => Flat.mem_join_l hw) vt hm
+      · -- `vh :: vt` is not `[]`
+        intro hv
+        cases hv
+
+/-- `heads` describes the first element of a list. -/
+theorem mem_heads {a : AVal A} {vh vt : Value} (h : a.mem (.cons vh vt)) :
+    a.heads.mem vh := by
+  unfold heads
+  split
+  case isTrue => exact Flat.mem_top vh
+  case isFalse hnl =>
+    cases h
+    case flat h => exact absurd h hnl   -- `a` may be any list: excluded by the `if`
+    case list hE hm hn =>
+      -- the elements of `a`
+      rw [hE]
+      exact hm.1
+
+/-- `tails` describes the tail of a list. -/
+theorem mem_tails {a : AVal A} {vh vt : Value} (h : a.mem (.cons vh vt)) :
+    a.tails.mem vt := by
+  unfold tails
+  split
+  case isTrue => exact mem_top vt
+  case isFalse hnl =>
+    cases h
+    case flat h => exact absurd h hnl   -- `a` may be any list: excluded by the `if`
+    case list hE hm hn =>
+      -- a list of the elements of `a`
+      rw [hE]
+      exact .list rfl hm.2 (fun _ => rfl)
+
+/-- If `a` describes `[]`, `a` may be `[]`. -/
+theorem mayBeNil_of_mem {a : AVal A} (h : a.mem .nil) : a.mayBeNil = true := by
+  cases h
+  case flat h =>
+    -- `a` may be any list
+    have hl : a.list = true := h
+    simp [mayBeNil, hl]
+  case list hE _ hn => simp [mayBeNil, hE, hn rfl]
+
+/-- If `a` describes a list `vh :: vt`, the first elements of `a` are not `⊥`. -/
+theorem heads_not_bot {a : AVal A} {vh vt : Value} (h : a.mem (.cons vh vt)) :
+    a.heads.leq Flat.bot = false := by
+  cases hb : a.heads.leq Flat.bot
+  case false => rfl
+  case true => exact absurd (Flat.mem_leq (mem_heads h) hb) Flat.not_mem_bot
 
 end AVal
 
@@ -926,6 +1062,7 @@ theorem apply_sound [NumDomain A] {af aa : AVal A} {s : Option String} {x : Stri
       | flat hf =>
         -- "any closure" is impossible, since `af.fn = false`: `hf` is `False`
         simp [Flat.mem, hcall.1] at hf
+      | list _ hm _ => exact hm.elim   -- a closure is not a list
       | @sum _ _ S₀ _ _ _ _ H σ hS' hP hPs hR hF hd hB hchk =>
         -- the closure's summary is `S`
         rw [hS] at hS'
@@ -1007,8 +1144,28 @@ theorem aeval_sound_aux [NumDomain A] {ρ : Env} {μ μ' : Store} {e : Expr} {r 
   induction h with
   | int => intro H σ v hσ hB hr; cases hr; exact .flat (const_sound _)
   | bool => intro H σ v hσ hB hr; cases hr; exact AVal.mem_bool _
-  | unit | nil => intro H σ v hσ hB hr; cases hr; exact .flat rfl
-  | cons => intro H σ v hσ hB hr; cases hr; exact .flat rfl
+  | unit => intro H σ v hσ hB hr; cases hr; exact .flat rfl
+  | nil => intro H σ v hσ hB hr; cases hr; exact .list (e := Flat.bot) rfl trivial (fun _ => rfl)
+  | cons _ _ hl iha ihb =>
+    intro H σ v hσ hB hr
+    cases hr
+    exact AVal.mem_cons (iha hσ hB rfl) (ihb hσ hB rfl) hl
+  | matchNil _ _ ihs ihn =>
+    intro H σ v hσ hB hr
+    -- the list is `[]`, so the `[]` branch is taken
+    have hnil : (aevalM false H σ _).mayBeNil = true := AVal.mayBeNil_of_mem (ihs hσ hB rfl)
+    simp only [aeval, aevalM, hnil, ↓reduceIte]
+    exact joinOpt_sound_l (ihn hσ hB hr)
+  | @matchCons _ _ _ _ _ _ xs x _ _ _ _ _ _ ihs ihc =>
+    intro H σ v hσ hB hr
+    -- `x` is in the heads of the list, and `xs` in its tails
+    have hs := ihs (H := H) hσ hB rfl
+    have hd := (hσ.cons (x := x) (AVal.mem_ofFlat (AVal.mem_heads hs))).cons (x := xs)
+      (AVal.mem_tails hs)
+    -- the list has a first element, so the `::` branch is taken
+    have hcons : (aevalM false H σ _).heads.leq Flat.bot = false := AVal.heads_not_bot hs
+    simp only [aeval, aevalM, hcons, Bool.false_eq_true, ↓reduceIte]
+    exact joinOpt_sound_r (ihc hd hB.cons.cons hr)
   | var hx => intro H σ v hσ hB hr; cases hr; exact hσ _ _ hx
   | @lam _ _ x b =>
     intro H σ v hσ hB hr
@@ -1044,7 +1201,7 @@ theorem aeval_sound_aux [NumDomain A] {ρ : Env} {μ μ' : Store} {e : Expr} {r 
   | assert | exn => intro H σ v hσ hB hr; cases hr; exact .flat rfl
   -- the rules giving an error: no value
   | varErr | appNotFn | appErrF | appErrA | letinErr | ifNotBool | ifErr
-  | binopErrL | binopErrR | consNotList | consErrL | consErrR
+  | binopErrL | binopErrR | consNotList | consErrL | consErrR | matchNotList | matchErr
   | assertF | assertNotBool | assertErr | exnErr | raise | raiseNotExn | raiseErr =>
     intro H σ v hσ hB hr
     cases hr

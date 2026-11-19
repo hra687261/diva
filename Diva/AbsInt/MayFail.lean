@@ -18,13 +18,6 @@ open AbsDomain NumDomain
 
 variable {A : Type} [NumDomain A]
 
-theorem Flat.not_mem_bot {v : Value} : ¬ (Flat.bot : Flat A).mem v := by
-  intro h
-  cases v
-  case int n => exact bot_sound n h
-  case bool b => cases b <;> simp [Flat.mem, Flat.bot] at h
-  all_goals simp [Flat.mem, Flat.bot] at h
-
 theorem within_mem {a : AVal A} {k : Flat A} {v : Value} (hw : a.within k = true)
     (h : a.mem v) : k.mem v :=
   Flat.mem_leq (AVal.mem_flat h) hw
@@ -107,16 +100,20 @@ theorem callMayFail_notFn {af aa : AVal A} {vf : Value} (hf : af.mem vf)
   unfold callMayFail
   split
   next S hS =>
-    cases hc : af.toFlat.leq Flat.bot && aa.flat.leq S.pre && (!S.rest.isEmpty || !S.fails)
+    cases hc : af.toFlat.leq Flat.bot && af.elems.isNone &&
+        aa.flat.leq S.pre && (!S.rest.isEmpty || !S.fails)
     · rfl
     · simp only [Bool.and_eq_true] at hc
       cases hf with
       | flat hf =>
         -- `af` describes no value but closures of its summary
-        exact absurd (Flat.mem_leq hf hc.1.1) Flat.not_mem_bot
+        exact absurd (Flat.mem_leq hf hc.1.1.1) Flat.not_mem_bot
       | sum =>
         -- a closure
         simp [Value.isClos] at hv
+      | list hE _ _ =>
+        -- `af` describes no list
+        simp [hE] at hc
   next => rfl
 
 /-- If the body `b` of a call fails (`hev`), `callMayFail` says the call may fail.
@@ -130,13 +127,15 @@ theorem callMayFail_sound {af aa : AVal A} {s : Option String} {x : String} {b :
   unfold callMayFail
   split
   next S hS =>
-    cases hc : af.toFlat.leq Flat.bot && aa.flat.leq S.pre && (!S.rest.isEmpty || !S.fails)
+    cases hc : af.toFlat.leq Flat.bot && af.elems.isNone &&
+        aa.flat.leq S.pre && (!S.rest.isEmpty || !S.fails)
     · rfl
     · -- the three checks pass
       simp only [Bool.and_eq_true, Bool.or_eq_true, Bool.not_eq_true'] at hc
-      obtain ⟨⟨hbot, hpre⟩, hmore⟩ := hc
+      obtain ⟨⟨⟨hbot, hnl⟩, hpre⟩, hmore⟩ := hc
       cases hf with
       | flat hf => exact absurd (Flat.mem_leq hf hbot) Flat.not_mem_bot
+      | list hE _ _ => simp [hE] at hnl   -- `af` describes no list
       | @sum _ _ S₀ _ _ _ _ H σ hS' hP hPs _ hF' hd hB hchk =>
         -- the closure's summary is `S`
         rw [hS] at hS'

@@ -64,7 +64,14 @@ def lastResOpt (H : Hints A) (σ : AEnv A) (b : Expr) : Flat A :=
 /-- What each hint must cover, in one pass over `e`. It goes where the optimistic
     analysis goes, with the same environments. -/
 def claims (H : Hints A) (C : Callees) (σ : AEnv A) : Expr → List (String × Flat A)
-  | .binop _ a b => claims H C σ a ++ claims H C σ b
+  | .binop _ a b | .cons a b => claims H C σ a ++ claims H C σ b
+  | .matchList s n x xs c =>
+    let vs := aevalM true H σ s
+    claims H C σ s ++
+      (if vs.mayBeNil then claims H C σ n else []) ++
+      (if vs.heads.leq Flat.bot then []
+       else claims H ((xs, []) :: (x, []) :: C)
+         ((xs, vs.tails) :: (x, AVal.ofFlat vs.heads) :: σ) c)
   | .letin x e1 e2 =>
     claims H C σ e1 ++
       claims H ((x, callee C e1) :: C) ((x, aevalM true H σ e1) :: σ) e2
@@ -92,8 +99,8 @@ def claims (H : Hints A) (C : Callees) (σ : AEnv A) : Expr → List (String × 
 def hintKeys : Expr → List String
   | .lam x b => x :: hintKeys b
   | .letrec f x b e2 => x :: ("$" ++ f) :: hintKeys b ++ hintKeys e2
-  | .app a b | .letin _ a b | .binop _ a b => hintKeys a ++ hintKeys b
-  | .ite c t e => hintKeys c ++ hintKeys t ++ hintKeys e
+  | .app a b | .letin _ a b | .binop _ a b | .cons a b => hintKeys a ++ hintKeys b
+  | .ite c t e | .matchList c t _ _ e => hintKeys c ++ hintKeys t ++ hintKeys e
   | _ => []
 
 /-- For each key of `H`, the join of its claims. A parameter that no call reaches
