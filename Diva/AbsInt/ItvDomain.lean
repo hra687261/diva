@@ -14,6 +14,7 @@ instance : NumDomain Itv where
   meet := Itv.meet
   widen := Itv.widen
   const := Itv.singleton
+  asConst := Itv.asConst
   add := Itv.add
   sub := Itv.sub
   mul := Itv.mul
@@ -33,6 +34,7 @@ instance : NumDomain Itv where
   widen_sound_l := Itv.mem_widen_l
   widen_sound_r := Itv.mem_widen_r
   const_sound := Itv.mem_singleton
+  asConst_sound := Itv.asConst_sound
   add_sound := Itv.mem_add
   sub_sound := Itv.mem_sub
   mul_sound := Itv.mem_mul

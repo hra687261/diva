@@ -11,3 +11,5 @@ import Diva.AbsInt.Aeval
 import Diva.AbsInt.Infer
 import Diva.AbsInt.MayFail
 import Diva.Report
+import Diva.Opt
+import Diva.OptSound

@@ -32,6 +32,8 @@ class AbsDomain (A : Type) (C : outParam Type) where
 /-- A domain for integers, with the arithmetic of `BinOp.denote`. -/
 class NumDomain (A : Type) extends AbsDomain A Int where
   const : Int → A
+  /-- The only integer `a` describes, if `a` is a singleton, `none` otherwise. -/
+  asConst : A → Option Int
   add : A → A → A
   sub : A → A → A
   mul : A → A → A
@@ -45,6 +47,7 @@ class NumDomain (A : Type) extends AbsDomain A Int where
   assumeLt : A → A → A × A
   assumeLe : A → A → A × A
   const_sound : ∀ n, γ (const n) n
+  asConst_sound : ∀ {a n m}, asConst a = some n → γ a m → m = n
   add_sound : ∀ {a b n m}, γ a n → γ b m → γ (add a b) (n + m)
   sub_sound : ∀ {a b n m}, γ a n → γ b m → γ (sub a b) (n - m)
   mul_sound : ∀ {a b n m}, γ a n → γ b m → γ (mul a b) (n * m)

@@ -149,6 +149,19 @@ theorem corners {a b c d n m : Int} (h1 : a ≤ n) (h2 : n ≤ b) (h3 : c ≤ m)
 
 theorem mem_singleton (n : Int) : (singleton n).mem n := by simp [mem, singleton]
 
+/-- A singleton interval contains only its one integer. -/
+theorem asConst_sound {a : Itv} {n m : Int} (h : a.asConst = some n) (hm : a.mem m) :
+    m = n := by
+  match a, h with
+  | range (fin lo) (fin hi), h =>
+    simp only [asConst] at h
+    split at h
+    case isTrue heq =>
+      cases h
+      simp only [mem, fin_le_fin] at hm
+      omega
+    case isFalse => cases h
+
 theorem mem_top (n : Int) : top.mem n := by simp [mem, top]
 
 theorem mem_bot (n : Int) : ¬ bot.mem n := by simp [mem]

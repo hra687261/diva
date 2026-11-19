@@ -81,6 +81,11 @@ def mem : Itv → Int → Prop
 def top : Itv := range negInf posInf
 def singleton (n : Int) : Itv := range (fin n) (fin n)
 
+/-- The only integer in the interval, if there is exactly one. -/
+def asConst : Itv → Option Int
+  | range (fin a) (fin b) => if a = b then some a else none
+  | _ => none
+
 /-- Inclusion. -/
 def leq : Itv → Itv → Bool
   | bot, _ => true

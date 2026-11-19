@@ -78,6 +78,16 @@ inductive Expr where
     -- `match e1 with E x -> e2 | _ -> e3`: test the tag of the exception `e1`
   deriving Inhabited
 
+/-- `e` contains no call and doesn't have side effects on the store (no `Array.make`,
+    `<-`, `ref` or `:=`). Such expressions can be optimized and replaced by their
+    value. -/
+def Expr.inert : Expr → Bool
+  | .int _ | .bool _ | .unit | .var _ | .nil | .lam _ _ => true
+  | .app _ _ | .alloc .. | .set .. | .ref .. | .assign .. => false
+  | .letin _ a b | .binop _ a b | .cons a b | .get a b | .tryw a _ b => a.inert && b.inert
+  | .letrec _ _ _ b | .assert b | .len b | .deref b | .exn _ b | .raise b => b.inert
+  | .ite c t e | .matchList c t _ _ e | .exnCase c _ _ t e => c.inert && t.inert && e.inert
+
 def ppExpr : Expr → String
   | .int n         => toString n
   | .bool b        => toString b
