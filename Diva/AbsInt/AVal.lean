@@ -101,6 +101,33 @@ def sub (a b : Flat A) : Prop := ∀ v, a.mem v → b.mem v
 
 theorem sub_refl (a : Flat A) : a.sub a := fun _ h => h
 
+/-- Each element of `as` does not describe more values than the one at the same
+    place in `bs`, and the lists have the same length. -/
+def subs : List (Flat A) → List (Flat A) → Prop
+  | [], [] => True
+  | a :: as, b :: bs => a.sub b ∧ subs as bs
+  | _, _ => False
+
+theorem subs_refl : (as : List (Flat A)) → subs as as
+  | [] => trivial
+  | a :: as => ⟨sub_refl a, subs_refl as⟩
+
+/-- `leq` on each element, and the lists have the same length. -/
+def leqs : List (Flat A) → List (Flat A) → Bool
+  | [], [] => true
+  | a :: as, b :: bs => a.leq b && leqs as bs
+  | _, _ => false
+
+/-- `as ≤ bs` and `bs ⊆ cs` give `as ⊆ cs`. -/
+theorem subs_of_leqs : (as bs cs : List (Flat A)) → leqs as bs = true → subs bs cs →
+    subs as cs
+  | [], [], [], _, _ => trivial
+  | a :: as, b :: bs, c :: cs, hl, hs => by
+    simp only [leqs, Bool.and_eq_true] at hl
+    exact ⟨fun v hv => hs.1 v (mem_leq hv hl.1), subs_of_leqs as bs cs hl.2 hs.2⟩
+  | [], _ :: _, _, hl, _ | _ :: _, [], _, hl, _ => by simp [leqs] at hl
+  | [], [], _ :: _, _, hs | _ :: _, _ :: _, [], _, hs => by simp [subs] at hs
+
 /-- A comparison's result: `true` if it may hold, `false` if it may not. -/
 theorem mem_bools {p : Bool × Bool} {P : Prop} [Decidable P]
     (h : (P → p.1 = true) ∧ (¬ P → p.2 = true)) :
@@ -126,15 +153,18 @@ end Flat
 
 /-! ## Function summaries -/
 
-/-- What calling a closure gives, for an argument in `pre`: a value in `res` (if it
-    returns), and an error only if `fails` is `true`. -/
+/-- What calling a closure gives. Called with an argument in `pre`, it returns:
+    - if `rest` is empty, a value in `res`, and an error only if `fails` is `true`;
+    - otherwise a closure (it is curried), whose summary is
+      `⟨rest.head, rest.tail, res, fails⟩`. -/
 structure Summary (A : Type) where
   pre : Flat A
+  rest : List (Flat A)
   res : Flat A
   fails : Bool
   deriving Inhabited
 
-/-- The closure `clos s x b ρ` satisfies the summary `S`. -/
+/-- The closure `clos s x b ρ` satisfies the summary `S`, when `S.rest` is empty. -/
 def Sat [NumDomain A] (S : Summary A) (s : Option String) (x : String) (b : Expr)
     (ρ : Env) : Prop :=
   ∀ v w μ μ', S.pre.mem v → Eval (callEnv s x b ρ v) μ b (.ok w) μ' → S.res.mem w
@@ -165,13 +195,14 @@ def summary (S : Summary A) : AVal A := { toFlat := Flat.bot, sum := some S }
 /-- Forget the summary: its closures become "any closure". -/
 def flat (a : AVal A) : Flat A := { a.toFlat with fn := a.fn || a.sum.isSome }
 
-/-- Summaries are kept when they have the same precondition, forgotten otherwise. -/
+/-- Summaries are kept when they have the same preconditions, forgotten otherwise. -/
 def join (a b : AVal A) : AVal A :=
   match a.sum, b.sum with
   | some S, some T =>
-    if S.pre.leq T.pre && T.pre.leq S.pre then
+    if S.pre.leq T.pre && T.pre.leq S.pre && Flat.leqs S.rest T.rest &&
+        Flat.leqs T.rest S.rest then
       { toFlat := a.toFlat.join b.toFlat,
-        sum := some ⟨S.pre, S.res.join T.res, S.fails || T.fails⟩ }
+        sum := some ⟨S.pre, S.rest, S.res.join T.res, S.fails || T.fails⟩ }
     else ofFlat (a.flat.join b.flat)
   | some S, none => { toFlat := a.toFlat.join b.toFlat, sum := some S }
   | none, s => { toFlat := a.toFlat.join b.toFlat, sum := s }
@@ -181,7 +212,7 @@ instance [ToString A] : ToString (AVal A) where
     match a.sum with
     | none => toString a.toFlat
     | some S =>
-      let f := s!"fun {S.pre} -> {S.res}"
+      let f := s!"fun {" -> ".intercalate ((S.pre :: S.rest).map toString)} -> {S.res}"
       if toString a.toFlat == "⊥" then f else s!"{a.toFlat} | {f}"
 
 end AVal

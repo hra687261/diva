@@ -107,7 +107,7 @@ theorem callMayFail_notFn {af aa : AVal A} {vf : Value} (hf : af.mem vf)
   unfold callMayFail
   split
   next S hS =>
-    cases hc : af.toFlat.leq Flat.bot && aa.flat.leq S.pre && !S.fails
+    cases hc : af.toFlat.leq Flat.bot && aa.flat.leq S.pre && (!S.rest.isEmpty || !S.fails)
     · rfl
     · simp only [Bool.and_eq_true] at hc
       cases hf with
@@ -119,33 +119,56 @@ theorem callMayFail_notFn {af aa : AVal A} {vf : Value} (hf : af.mem vf)
         simp [Value.isClos] at hv
   next => rfl
 
-/-- A call whose body fails may fail. `hb`: any check of the body says that it may
-    fail (the induction hypothesis of `mayFail_sound_aux`). -/
+/-- If the body `b` of a call fails (`hev`), `callMayFail` says the call may fail.
+    `hb` says `mayFail` reports `b` may fail (induction hypothesis). -/
 theorem callMayFail_sound {af aa : AVal A} {s : Option String} {x : String} {b : Expr}
-    {ρ' : Env} {va : Value} (hf : af.mem (.clos s x b ρ')) (ha : aa.mem va)
+    {ρ' : Env} {va : Value} {μ μ' : Store} {k : Err} (hf : af.mem (.clos s x b ρ'))
+    (ha : aa.mem va) (hev : Eval (callEnv s x b ρ' va) μ b (.err k) μ')
     (hb : ∀ (H : Hints A) (σ : AEnv A), σ.Describes (callEnv s x b ρ' va) →
       σ.Bound (callEnv s x b ρ' va) → mayFail H σ b = true) :
     callMayFail af aa = true := by
   unfold callMayFail
   split
   next S hS =>
-    cases hc : af.toFlat.leq Flat.bot && aa.flat.leq S.pre && !S.fails
+    cases hc : af.toFlat.leq Flat.bot && aa.flat.leq S.pre && (!S.rest.isEmpty || !S.fails)
     · rfl
     · -- the three checks pass
-      simp only [Bool.and_eq_true, Bool.not_eq_true'] at hc
-      obtain ⟨⟨hbot, hpre⟩, hF⟩ := hc
+      simp only [Bool.and_eq_true, Bool.or_eq_true, Bool.not_eq_true'] at hc
+      obtain ⟨⟨hbot, hpre⟩, hmore⟩ := hc
       cases hf with
       | flat hf => exact absurd (Flat.mem_leq hf hbot) Flat.not_mem_bot
-      | sum H σ hS' hP _ hF' hd hB hcheck hcheckF =>
+      | @sum _ _ S₀ _ _ _ _ H σ hS' hP hPs _ hF' hd hB hchk =>
         -- the closure's summary is `S`
         rw [hS] at hS'
         cases hS'
-        -- the body was checked not to fail with an argument in `S₀.pre`
         have hv := hP va (Flat.mem_leq (AVal.mem_flat ha) hpre)
-        have hok := hcheckF (hF' hF)
-        -- but it fails
-        have hfail := hb H _ (AEnv.Describes.body hd hB hcheck hcheckF hv) (AEnv.Bound.body hB)
-        simp [hok] at hfail
+        cases hrest : S.rest with
+        | cons P Ps =>
+          -- more parameters: `S₀` has them too, so the body is a `fun`, which
+          -- can't fail
+          rw [hrest] at hPs
+          cases h0 : S₀.rest with
+          | nil => rw [h0] at hPs; exact hPs.elim
+          | cons P₀ Ps₀ =>
+            rw [h0] at hchk
+            cases b
+            case lam => cases hev
+            all_goals simp only [Checked] at hchk
+        | nil =>
+          -- no more parameters: the body was checked not to fail
+          have hF : S.fails = false := by simpa [hrest] using hmore
+          have h0 : S₀.rest = [] := by
+            rw [hrest] at hPs
+            cases h : S₀.rest with
+            | nil => rfl
+            | cons _ _ => rw [h] at hPs; exact hPs.elim
+          have hchk' := hchk
+          rw [h0] at hchk'
+          simp only [Checked] at hchk'
+          have hok := hchk'.2 (hF' hF)
+          -- but it fails
+          have hfail := hb H _ (AEnv.Describes.body hd hB hchk hv) (AEnv.Bound.body hB)
+          simp [hok] at hfail
   next => rfl
 
 theorem mayFail_sound_aux {ρ : Env} {μ μ' : Store} {e : Expr} {r : Outcome}
@@ -160,12 +183,13 @@ theorem mayFail_sound_aux {ρ : Env} {μ μ' : Store} {e : Expr} {r : Outcome}
   | varErr hx =>
     intro H σ k hσ hB hr
     exact hB.none hx
-  | app hf ha _ _ _ ihb =>
+  | app hf ha hbody _ _ ihb =>
     intro H σ k hσ hB hr
+    cases hr
     simp only [mayFail, mayFailM, Bool.or_eq_true]
-    refine Or.inr (callMayFail_sound (aeval_sound hσ hB hf) (aeval_sound hσ hB ha) ?_)
+    refine Or.inr (callMayFail_sound (aeval_sound hσ hB hf) (aeval_sound hσ hB ha) hbody ?_)
     intro H' σ' hd hb
-    exact ihb (H := H') hd hb hr
+    exact ihb (H := H') hd hb rfl
   | appNotFn hf hv =>
     intro H σ k hσ hB hr
     simp only [mayFail, mayFailM, Bool.or_eq_true]

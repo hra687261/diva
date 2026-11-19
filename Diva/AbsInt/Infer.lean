@@ -19,13 +19,10 @@ which recovers some of what widening lost.
 Hints are keyed by name. The parser gives every parameter and recursive function a
 name of its own (`resolve`), so each gets its own hint.
 
-For a call `f a`, the value of `a` becomes a claim on the parameter of the
-function called. The inference finds that function by reading the code. It
-finds it in two cases: `f` is a function written in place (`fun x -> ...`), or
-`f` is defined by `let` or `let rec` as a function.
-Otherwise, for example when `f` is a parameter or the result of another call,
-the argument is not recorded. The checker then gives `top` for that call if the
-argument is not in the precondition.
+For a call `f a`, `a` becomes a claim on the parameter of the function called, when
+the code shows that function (`callee`). In `g b a`, `b` is a claim on `g`'s first
+parameter and `a` on its second. Otherwise `a` is not recorded, and the checker
+gives `top` for the call if `a` is not in the precondition.
 -/
 
 namespace Diva.AbsInt
@@ -38,15 +35,31 @@ variable {A : Type} [NumDomain A]
 def Flat.widen (a b : Flat A) : Flat A :=
   { a.join b with int := AbsDomain.widen a.int b.int }
 
-/-- Each variable bound to a function known from the code, with its parameter
-    (`none`: a variable bound to anything else, which hides an outer one). -/
-abbrev Callees := List (String × Option String)
+/-- The parameters of the nested `fun`s at the start of `b`.
+    For `fun y -> fun z -> e` it gives `[y, z]`. If `b` is not a `fun`, it gives `[]`. -/
+def lamParams : Expr → List String
+  | .lam y b => y :: lamParams b
+  | _ => []
 
-/-- The parameter a call to `f` reaches, if `f` is known from the code. -/
-def callee (C : Callees) : Expr → Option String
-  | .lam x _ => some x
-  | .var f => (C.lookup f).join
-  | _ => none
+/-- Each variable bound to a function known from the code, with its parameters
+    (`[]`: a variable bound to anything else, which hides an outer one). -/
+abbrev Callees := List (String × List String)
+
+/-- The parameters `f` has not received yet: for `let rec g x y = ...`, `g` gives
+    `[x, y]` and `g b` gives `[y]`. `[]` if the code doesn't show which function `f`
+    is (e.g. `f` is a parameter). -/
+def callee (C : Callees) : Expr → List String
+  | .lam x b => x :: lamParams b
+  | .var f => (C.lookup f).getD []
+  -- A call `f b`. The argument `b` goes to the first parameter in `callee C f`.
+  -- The other parameters in that list still have no argument. `drop 1` keeps them.
+  | .app f _ => (callee C f).drop 1
+  | _ => []
+
+/-- `lastRes` without checking the hints (`aevalM true`): the value of `e` for
+    `fun y -> fun z -> e`. -/
+def lastResOpt (H : Hints A) (σ : AEnv A) (b : Expr) : Flat A :=
+  lastResOf b (aevalM true H σ b)
 
 /-- What each hint must cover, in one pass over `e`. It goes where the optimistic
     analysis goes, with the same environments. -/
@@ -55,19 +68,19 @@ def claims (H : Hints A) (C : Callees) (σ : AEnv A) : Expr → List (String × 
   | .letin x e1 e2 =>
     claims H C σ e1 ++
       claims H ((x, callee C e1) :: C) ((x, aevalM true H σ e1) :: σ) e2
-  | .lam x b => claims H ((x, none) :: C) ((x, AVal.ofFlat (H.param x)) :: σ) b
+  | .lam x b => claims H ((x, []) :: C) ((x, AVal.ofFlat (H.param x)) :: σ) b
   | .app f a =>
     let arg := match callee C f with
-      | some x => [(x, (aevalM true H σ a).flat)]
-      | none => []
+      | x :: _ => [(x, (aevalM true H σ a).flat)]
+      | [] => []
     arg ++ claims H C σ f ++ claims H C σ a
   | .letrec f x b e2 =>
     -- `fails` doesn't change values, which are all the inference looks at
-    let S : Summary A := ⟨H.param x, H.result f, false⟩
+    let S : Summary A := ⟨H.param x, restPres H b, H.result f, false⟩
     let σb := (x, AVal.ofFlat S.pre) :: (f, AVal.summary S) :: σ
-    let Cb := (x, none) :: (f, some x) :: C
-    ("$" ++ f, (aevalM true H σb b).flat) :: claims H Cb σb b ++
-      claims H ((f, some x) :: C) ((f, AVal.summary S) :: σ) e2
+    let Cb := (x, []) :: (f, x :: lamParams b) :: C
+    ("$" ++ f, lastResOpt H σb b) :: claims H Cb σb b ++
+      claims H ((f, x :: lamParams b) :: C) ((f, AVal.summary S) :: σ) e2
   | .ite c t e =>
     let ac := aevalM true H σ c
     claims H C σ c ++

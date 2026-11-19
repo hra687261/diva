@@ -14,14 +14,14 @@ it doesn't: there, both sides keep only the values they share. Only
 variables and constants are looked at in the comparison: `x < 5` narrows `x`,
 `x + 1 < 5` doesn't.
 
-Functions are not iterated: the hints `H` claim each parameter's range `P` and each
-recursive function's result `R`, and `aeval` only checks these claims.
-- `fun x -> b` gives the summary `⟨P, R, fails⟩`, where `R` is `b` analysed with
-  `x ∈ P`, and `fails` says whether `b` may fail then.
-- A call gives `R` if the argument is in `P`, and `⊤` otherwise.
-- `let rec f` keeps its claimed `R` only if the body, assuming `R` for the
-  recursive calls, stays in `R`. `fails` is `false` if the body, assuming that the
-  recursive calls don't fail, doesn't fail.
+Functions are not iterated. The hints `H` claim each parameter's range `P` and each
+recursive function's result `R`. `aeval` only checks these claims.
+- `fun x -> b` gives `⟨P, [], R, fails⟩`: `b`'s result and failure, with `x ∈ P`.
+- `fun x -> fun y -> b` gives `⟨P, [Q], R, fails⟩`, with `Q` for `y`.
+- A call gives `R` if the argument is in `P`, else `⊤`. With more parameters, it
+  gives `⟨Q, [], R, fails⟩`.
+- `let rec f` keeps `R` only if the body stays in `R`, assuming `R` for the
+  recursive calls.
 A wrong claim gives `⊤`.
 
 `mayFail H σ e` says whether `e` may end in an error. It is defined with `aevalM`,
@@ -141,19 +141,44 @@ def Hints.result [NumDomain A] (H : Hints A) (f : String) : Flat A :=
   (H.lookup ("$" ++ f)).getD Flat.top
 
 /-- The value of a call of `af` on `aa`. `af`'s summary `S` says: for an argument
-    in `S.pre`, the function returns a value in `S.res`.
+    in `S.pre`, the function returns a value in `S.res`, or, if it has more
+    parameters (`S.rest`), a closure for them.
 
-    Normally, the call gives `S.res` if two checks pass: `af` is certainly a
-    function described by this summary, and `aa` is in `S.pre`. Otherwise it gives
-    `top`.
+    Normally, the call uses `S` if two checks pass: `af` is certainly a function
+    described by this summary, and `aa` is in `S.pre`. Otherwise it gives `top`.
 
-    With `opt`, which only the inference uses, the checks are skipped and the call
-    always gives `S.res`. -/
+    With `opt`, which only the inference uses, the checks are skipped. -/
 def apply [NumDomain A] (opt : Bool) (af aa : AVal A) : AVal A :=
   match af.sum with
   | some S =>
-    if opt || (!af.fn && aa.flat.leq S.pre) then AVal.ofFlat S.res else AVal.top
+    if opt || (!af.fn && aa.flat.leq S.pre) then
+      match S.rest with
+      | [] => AVal.ofFlat S.res
+      -- a curried function: the closure for the next parameters
+      | P :: Ps => AVal.summary ⟨P, Ps, S.res, S.fails⟩
+    else AVal.top
   | none => AVal.top
+
+/-- Whether `e` is a `fun`. -/
+def _root_.Diva.Expr.isLam : Expr → Bool
+  | .lam _ _ => true
+  | _ => false
+
+/-- The preconditions of the parameters of the `fun`s that `b` starts with: for
+    `fun y -> fun z -> e`, those of `y` and `z`. -/
+def restPres [NumDomain A] (H : Hints A) : Expr → List (Flat A)
+  | .lam y b => H.param y :: restPres H b
+  | _ => []
+
+/-- The result of `b`'s last body, from `b`'s value `v`: the summary's result if `b`
+    is a `fun`, else `v`. -/
+def lastResOf [NumDomain A] (b : Expr) (v : AVal A) : Flat A :=
+  if b.isLam then (v.sum.map Summary.res).getD Flat.top else v.flat
+
+/-- Whether `b`'s last body may fail, from `b`'s value `v`: the summary's `fails` if
+    `b` is a `fun`, else `bodyFails`. -/
+def lastFailsOf [NumDomain A] (b : Expr) (v : AVal A) (bodyFails : Bool) : Bool :=
+  if b.isLam then (v.sum.map Summary.fails).getD true else bodyFails
 
 /-! ## Kinds of values, for errors -/
 
@@ -178,12 +203,13 @@ def opMayFail [NumDomain A] : BinOp → AVal A → AVal A → Bool
     !((a.within Flat.ints && b.within Flat.ints) ||
       (a.within Flat.anyBool && b.within Flat.anyBool))
 
-/-- Whether a call of `af` on `aa` may fail. It can't if three checks pass: `af` is
-    only closures described by its summary `S`, `aa` is in `S.pre`, and `S` says
-    that the body doesn't fail. -/
+/-- Whether a call of `af` on `aa` may fail. It can't if `af` is only closures
+    described by its summary `S`, `aa` is in `S.pre`, and either the function has
+    more parameters (the call only builds a closure) or `S` says that the body
+    doesn't fail. -/
 def callMayFail [NumDomain A] (af aa : AVal A) : Bool :=
   match af.sum with
-  | some S => !(af.toFlat.leq Flat.bot && aa.flat.leq S.pre && !S.fails)
+  | some S => !(af.toFlat.leq Flat.bot && aa.flat.leq S.pre && (!S.rest.isEmpty || !S.fails))
   | none => true
 
 mutual
@@ -206,17 +232,26 @@ def aevalM [NumDomain A] (opt : Bool) (H : Hints A) (σ : AEnv A) : Expr → AVa
     -- the body, analysed with `x` in its precondition
     let P := H.param x
     let σb := (x, AVal.ofFlat P) :: σ
-    AVal.summary ⟨P, (aevalM opt H σb b).flat, mayFailM opt H σb b⟩
+    match b with
+    | .lam _ _ =>
+      -- a curried function: `x`, then the parameters of the inner function
+      match (aevalM opt H σb b).sum with
+      | some T => AVal.summary ⟨P, T.pre :: T.rest, T.res, T.fails⟩
+      | none => AVal.fnV   -- doesn't happen: a `fun` has a summary
+    | _ => AVal.summary ⟨P, [], (aevalM opt H σb b).flat, mayFailM opt H σb b⟩
   | .app f a => apply opt (aevalM opt H σ f) (aevalM opt H σ a)
   | .letrec f x b e2 =>
-    -- the claimed summary, checked against the body (which may call `f`). The body
-    -- may fail if it may when the recursive calls don't.
+    -- the claimed summary, checked against the body (which may call `f`)
     let P := H.param x
+    let Ps := restPres H b
     let R := H.result f
-    let fails := mayFailM opt H ((x, AVal.ofFlat P) :: (f, AVal.summary ⟨P, R, false⟩) :: σ) b
-    let S : Summary A := ⟨P, R, fails⟩
-    let holds := (aevalM opt H ((x, AVal.ofFlat P) :: (f, AVal.summary S) :: σ) b).flat.leq R
-    aevalM opt H ((f, if opt || holds then AVal.summary S else AVal.fnV) :: σ) e2
+    let env (F : Bool) := (x, AVal.ofFlat P) :: (f, AVal.summary ⟨P, Ps, R, F⟩) :: σ
+    -- whether the last body may fail, assuming that the recursive calls don't
+    let fails := lastFailsOf b (aevalM opt H (env false) b) (mayFailM opt H (env false) b)
+    -- the last body's result, assuming the claimed summary for the recursive calls
+    let res := lastResOf b (aevalM opt H (env fails) b)
+    let S : Summary A := ⟨P, Ps, R, fails⟩
+    aevalM opt H ((f, if opt || res.leq R then AVal.summary S else AVal.fnV) :: σ) e2
   | .ite c t e =>
     -- a branch is taken only if the condition may have that value
     joinOpt
@@ -247,11 +282,13 @@ def mayFailM [NumDomain A] (opt : Bool) (H : Hints A) (σ : AEnv A) : Expr → B
   | .letrec f x b e2 =>
     -- `f` as in `aevalM`
     let P := H.param x
+    let Ps := restPres H b
     let R := H.result f
-    let fails := mayFailM opt H ((x, AVal.ofFlat P) :: (f, AVal.summary ⟨P, R, false⟩) :: σ) b
-    let S : Summary A := ⟨P, R, fails⟩
-    let holds := (aevalM opt H ((x, AVal.ofFlat P) :: (f, AVal.summary S) :: σ) b).flat.leq R
-    mayFailM opt H ((f, if opt || holds then AVal.summary S else AVal.fnV) :: σ) e2
+    let env (F : Bool) := (x, AVal.ofFlat P) :: (f, AVal.summary ⟨P, Ps, R, F⟩) :: σ
+    let fails := lastFailsOf b (aevalM opt H (env false) b) (mayFailM opt H (env false) b)
+    let res := lastResOf b (aevalM opt H (env fails) b)
+    let S : Summary A := ⟨P, Ps, R, fails⟩
+    mayFailM opt H ((f, if opt || res.leq R then AVal.summary S else AVal.fnV) :: σ) e2
   | .ite c t e =>
     -- a branch counts only if it can be taken
     let ac := aevalM opt H σ c
@@ -289,26 +326,38 @@ def bodyEnv [NumDomain A] (s : Option String) (x : String) (S : Summary A) (σ :
   | none => (x, AVal.ofFlat S.pre) :: σ
   | some f => (x, AVal.ofFlat S.pre) :: (f, AVal.summary S) :: σ
 
+/-- The checks of a closure's body `b`, analysed in `σ`, against the preconditions
+    `Ps` of its other parameters, the result `R` and `F` (whether it may fail).
+
+    `b` must start with one `fun` per precondition in `Ps`. Each parameter is
+    analysed in its precondition. The last body's result must be in `R`, and if
+    `F` is `false`, the last body must not fail. -/
+def Checked [NumDomain A] (H : Hints A) :
+    AEnv A → Expr → List (Flat A) → Flat A → Bool → Prop
+  | σ, b, [], R, F => (aeval H σ b).flat.sub R ∧ (F = false → mayFail H σ b = false)
+  | σ, .lam y b, P :: Ps, R, F => Checked H ((y, AVal.ofFlat P) :: σ) b Ps R F
+  | _, _, _ :: _, _, _ => False
+
 /-- Concretisation: the values `a` describes.
 
     A closure is described by `a`'s summary `S` if its body was checked against a
-    summary `S₀` at least as strong, in an abstract environment `σ` describing the
-    closure's own. This records the checks rather than stating `Sat` directly:
-    soundness can then be proved by induction on the evaluation, and `Sat` follows
-    (`letrec_sat`). -/
+    summary `S₀` that promises at least as much, in an abstract environment `σ`
+    describing the closure's own. This records the checks rather than stating `Sat`
+    directly: soundness can then be proved by induction on the evaluation, and `Sat`
+    follows (`letrec_sat`). -/
 inductive AVal.mem {A : Type} [NumDomain A] : AVal A → Value → Prop where
   | flat {a : AVal A} {v : Value} : a.toFlat.mem v → AVal.mem a v
   | sum {a : AVal A} {S S₀ : Summary A} {s : Option String} {x : String} {b : Expr}
       {ρ : Env} (H : Hints A) (σ : AEnv A) :
       a.sum = some S →
-      -- `S₀` is at least as strong as `S`
-      S.pre.sub S₀.pre → S₀.res.sub S.res → (S.fails = false → S₀.fails = false) →
+      -- `S₀` promises at least as much as `S`: it accepts at least the same
+      -- arguments, returns at most the same values, and fails only if `S` may
+      S.pre.sub S₀.pre → Flat.subs S.rest S₀.rest → S₀.res.sub S.res →
+      (S.fails = false → S₀.fails = false) →
       -- `σ` describes `ρ`
       (∀ y w, ρ.lookup y = some w → AVal.mem (σ.get y) w) → σ.Bound ρ →
-      -- the body's result is in `S₀.res`
-      (aeval H (bodyEnv s x S₀ σ) b).flat.sub S₀.res →
-      -- the body doesn't fail, if `S₀` says so
-      (S₀.fails = false → mayFail H (bodyEnv s x S₀ σ) b = false) →
+      -- the body was checked against `S₀`
+      Checked H (bodyEnv s x S₀ σ) b S₀.rest S₀.res S₀.fails →
       AVal.mem a (.clos s x b ρ)
 
 namespace AVal
@@ -361,13 +410,14 @@ theorem mem_join_l {a b : AVal A} {v : Value} (h : a.mem v) : (a.join b).mem v :
     next hpre =>
       cases h with
       | flat h => exact .flat (Flat.mem_join_l h)
-      | sum H σ hS' hP hR hF hd hB hb hbF =>
+      | sum H σ hS' hP hPs hR hF hd hB hchk =>
         -- The closure is described by `a`'s summary `S`. We show that it is also
-        -- described by the joined summary `⟨S.pre, S.res ⊔ T.res, S.fails || T.fails⟩`.
+        -- described by the joined summary
+        -- `⟨S.pre, S.rest, S.res ⊔ T.res, S.fails || T.fails⟩`.
         rw [hS] at hS'
         cases hS'
-        -- Same precondition. A result in `S.res` is also in `S.res ⊔ T.res`.
-        refine .sum H σ rfl hP (fun w hw => Flat.mem_join_l (hR w hw)) ?_ hd hB hb hbF
+        -- Same preconditions. A result in `S.res` is also in `S.res ⊔ T.res`.
+        refine .sum H σ rfl hP hPs (fun w hw => Flat.mem_join_l (hR w hw)) ?_ hd hB hchk
         -- If `S.fails || T.fails` is `false`, then `S.fails` is `false`.
         intro h
         simp only [Bool.or_eq_false_iff] at h
@@ -376,10 +426,10 @@ theorem mem_join_l {a b : AVal A} {v : Value} (h : a.mem v) : (a.join b).mem v :
   next S hS hT =>
     cases h with
     | flat h => exact .flat (Flat.mem_join_l h)
-    | sum H σ hS' hP hR hF hd hB hb hbF =>
+    | sum H σ hS' hP hPs hR hF hd hB hchk =>
       -- the summary is kept
       rw [hS] at hS'
-      exact .sum H σ hS' hP hR hF hd hB hb hbF
+      exact .sum H σ hS' hP hPs hR hF hd hB hchk
   next _ _ hS =>
     cases h with
     | flat h => exact .flat (Flat.mem_join_l h)
@@ -397,15 +447,17 @@ theorem mem_join_r {a b : AVal A} {v : Value} (h : b.mem v) : (a.join b).mem v :
       simp only [Bool.and_eq_true] at hpre
       cases h with
       | flat h => exact .flat (Flat.mem_join_r h)
-      | sum H σ hT' hP hR hF hd hB hb hbF =>
+      | sum H σ hT' hP hPs hR hF hd hB hchk =>
         -- The closure is described by `b`'s summary `T`. We show that it is also
-        -- described by the joined summary `⟨S.pre, S.res ⊔ T.res, S.fails || T.fails⟩`.
+        -- described by the joined summary
+        -- `⟨S.pre, S.rest, S.res ⊔ T.res, S.fails || T.fails⟩`.
         rw [hT] at hT'
         cases hT'
-        -- `S.pre` and `T.pre` are equal (checked by `join`). A result in `T.res` is
-        -- also in `S.res ⊔ T.res`.
-        have hP' : S.pre.sub _ := fun w hw => hP w (Flat.mem_leq hw hpre.1)
-        refine .sum H σ rfl hP' (fun w hw => Flat.mem_join_r (hR w hw)) ?_ hd hB hb hbF
+        -- `S`'s preconditions are equal to `T`'s (checked by `join`). A result in
+        -- `T.res` is also in `S.res ⊔ T.res`.
+        have hP' : S.pre.sub _ := fun w hw => hP w (Flat.mem_leq hw hpre.1.1.1)
+        have hPs' := Flat.subs_of_leqs _ _ _ hpre.1.2 hPs
+        refine .sum H σ rfl hP' hPs' (fun w hw => Flat.mem_join_r (hR w hw)) ?_ hd hB hchk
         -- If `S.fails || T.fails` is `false`, then `T.fails` is `false`.
         intro h
         simp only [Bool.or_eq_false_iff] at h
@@ -421,9 +473,9 @@ theorem mem_join_r {a b : AVal A} {v : Value} (h : b.mem v) : (a.join b).mem v :
   next =>
     cases h with
     | flat h => exact .flat (Flat.mem_join_r h)
-    | sum H σ hT' hP hR hF hd hB hb hbF =>
+    | sum H σ hT' hP hPs hR hF hd hB hchk =>
       -- the summary is kept
-      exact .sum H σ hT' hP hR hF hd hB hb hbF
+      exact .sum H σ hT' hP hPs hR hF hd hB hchk
 
 end AVal
 
@@ -484,15 +536,14 @@ theorem Bound.body {s : Option String} {x : String} {b : Expr} {S : Summary A}
     environment, if the argument meets the precondition. -/
 theorem Describes.body {H : Hints A} {s : Option String} {x : String} {b : Expr}
     {S : Summary A} {va : Value} (hσ : σ.Describes ρ) (hB : σ.Bound ρ)
-    (hb : (aeval H (bodyEnv s x S σ) b).flat.sub S.res)
-    (hbF : S.fails = false → mayFail H (bodyEnv s x S σ) b = false) (hv : S.pre.mem va) :
+    (hchk : Checked H (bodyEnv s x S σ) b S.rest S.res S.fails) (hv : S.pre.mem va) :
     (bodyEnv s x S σ).Describes (callEnv s x b ρ va) := by
   cases s
   case none => exact hσ.cons (.flat hv)
   case some f =>
     -- `f` is the closure itself, described by its summary by the same checks
     have hf : (AVal.summary S).mem (.clos (some f) x b ρ) :=
-      .sum H σ rfl (Flat.sub_refl _) (Flat.sub_refl _) id hσ hB hb hbF
+      .sum H σ rfl (Flat.sub_refl _) (Flat.subs_refl _) (Flat.sub_refl _) id hσ hB hchk
     exact (hσ.cons hf).cons (.flat hv)
 
 omit [NumDomain A] in
@@ -785,12 +836,83 @@ theorem joinOpt_sound_r [NumDomain A] {a : AVal A} {o : Option (AVal A)} {v : Va
   · exact h
   · exact AVal.mem_join_r h
 
-/-- A call to a closure described by `S`, with an argument meeting `S.pre`, gives a
-    value in `S.res`. `hb`: the body's evaluation is described by any check of it
-    (the induction hypothesis of `aeval_sound_aux`). -/
+/-- A check against `R` and `F` still holds against an `R'` containing `R` and an
+    `F'` that is `false` only if `F` is. -/
+theorem Checked.mono [NumDomain A] {H : Hints A} {R R' : Flat A} {F F' : Bool}
+    (hR : R.sub R') (hF : F' = false → F = false) {σ : AEnv A} {b : Expr}
+    {Ps : List (Flat A)} (h : Checked H σ b Ps R F) : Checked H σ b Ps R' F' := by
+  induction Ps generalizing σ b with
+  | nil =>
+    simp only [Checked] at h ⊢
+    exact ⟨fun w hw => hR w (h.1 w hw), fun h' => h.2 (hF h')⟩
+  | cons P Ps ih =>
+    cases b
+    case lam y b' => exact ih h
+    -- any other body: `Checked` is `False`
+    all_goals simp only [Checked] at h
+
+/-- What `aeval` does on `fun x -> fun y -> b`. It analyses `fun y -> b` with `x` in
+    its precondition. Then it puts the precondition of `x` in front of the
+    preconditions of the summary of `fun y -> b`. -/
+theorem aeval_lam_lam [NumDomain A] {H : Hints A} {σ : AEnv A} {x y : String}
+    {b : Expr} :
+    aeval H σ (.lam x (.lam y b)) =
+      match (aeval H ((x, AVal.ofFlat (H.param x)) :: σ) (.lam y b)).sum with
+      | some T => AVal.summary ⟨H.param x, T.pre :: T.rest, T.res, T.fails⟩
+      | none => AVal.fnV := rfl
+
+/-- `fun x -> b` gets a summary `S` whose preconditions are the hints for `x` and for
+    the parameters of the `fun`s `b` starts with. `b` passes `Checked` against `S`. -/
+theorem lam_checked [NumDomain A] {H : Hints A} :
+    ∀ (b : Expr) {σ : AEnv A} {x : String}, ∃ S, (aeval H σ (.lam x b)).sum = some S ∧
+      S.pre = H.param x ∧ S.rest = restPres H b ∧
+      Checked H (bodyEnv none x S σ) b S.rest S.res S.fails := by
+  intro b
+  induction b with
+  | lam y b' ih =>
+    intro σ x
+    -- the summary of the inner `fun`, with `x` in front
+    obtain ⟨T, hT, hpre, hrest, hchk⟩ := ih (σ := (x, AVal.ofFlat (H.param x)) :: σ) (x := y)
+    refine ⟨⟨H.param x, T.pre :: T.rest, T.res, T.fails⟩, ?_, rfl, ?_, ?_⟩
+    · rw [aeval_lam_lam, hT]
+      rfl
+    · simp only [restPres, hpre, hrest]
+    · -- checking `fun y -> b'` against it is checking `b'` against `T`
+      exact hchk
+  -- a body that isn't a `fun`: the result and `fails` are the body's
+  | _ =>
+    intro σ x
+    refine ⟨_, rfl, rfl, rfl, ?_⟩
+    exact ⟨Flat.sub_refl _, id⟩
+
+/-- The result of the last body of `b`, after the `fun`s it starts with. -/
+def lastRes [NumDomain A] (H : Hints A) (σ : AEnv A) (b : Expr) : Flat A :=
+  lastResOf b (aeval H σ b)
+
+/-- Whether the last body of `b`, after the `fun`s it starts with, may fail. -/
+def lastFails [NumDomain A] (H : Hints A) (σ : AEnv A) (b : Expr) : Bool :=
+  lastFailsOf b (aeval H σ b) (mayFail H σ b)
+
+/-- `b` passes the checks against its own analysis. -/
+theorem checked_last [NumDomain A] {H : Hints A} {σ : AEnv A} {b : Expr} :
+    Checked H σ b (restPres H b) (lastRes H σ b) (lastFails H σ b) := by
+  cases b
+  case lam y b' =>
+    obtain ⟨T, hT, hpre, hrest, hchk⟩ := lam_checked (H := H) b' (σ := σ) (x := y)
+    simp only [lastRes, lastFails, lastResOf, lastFailsOf, Expr.isLam, hT, Option.map_some, Option.getD_some,
+      ↓reduceIte, restPres]
+    rw [← hpre, ← hrest]
+    exact hchk
+  all_goals
+    simp only [lastRes, lastFails, lastResOf, lastFailsOf, Expr.isLam, restPres, Bool.false_eq_true, ↓reduceIte]
+    exact ⟨Flat.sub_refl _, id⟩
+
+/-- `apply` describes the value of a call whose body evaluates to `v` (`hev`).
+    `hb` says `aeval` describes `v` (induction hypothesis). -/
 theorem apply_sound [NumDomain A] {af aa : AVal A} {s : Option String} {x : String}
-    {b : Expr} {ρ' : Env} {va v : Value}
+    {b : Expr} {ρ' : Env} {va v : Value} {μ μ' : Store}
     (hf : af.mem (.clos s x b ρ')) (ha : aa.mem va)
+    (hev : Eval (callEnv s x b ρ' va) μ b (.ok v) μ')
     (hb : ∀ (H : Hints A) (σ : AEnv A), σ.Describes (callEnv s x b ρ' va) →
       σ.Bound (callEnv s x b ρ' va) → (aeval H σ b).mem v) :
     (apply false af aa).mem v := by
@@ -804,16 +926,44 @@ theorem apply_sound [NumDomain A] {af aa : AVal A} {s : Option String} {x : Stri
       | flat hf =>
         -- "any closure" is impossible, since `af.fn = false`: `hf` is `False`
         simp [Flat.mem, hcall.1] at hf
-      | sum H σ hS' hP hR _ hd hB hcheck hcheckF =>
+      | @sum _ _ S₀ _ _ _ _ H σ hS' hP hPs hR hF hd hB hchk =>
         -- the closure's summary is `S`
         rw [hS] at hS'
         cases hS'
         -- the argument meets `S.pre`, so the precondition `S₀.pre` the body was
         -- checked with
         have hv := hP va (Flat.mem_leq (AVal.mem_flat ha) hcall.2)
-        -- so the result is in `S₀.res`, so in `S.res`
-        have hres := hb H _ (AEnv.Describes.body hd hB hcheck hcheckF hv) (AEnv.Bound.body hB)
-        exact .flat (hR v (hcheck v (AVal.mem_flat hres)))
+        have hd' := AEnv.Describes.body hd hB hchk hv
+        split
+        next hrest =>
+          -- no more parameters: the body was checked against `S₀.res`
+          have h0 : S₀.rest = [] := by
+            rw [hrest] at hPs
+            cases h : S₀.rest with
+            | nil => rfl
+            | cons _ _ => rw [h] at hPs; exact hPs.elim
+          have hchk' := hchk
+          rw [h0] at hchk'
+          simp only [Checked] at hchk'
+          have hres := hb H _ hd' (AEnv.Bound.body hB)
+          exact .flat (hR v (hchk'.1 v (AVal.mem_flat hres)))
+        next P Ps hrest =>
+          -- more parameters: `S₀` has them too
+          obtain ⟨P₀, Ps₀, h0, hP₀, hPs₀⟩ :
+              ∃ P₀ Ps₀, S₀.rest = P₀ :: Ps₀ ∧ P.sub P₀ ∧ Flat.subs Ps Ps₀ := by
+            rw [hrest] at hPs
+            cases h : S₀.rest with
+            | nil => rw [h] at hPs; exact hPs.elim
+            | cons P₀ Ps₀ => rw [h] at hPs; exact ⟨P₀, Ps₀, rfl, hPs.1, hPs.2⟩
+          have hchk' := hchk
+          rw [h0] at hchk'
+          -- so the body is a `fun`, whose value is the closure for them
+          cases b
+          case lam y b' =>
+            cases hev
+            exact .sum (S₀ := ⟨P₀, Ps₀, S₀.res, S₀.fails⟩) H _ rfl hP₀ hPs₀ hR hF hd'
+              (AEnv.Bound.body hB) hchk'
+          all_goals exact hchk'.elim
     next => exact AVal.mem_top _
   next => exact AVal.mem_top _
 
@@ -821,11 +971,12 @@ theorem apply_sound [NumDomain A] {af aa : AVal A} {s : Option String} {x : Stri
 def letrecVal [NumDomain A] (H : Hints A) (σ : AEnv A) (f x : String) (b : Expr) :
     AVal A :=
   let P := H.param x
+  let Ps := restPres H b
   let R := H.result f
-  let fails := mayFail H ((x, AVal.ofFlat P) :: (f, AVal.summary ⟨P, R, false⟩) :: σ) b
-  let S : Summary A := ⟨P, R, fails⟩
-  let holds := (aeval H ((x, AVal.ofFlat P) :: (f, AVal.summary S) :: σ) b).flat.leq R
-  if false || holds then AVal.summary S else AVal.fnV
+  let env (F : Bool) := (x, AVal.ofFlat P) :: (f, AVal.summary ⟨P, Ps, R, F⟩) :: σ
+  let fails := lastFails H (env false) b
+  let S : Summary A := ⟨P, Ps, R, fails⟩
+  if false || (lastRes H (env fails) b).leq R then AVal.summary S else AVal.fnV
 
 /-- The value of `f` in `let rec f x = b in ...` describes its closure. -/
 theorem letrecVal_mem [NumDomain A] {H : Hints A} {σ : AEnv A} {ρ : Env} {f x : String}
@@ -834,9 +985,9 @@ theorem letrecVal_mem [NumDomain A] {H : Hints A} {σ : AEnv A} {ρ : Env} {f x 
   dsimp only [letrecVal]
   split
   next hholds =>
-    -- the summary: its result was checked against the body
-    refine .sum H σ rfl (Flat.sub_refl _) (Flat.sub_refl _) id hσ hB
-      (fun w hw => Flat.mem_leq hw hholds) ?_
+    -- the summary: the last body's result was checked against the claim
+    refine .sum H σ rfl (Flat.sub_refl _) (Flat.subs_refl _) (Flat.sub_refl _) id hσ hB ?_
+    refine Checked.mono (fun w hw => Flat.mem_leq hw hholds) ?_ checked_last
     -- if `fails` is `false`, the body was checked assuming that the recursive
     -- calls don't fail, which is this summary
     intro hF
@@ -859,15 +1010,16 @@ theorem aeval_sound_aux [NumDomain A] {ρ : Env} {μ μ' : Store} {e : Expr} {r 
   | unit | nil => intro H σ v hσ hB hr; cases hr; exact .flat rfl
   | cons => intro H σ v hσ hB hr; cases hr; exact .flat rfl
   | var hx => intro H σ v hσ hB hr; cases hr; exact hσ _ _ hx
-  | lam =>
+  | @lam _ _ x b =>
     intro H σ v hσ hB hr
     cases hr
-    -- the body was checked with `x` in `P`: its result and whether it fails are
-    -- the summary's
-    exact .sum H σ rfl (Flat.sub_refl _) (Flat.sub_refl _) id hσ hB (Flat.sub_refl _) id
-  | app _ _ _ ihf iha ihb =>
+    -- the body was checked against the summary
+    obtain ⟨S, hS, _, _, hchk⟩ := lam_checked (H := H) b (σ := σ) (x := x)
+    exact .sum H σ hS (Flat.sub_refl _) (Flat.subs_refl _) (Flat.sub_refl _) id hσ hB hchk
+  | app _ _ hbody ihf iha ihb =>
     intro H σ v hσ hB hr
-    exact apply_sound (ihf hσ hB rfl) (iha hσ hB rfl) (fun _ _ hd hb => ihb hd hb hr)
+    cases hr
+    exact apply_sound (ihf hσ hB rfl) (iha hσ hB rfl) hbody (fun _ _ hd hb => ihb hd hb rfl)
   | binop _ _ iha ihb =>
     intro H σ v hσ hB hr
     exact abinop_sound (iha hσ hB rfl) (ihb hσ hB rfl) hr
@@ -906,18 +1058,18 @@ theorem aeval_sound [NumDomain A] {H : Hints A} {σ : AEnv A} {ρ : Env} {μ μ'
     (h : Eval ρ μ e (.ok v) μ') : (aeval H σ e).mem v :=
   aeval_sound_aux h hσ hB rfl
 
-/-- A recursive closure whose summary was checked against its body satisfies it. -/
+/-- A recursive closure of one parameter whose summary was checked against its body
+    satisfies it. -/
 theorem letrec_sat [NumDomain A] {H : Hints A} {σ : AEnv A} {ρ : Env} {f x : String}
-    {b : Expr} {S : Summary A} (hσ : σ.Describes ρ) (hB : σ.Bound ρ)
-    (hholds : (aeval H (bodyEnv (some f) x S σ) b).flat.leq S.res = true)
-    (hfails : S.fails = false → mayFail H (bodyEnv (some f) x S σ) b = false) :
+    {b : Expr} {S : Summary A} (hσ : σ.Describes ρ) (hB : σ.Bound ρ) (hrest : S.rest = [])
+    (hchk : Checked H (bodyEnv (some f) x S σ) b S.rest S.res S.fails) :
     Sat S (some f) x b ρ := by
   intro v w μ μ' hv hev
-  -- the check, as an inclusion
-  have hcheck : (aeval H (bodyEnv (some f) x S σ) b).flat.sub S.res :=
-    fun u hu => Flat.mem_leq hu hholds
   -- the body is checked in an abstract environment describing the call's
-  have hd := AEnv.Describes.body hσ hB hcheck hfails hv
-  exact hcheck w (AVal.mem_flat (aeval_sound hd (AEnv.Bound.body hB) hev))
+  have hd := AEnv.Describes.body hσ hB hchk hv
+  have hchk' := hchk
+  rw [hrest] at hchk'
+  simp only [Checked] at hchk'
+  exact hchk'.1 w (AVal.mem_flat (aeval_sound hd (AEnv.Bound.body hB) hev))
 
 end Diva.AbsInt

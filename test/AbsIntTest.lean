@@ -178,6 +178,32 @@ private def divDown :=
 #guard mayFailI countdown                                       = some false
 #guard mayFailI "let f = fun y -> 10 / y in f (x + 1)"          = some false
 
+
+/-! ## Curried functions -/
+
+private def ab : List (String × Itv) := [("a#0", itv 0 10), ("b#1", itv 0 5)]
+
+-- `fun a b -> e` gets one summary, with a precondition per parameter
+#guard analyseH ab "fun a b -> a + b"                         = some "fun [0, 10] -> [0, 5] -> [0, 15]"
+#guard analyseH ab "let f a b = a + b in f x 2"               = some "[0, 15]"
+
+-- `f 1` gives the summary of the other parameter
+#guard analyseH ab "let f a b = a + b in let g = f 1 in g 2"  = some "[0, 15]"
+#guard mayFailH [("a#0", itv 0 10), ("b#1", itv 1 5)] "let f a b = a / b in f x 2" = some false
+#guard mayFailH ab "let f a b = a / b in f x 2"               = some true   -- `b` may be `0`
+#guard mayFailH ab "let f a b = a / b in f x"                 = some false  -- only builds a closure
+
+-- with inferred hints: each argument is a claim on its own parameter
+#guard hintsOf "let f a b = a + b in f x 2"                   = some "[a#0: [0, 10], b#1: 2]"
+#guard analyseI "let f a b = a + b in f x 2"                  = some "[2, 12]"
+#guard analyseI "let f a b c = a + b + c in f 1 2 3"          = some "6"
+#guard mayFailI "let f a b c = a / (b + c) in f 1 2 3"        = some false
+
+-- a recursive function of two parameters
+private def countAcc := "let rec f n acc = if n <= 0 then acc else f (n - 1) (acc + 1) in f x 0"
+#guard hintsOf countAcc  = some "[n#1: [0, 10], $f#0: [0, +∞], acc#2: [0, +∞]]"
+#guard analyseI countAcc = some "[0, +∞]"
+#guard mayFailI countAcc = some false
 /-! ## Safety, checked by the kernel -/
 
 -- `safe` turns the checker's answer into a theorem about every run of the program
