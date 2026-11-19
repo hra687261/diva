@@ -216,6 +216,12 @@ private def countAcc := "let rec f n acc = if n <= 0 then acc else f (n - 1) (ac
 -- the inference looks inside `match`
 #guard analyseI "let f = fun y -> y + 1 in match [x] with [] -> 0 | h :: t -> f h"
   = some "[1, 11]"
+-- `match` fails only through a branch that can be taken, or if it is not on a list
+#guard mayFailS "match [x] with [] -> 1 / 0 | h :: t -> h"       = some false  -- never `[]`
+#guard mayFailS "match [x] with [] -> 0 | h :: t -> 10 / h"      = some true   -- `h` may be `0`
+#guard mayFailS "match [x + 1] with [] -> 0 | h :: t -> 10 / h"  = some false
+#guard mayFailS "match [] with [] -> 0 | h :: t -> 1 / 0"        = some false  -- always `[]`
+#guard mayFailS "match 1 with [] -> 0 | h :: t -> h"             = some true   -- not a list
 
 /-! ## Safety, checked by the kernel -/
 

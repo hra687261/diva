@@ -255,6 +255,29 @@ theorem mayFail_sound_aux {ρ : Env} {μ μ' : Store} {e : Expr} {r : Outcome}
   | ifErr _ ih =>
     intro H σ k hσ hB hr
     simp [mayFail, mayFailM, ih hσ hB hr]
+  | matchNil hs _ _ ihn =>
+    intro H σ k hσ hB hr
+    -- the list is `[]`, so the `[]` branch can be taken, and it fails
+    have hnil : (aevalM false H σ _).mayBeNil = true :=
+      AVal.mayBeNil_of_mem (aeval_sound hσ hB hs)
+    have hfn := ihn (H := H) hσ hB hr
+    simp [mayFail, mayFailM, hnil, hfn]
+  | @matchCons _ _ _ _ _ _ xs x _ _ _ _ hs _ _ ihc =>
+    intro H σ k hσ hB hr
+    -- the list has a first element, so the `::` branch can be taken, and it fails
+    have hv := aeval_sound (H := H) hσ hB hs
+    have hcons : (aevalM false H σ _).heads.leq Flat.bot = false := AVal.heads_not_bot hv
+    -- `x` is in the heads of the list, and `xs` in its tails
+    have hd := (hσ.cons (x := x) (AVal.mem_ofFlat (AVal.mem_heads hv))).cons (x := xs)
+      (AVal.mem_tails hv)
+    have hfc := ihc (H := H) hd hB.cons.cons hr
+    simp [mayFail, mayFailM, hcons, hfc]
+  | matchNotList hs hv =>
+    intro H σ k hσ hB hr
+    simp [mayFail, mayFailM, not_within_list (aeval_sound hσ hB hs) hv]
+  | matchErr _ ih =>
+    intro H σ k hσ hB hr
+    simp [mayFail, mayFailM, ih hσ hB hr]
   | assertF hc =>
     intro H σ k hσ hB hr
     simp [mayFail, mayFailM, AVal.mem_ff (aeval_sound hσ hB hc)]

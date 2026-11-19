@@ -308,6 +308,13 @@ def mayFailM [NumDomain A] (opt : Bool) (H : Hints A) (σ : AEnv A) : Expr → B
   | .assert c =>
     let ac := aevalM opt H σ c
     mayFailM opt H σ c || !ac.within Flat.anyBool || ac.ff
+  | .matchList s n x xs c =>
+    -- a branch counts only if it can be taken (as in `aevalM`)
+    let vs := aevalM opt H σ s
+    mayFailM opt H σ s || !vs.within Flat.listV ||
+      (vs.mayBeNil && mayFailM opt H σ n) ||
+      (!vs.heads.leq Flat.bot &&
+        mayFailM opt H ((xs, vs.tails) :: (x, AVal.ofFlat vs.heads) :: σ) c)
   | .exn _ e => mayFailM opt H σ e
   -- `raise`, `try`, lists, arrays and refs: not analysed yet
   | _ => true
