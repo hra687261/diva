@@ -2,6 +2,7 @@ name = "diva"
 version = "0.1.0-dev"
 license = "Apache-2.0"
 defaultTargets = ["diva"]
+testDriver = "divaTest"
 
 [[require]]
 name = "ParseIt"
@@ -24,3 +25,9 @@ globs = ["ParserTest", "InterpTest", "AbsIntItv", "AbsIntTest", "ReportTest", "O
 [[lean_exe]]
 name = "diva"
 root = "Main"
+
+# `lake test`: builds the tests of `DivaTest`, then runs `test/cli.sh`
+[[lean_exe]]
+name = "divaTest"
+srcDir = "test"
+root = "TestMain"

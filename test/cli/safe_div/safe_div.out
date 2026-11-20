@@ -1,0 +1,19 @@
+$ diva run safe_div.ml
+63
+[exit 0]
+
+$ diva check safe_div.ml
+no runtime error is possible
+[exit 0]
+
+$ diva opt safe_div.ml
+(let rec g n = (fun x -> (if (n <= 0) then x else ((g (n - 1)) ((x * x) + 1)))) in (let d = ((g 3) 1) in (let q = (100 / d) in (let pos = (fun x -> (if (x > 0) then x else 1)) in (let r = (60 / (pos -5)) in (q + 60))))))
+[exit 0]
+
+$ diva hints safe_div.ml
+n#1 : [0, 3]
+$g#0 : [1, +∞]
+x#2 : [1, +∞]
+x#3 : -5
+[exit 0]
+

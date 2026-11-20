@@ -1,0 +1,33 @@
+$ diva run basics.ml
+3628800
+[exit 0]
+
+$ diva check basics.ml
+`(match l with [] -> 0 | _ :: t -> (1 + (length t)))`: may not match a list (⊤)
+`(match l with [] -> [] | x :: xs -> ((f x) :: ((map f) xs)))`: may not match a list (⊤)
+`(f x)`: calls a function the analysis knows nothing about
+`(match l with [] -> 0 | x :: xs -> (x + (sum xs)))`: may not match a list (⊤)
+`(x + (sum xs))`: the operands may not be integers (⊤ and [-∞, +∞])
+`(x * x)`: the operands may not be integers (⊤ and ⊤)
+`((map (fun x -> (x * x))) ((range 1) 5))`: the function called may fail
+`(sum squares)`: the function called may fail
+`(length squares)`: the function called may fail
+`(assert ok)` may fail
+[exit 1]
+
+$ diva opt basics.ml
+(let rec fact n = (if (n <= 1) then 1 else (n * (fact (n - 1)))) in (let rec length l = (match l with [] -> 0 | _ :: t -> (1 + (length t))) in (let rec map f = (fun l -> (match l with [] -> [] | x :: xs -> ((f x) :: ((map f) xs)))) in (let rec sum l = (match l with [] -> 0 | x :: xs -> (x + (sum xs))) in (let rec range a = (fun b -> (if (a > b) then [] else (a :: ((range (a + 1)) b)))) in (let squares = ((map (fun x -> (x * x))) ((range 1) 5)) in (let total = (sum squares) in (let n = (length squares) in (let ok = (if (total = 55) then (if (n <> 5) then false else true) else false) in (let f10 = (fact 10) in (let _ = (assert ok) in f10)))))))))))
+[exit 0]
+
+$ diva hints basics.ml
+n#1 : [1, 10]
+$fact#0 : [1, +∞]
+$length#2 : [0, +∞]
+f#5 : fun
+$map#4 : list
+$sum#7 : [-∞, +∞]
+a#10 : [1, 6]
+$range#9 : list
+b#11 : 5
+[exit 0]
+

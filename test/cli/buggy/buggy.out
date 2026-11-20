@@ -1,0 +1,25 @@
+$ diva run buggy.ml
+runtime error: division by zero
+[exit 1]
+
+$ diva check buggy.ml
+`(match l with [] -> 0 | _ :: t -> (1 + (count t)))`: may not match a list (⊤)
+`(match l with [] -> 0 | x :: xs -> (x + (sum xs)))`: may not match a list (⊤)
+`(x + (sum xs))`: the operands may not be integers (⊤ and [-∞, +∞])
+`(sum l)`: the function called may fail
+`(count l)`: the function called may fail
+`((sum l) / (count l))`: possible division by zero (divisor: [0, +∞])
+`(average (1 :: (2 :: (3 :: []))))`: the function called may fail
+`(average [])`: the function called may fail
+[exit 1]
+
+$ diva opt buggy.ml
+(let rec count l = (match l with [] -> 0 | _ :: t -> (1 + (count t))) in (let rec sum l = (match l with [] -> 0 | x :: xs -> (x + (sum xs))) in (let average = (fun l -> ((sum l) / (count l))) in (let a = (average (1 :: (2 :: (3 :: [])))) in (let b = (average []) in (a + b))))))
+[exit 0]
+
+$ diva hints buggy.ml
+$count#0 : [0, +∞]
+$sum#2 : [-∞, +∞]
+l#4 : list
+[exit 0]
+
