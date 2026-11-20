@@ -10,6 +10,9 @@ Constant folding: an expression that is pure (`Expr.pure`: it terminates and
 doesn't change the store), that can't fail (`mayFail`), and whose value the
 analysis knows exactly, becomes that value.
 
+Dead branches: `if c then t else e`, where `c` is pure, can't fail and is
+certainly `true`, becomes `t` (and `e` if `c` is certainly `false`).
+
 A function's body is optimised with its parameter at `⊤`, not at the hint for the
 parameter. A hint is only checked at the calls the analysis sees, and a closure may
 be called from anywhere.
@@ -63,9 +66,14 @@ def opt (H : Hints A) (σ : AEnv A) (e : Expr) : Expr :=
     | .binop op a b => .binop op (opt H σ a) (opt H σ b)
     | .cons a b => .cons (opt H σ a) (opt H σ b)
     | .ite c t e =>
-      -- each branch, knowing the condition (`σ` if the branch can't be taken)
-      .ite (opt H σ c) (opt H ((σ.assume c true).getD σ) t)
-        (opt H ((σ.assume c false).getD σ) e)
+      match constOf H σ c with
+      -- if the condition is certainly `true` only the `then` branch remains
+      | some (.bool true) => opt H ((σ.assume c true).getD σ) t
+      | some (.bool false) => opt H ((σ.assume c false).getD σ) e
+      | _ =>
+        -- each branch, knowing the condition (`σ` if the branch can't be taken)
+        .ite (opt H σ c) (opt H ((σ.assume c true).getD σ) t)
+          (opt H ((σ.assume c false).getD σ) e)
     | .matchList s n x xs c =>
       let vs := aeval H σ s
       .matchList (opt H σ s) (opt H σ n) x xs

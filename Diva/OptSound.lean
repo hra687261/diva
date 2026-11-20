@@ -36,9 +36,14 @@ mutual
 /-- `e'` is an optimised version of `e`, in the abstract environment `σ`. `opt H σ e`
     is one (`optimizes_opt`). Stating it as a relation lets the proofs use `cases` on
     the optimised expression. Either `e` is replaced by its value `c` (`fold`), or
+    `if` is replaced by the branch that its condition selects (`iteT`, `iteF`), or
     `e` keeps its shape and its sub-expressions are optimised (`step`). -/
 inductive Optimizes (H : Hints A) : AEnv A → Expr → Expr → Prop where
   | fold {σ e c} : constOf H σ e = some c → Optimizes H σ e c
+  | iteT {σ c t t' e} : constOf H σ c = some (.bool true) →
+      Optimizes H ((σ.assume c true).getD σ) t t' → Optimizes H σ (.ite c t e) t'
+  | iteF {σ c t e e'} : constOf H σ c = some (.bool false) →
+      Optimizes H ((σ.assume c false).getD σ) e e' → Optimizes H σ (.ite c t e) e'
   | step {σ e e'} : OptStep H σ e e' → Optimizes H σ e e'
 
 /-- `e'` has the shape of `e`, and each sub-expression of `e'` is an optimised version
@@ -130,7 +135,17 @@ theorem optimizes_opt (H : Hints A) (e : Expr) : ∀ σ, Optimizes H σ e (opt H
     exact optimizes_of_none fun hc => by rw [opt.eq_def, hc]; exact .letin (ih1 _) (ih2 _)
   | ite c t e ihc iht ihe =>
     intro σ
-    exact optimizes_of_none fun hc => by rw [opt.eq_def, hc]; exact .ite (ihc _) (iht _) (ihe _)
+    cases hc : constOf H σ (.ite c t e)
+    case some v =>
+      rw [opt.eq_def, hc]
+      exact .fold hc
+    case none =>
+      rw [opt.eq_def, hc]
+      simp only
+      split
+      next hct => exact .iteT hct (iht _)
+      next hcf => exact .iteF hcf (ihe _)
+      next => exact .step (.ite (ihc _) (iht _) (ihe _))
   | binop op a b iha ihb =>
     intro σ
     exact optimizes_of_none fun hc => by rw [opt.eq_def, hc]; exact .binop (iha _) (ihb _)
@@ -982,6 +997,43 @@ theorem fold_bwd {H : Hints A} {σ : AEnv A} {e c : Expr} {ρ ρ' : Env} {μ μ'
     · cases h'
       exact ⟨_, _, h, .ok .bool, hμ⟩
 
+/-- If `constOf` gives the boolean `b` for `c`, `c` gives `b` and doesn't change the
+    store. -/
+theorem constOf_bool {H : Hints A} {σ : AEnv A} {c : Expr} {b : Bool} {ρ : Env}
+    {μ μ₁ : Store} {r : Outcome} (hc : constOf H σ c = some (.bool b))
+    (hσ : σ.Describes ρ) (hB : σ.Bound ρ) (h : Eval ρ μ c r μ₁) :
+    r = .ok (.bool b) ∧ μ₁ = μ := by
+  obtain ⟨hi, hf, hl⟩ := constOf_some hc
+  cases r with
+  | err k =>
+    have hm := mayFail_sound (H := H) hσ hB h
+    rw [hf] at hm
+    cases hm
+  | ok v =>
+    rcases literal_sound hl (aeval_sound hσ hB h) with ⟨n, hn, _⟩ | ⟨b', hb, hv⟩
+    · cases hn
+    · cases hb
+      rw [hv]
+      exact ⟨rfl, pure_store h hi⟩
+
+/-- `if true then t else e` gives what `t` gives. -/
+theorem eval_ite_true {ρ : Env} {μ μ₁ : Store} {t e : Expr} {r : Outcome}
+    (h : Eval ρ μ (.ite (.bool true) t e) r μ₁) : Eval ρ μ t r μ₁ := by
+  cases h with
+  | ifT hc ht => cases hc; exact ht
+  | ifF hc _ => cases hc
+  | ifNotBool hc hv => cases hc; cases hv
+  | ifErr hc => cases hc
+
+/-- `if false then t else e` gives what `e` gives. -/
+theorem eval_ite_false {ρ : Env} {μ μ₁ : Store} {t e : Expr} {r : Outcome}
+    (h : Eval ρ μ (.ite (.bool false) t e) r μ₁) : Eval ρ μ e r μ₁ := by
+  cases h with
+  | ifT hc _ => cases hc
+  | ifF hc he => cases hc; exact he
+  | ifNotBool hc hv => cases hc; cases hv
+  | ifErr hc => cases hc
+
 
 /-! ## Forward: what the source program does, the optimised one does too -/
 
@@ -993,14 +1045,23 @@ def FwdSim (H : Hints A) (R : AEnv A → Expr → Expr → Prop) (ρ : Env) (μ 
     R σ e e' → EnvRel H ρ ρ' → StoreRel H μ μ' →
     ∃ r' μ₁', Eval ρ' μ' e' r' μ₁' ∧ OutRel H r r' ∧ StoreRel H μ₁ μ₁'
 
-/-- Adds the case where `e` is replaced by its value (`fold_fwd`) to the cases where
-    `e` keeps its shape. -/
+/-- Adds the cases where `e` is replaced by its value (`fold_fwd`) or by a branch
+    (`iteT`, `iteF`) to the cases where `e` keeps its shape. -/
 theorem lift_fwd {H : Hints A} {ρ : Env} {μ μ₁ : Store} {e : Expr} {r : Outcome}
     (h : Eval ρ μ e r μ₁) (ih : FwdSim H (OptStep H) ρ μ e r μ₁) :
     FwdSim H (Optimizes H) ρ μ e r μ₁ := by
   intro σ e' ρ' μ' hσ hB ho hρ hμ
   cases ho with
   | fold hc => exact fold_fwd hc hσ hB h hμ
+  | iteT hc hot =>
+    -- `if true then t' else ...` is related to `e` by `OptStep`, and gives what `t'` gives
+    obtain ⟨r', μ₁', h', hr, hμ₁⟩ :=
+      ih hσ hB (.ite (.fold hc) hot (optimizes_opt H _ _)) hρ hμ
+    exact ⟨r', μ₁', eval_ite_true h', hr, hμ₁⟩
+  | iteF hc hoe =>
+    obtain ⟨r', μ₁', h', hr, hμ₁⟩ :=
+      ih hσ hB (.ite (.fold hc) (optimizes_opt H _ _) hoe) hρ hμ
+    exact ⟨r', μ₁', eval_ite_false h', hr, hμ₁⟩
   | step hs => exact ih hσ hB hs hρ hμ
 
 /-- `sim_fwd`, when `e` keeps its shape. -/
@@ -1513,15 +1574,36 @@ def BwdSim (H : Hints A) (R : AEnv A → Expr → Expr → Prop) (ρ' : Env) (μ
     R σ e e' → EnvRel H ρ ρ' → StoreRel H μ μ' →
     ∃ r μ₁, Eval ρ μ e r μ₁ ∧ OutRel H r r' ∧ StoreRel H μ₁ μ₁'
 
-/-- Adds the case where `e` is replaced by its value (`fold_bwd`) to the cases where
-    `e` keeps its shape. -/
+/-- Adds the cases where `e` is replaced by its value (`fold_bwd`) or by a branch
+    (`iteT`, `iteF`) to the cases where `e` keeps its shape. By recursion on `e`,
+    because the branch can itself be replaced. -/
 theorem lift_bwd {H : Hints A} {ρ' : Env} {μ' μ₁' : Store} {e' : Expr} {r' : Outcome}
-    (h : Eval ρ' μ' e' r' μ₁') (ih : BwdSim H (OptStep H) ρ' μ' e' r' μ₁') :
-    BwdSim H (Optimizes H) ρ' μ' e' r' μ₁' := by
-  intro σ e ρ μ hσ hB ho hρ hμ
+    (h : Eval ρ' μ' e' r' μ₁') (ih : BwdSim H (OptStep H) ρ' μ' e' r' μ₁')
+    {σ : AEnv A} {e : Expr} {ρ : Env} {μ : Store}
+    (hσ : σ.Describes ρ) (hB : σ.Bound ρ) (ho : Optimizes H σ e e')
+    (hρ : EnvRel H ρ ρ') (hμ : StoreRel H μ μ') :
+    ∃ r μ₁, Eval ρ μ e r μ₁ ∧ OutRel H r r' ∧ StoreRel H μ₁ μ₁' := by
   cases ho with
   | fold hc => exact fold_bwd hc hσ hB h hμ
+  | iteT hc hot =>
+    -- the condition terminates, gives `true` and doesn't change the store
+    obtain ⟨hi, _, _⟩ := constOf_some hc
+    obtain ⟨rc, μc, hce⟩ := pure_total _ hi ρ μ
+    obtain ⟨rfl, rfl⟩ := constOf_bool hc hσ hB hce
+    obtain ⟨σt, hst, hdt⟩ := σ.assume_sound hσ hce
+    rw [hst, Option.getD_some] at hot
+    obtain ⟨r, μ₁, ht, hr, hμ₁⟩ := lift_bwd h ih hdt (AEnv.assume_bound hB hst) hot hρ hμ
+    exact ⟨r, μ₁, .ifT hce ht, hr, hμ₁⟩
+  | iteF hc hoe =>
+    obtain ⟨hi, _, _⟩ := constOf_some hc
+    obtain ⟨rc, μc, hce⟩ := pure_total _ hi ρ μ
+    obtain ⟨rfl, rfl⟩ := constOf_bool hc hσ hB hce
+    obtain ⟨σe, hse, hde⟩ := σ.assume_sound hσ hce
+    rw [hse, Option.getD_some] at hoe
+    obtain ⟨r, μ₁, he, hr, hμ₁⟩ := lift_bwd h ih hde (AEnv.assume_bound hB hse) hoe hρ hμ
+    exact ⟨r, μ₁, .ifF hce he, hr, hμ₁⟩
   | step hs => exact ih hσ hB hs hρ hμ
+termination_by sizeOf e
 
 /-- `sim_bwd`, when `e` keeps its shape. -/
 theorem sim_bwd_step {H : Hints A} {ρ' : Env} {μ' μ₁' : Store} {e' : Expr} {r' : Outcome}
@@ -2031,8 +2113,9 @@ theorem sim_fwd {H : Hints A} {ρ : Env} {μ μ₁ : Store} {e : Expr} {r : Outc
 /-- If an optimised version of `e` gives `r'`, `e`, run in related environments and
     stores, gives an outcome related to `r'`. -/
 theorem sim_bwd {H : Hints A} {ρ' : Env} {μ' μ₁' : Store} {e' : Expr} {r' : Outcome}
-    (h : Eval ρ' μ' e' r' μ₁') : BwdSim H (Optimizes H) ρ' μ' e' r' μ₁' :=
-  lift_bwd h (sim_bwd_step h)
+    (h : Eval ρ' μ' e' r' μ₁') : BwdSim H (Optimizes H) ρ' μ' e' r' μ₁' := by
+  intro σ e ρ μ hσ hB ho hρ hμ
+  exact lift_bwd h (sim_bwd_step h) hσ hB ho hρ hμ
 
 /-! ## The theorem -/
 
