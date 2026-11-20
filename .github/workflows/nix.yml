@@ -1,3 +1,4 @@
+
 name: Nix
 
 on:
@@ -6,15 +7,21 @@ on:
 
 jobs:
   build:
+    name: Build and test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: cachix/install-nix-action@v31
-      - uses: actions/cache@v4
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+      - name: Cache Lean and the dependencies
+        uses: actions/cache@v4
         with:
           path: |
             ~/.elan
             .lake
           key: nix-lake-${{ hashFiles('lean-toolchain', 'lake-manifest.json') }}
-      - run: nix develop --command lake build
-      - run: nix develop --command lake test
+      - name: Build
+        run: nix develop --command lake build
+      - name: Test
+        run: nix develop --command lake test

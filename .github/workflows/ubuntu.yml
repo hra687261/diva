@@ -6,10 +6,16 @@ on:
 
 jobs:
   build:
+    name: Build and test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: leanprover/lean-action@v1
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install Lean
+        uses: leanprover/lean-action@v1
         with:
-          build: true
-          test: true
+          auto-config: false
+      - name: Build
+        run: lake build
+      - name: Test
+        run: lake test
