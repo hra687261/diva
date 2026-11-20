@@ -80,13 +80,14 @@ inductive Expr where
 
 /-- `e` contains no call and doesn't have side effects on the store (no `Array.make`,
     `<-`, `ref` or `:=`). Such expressions can be optimized and replaced by their
-    value. -/
-def Expr.inert : Expr → Bool
+    value. As in Lean, a pure expression may still fail (`1 / 0`, `assert`,
+    `raise`). `mayFail` checks that separately. -/
+def Expr.pure : Expr → Bool
   | .int _ | .bool _ | .unit | .var _ | .nil | .lam _ _ => true
   | .app _ _ | .alloc .. | .set .. | .ref .. | .assign .. => false
-  | .letin _ a b | .binop _ a b | .cons a b | .get a b | .tryw a _ b => a.inert && b.inert
-  | .letrec _ _ _ b | .assert b | .len b | .deref b | .exn _ b | .raise b => b.inert
-  | .ite c t e | .matchList c t _ _ e | .exnCase c _ _ t e => c.inert && t.inert && e.inert
+  | .letin _ a b | .binop _ a b | .cons a b | .get a b | .tryw a _ b => a.pure && b.pure
+  | .letrec _ _ _ b | .assert b | .len b | .deref b | .exn _ b | .raise b => b.pure
+  | .ite c t e | .matchList c t _ _ e | .exnCase c _ _ t e => c.pure && t.pure && e.pure
 
 def ppExpr : Expr → String
   | .int n         => toString n

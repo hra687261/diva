@@ -13,7 +13,7 @@ The optimiser adds and removes no allocation, so addresses stay the same.
 The proof has two parts, both by induction on `Eval`. Forward (`sim_fwd`): if the
 source program gives an outcome, the optimised program gives a related outcome.
 Backward (`sim_bwd`): if the optimised program gives an outcome, the source program
-gives a related outcome. An expression that is replaced by its value is inert: it
+gives a related outcome. An expression that is replaced by its value is pure: it
 terminates and leaves the store unchanged.
 
 Both parts are needed because a looping program has no `Eval` derivation. The
@@ -622,7 +622,7 @@ theorem denote_rel {op : BinOp} {va va' vb vb' : Value} (ha : VR H va va') (hb :
 
 end Ops
 
-/-! ## Inert expressions -/
+/-! ## Pure expressions -/
 
 theorem bool_of_isBool {v : Value} (h : v.isBool = true) : ∃ b, v = .bool b := by
   cases v
@@ -646,54 +646,54 @@ theorem exn_of_err_isExn {k : Err} (h : k.isExn = true) : ∃ w, k = .exn w := b
   case exn w => exact ⟨w, rfl⟩
   all_goals simp [Err.isExn] at h
 
-/-- An inert expression leaves the store as it found it. -/
-theorem inert_store {ρ : Env} {μ μ₁ : Store} {e : Expr} {r : Outcome}
-    (h : Eval ρ μ e r μ₁) : e.inert = true → μ₁ = μ := by
+/-- A pure expression leaves the store as it found it. -/
+theorem pure_store {ρ : Env} {μ μ₁ : Store} {e : Expr} {r : Outcome}
+    (h : Eval ρ μ e r μ₁) : e.pure = true → μ₁ = μ := by
   induction h with
   | int | bool | unit | nil | var | varErr | lam => intro _; rfl
   | letrec _ ih => intro hi; exact ih hi
   | app | appNotFn | appErrF | appErrA | alloc | allocErrN | allocErrV
   | set | setErrA | setErrI | setErrV | ref | refErr | assign | assignErrR | assignErrV =>
     intro hi
-    simp [Expr.inert] at hi
+    simp [Expr.pure] at hi
   | letin _ _ ih1 ih2 =>
     intro hi
-    simp only [Expr.inert, Bool.and_eq_true] at hi
+    simp only [Expr.pure, Bool.and_eq_true] at hi
     rw [ih2 hi.2, ih1 hi.1]
   | letinErr _ ih =>
     intro hi
-    simp only [Expr.inert, Bool.and_eq_true] at hi
+    simp only [Expr.pure, Bool.and_eq_true] at hi
     exact ih hi.1
   | ifT _ _ ihc iht =>
     intro hi
-    simp only [Expr.inert, Bool.and_eq_true] at hi
+    simp only [Expr.pure, Bool.and_eq_true] at hi
     rw [iht hi.1.2, ihc hi.1.1]
   | ifF _ _ ihc ihe =>
     intro hi
-    simp only [Expr.inert, Bool.and_eq_true] at hi
+    simp only [Expr.pure, Bool.and_eq_true] at hi
     rw [ihe hi.2, ihc hi.1.1]
   | ifNotBool _ _ ihc | ifErr _ ihc | matchNotList _ _ ihc | matchErr _ ihc
   | exnCaseNotExn _ _ ihc | exnCaseErr _ ihc =>
     intro hi
-    simp only [Expr.inert, Bool.and_eq_true] at hi
+    simp only [Expr.pure, Bool.and_eq_true] at hi
     exact ihc hi.1.1
   | binop _ _ iha ihb | binopErrR _ _ iha ihb | cons _ _ _ iha ihb
   | consNotList _ _ _ iha ihb | consErrR _ _ iha ihb | get _ _ iha ihb
   | getErrI _ _ iha ihb | tryCatch _ _ iha ihb =>
     intro hi
-    simp only [Expr.inert, Bool.and_eq_true] at hi
+    simp only [Expr.pure, Bool.and_eq_true] at hi
     rw [ihb hi.2, iha hi.1]
   | binopErrL _ iha | consErrL _ iha | getErrA _ iha | tryOk _ iha | tryErr _ _ iha =>
     intro hi
-    simp only [Expr.inert, Bool.and_eq_true] at hi
+    simp only [Expr.pure, Bool.and_eq_true] at hi
     exact iha hi.1
   | matchNil _ _ ihs ihn | exnHit _ _ ihs ihn =>
     intro hi
-    simp only [Expr.inert, Bool.and_eq_true] at hi
+    simp only [Expr.pure, Bool.and_eq_true] at hi
     rw [ihn hi.1.2, ihs hi.1.1]
   | matchCons _ _ ihs ihc | exnMiss _ _ _ ihs ihc =>
     intro hi
-    simp only [Expr.inert, Bool.and_eq_true] at hi
+    simp only [Expr.pure, Bool.and_eq_true] at hi
     rw [ihc hi.2, ihs hi.1.1]
   | assert _ ih | assertF _ ih | assertNotBool _ _ ih | assertErr _ ih | len _ ih
   | lenErr _ ih | deref _ ih | derefErr _ ih | exn _ ih | exnErr _ ih | raise _ _ ih
@@ -701,8 +701,8 @@ theorem inert_store {ρ : Env} {μ μ₁ : Store} {e : Expr} {r : Outcome}
     intro hi
     exact ih hi
 
-/-- An inert expression terminates: it contains no call, so it can't loop. -/
-theorem inert_total (e : Expr) : e.inert = true → ∀ ρ μ, ∃ r μ₁, Eval ρ μ e r μ₁ := by
+/-- A pure expression terminates: it contains no call, so it can't loop. -/
+theorem pure_total (e : Expr) : e.pure = true → ∀ ρ μ, ∃ r μ₁, Eval ρ μ e r μ₁ := by
   induction e with
   | int n => intro _ ρ μ; exact ⟨_, _, .int⟩
   | bool b => intro _ ρ μ; exact ⟨_, _, .bool⟩
@@ -716,14 +716,14 @@ theorem inert_total (e : Expr) : e.inert = true → ∀ ρ μ, ∃ r μ₁, Eval
     case some v => exact ⟨_, _, .var hx⟩
   | app | alloc | set | ref | assign =>
     intro hi
-    simp [Expr.inert] at hi
+    simp [Expr.pure] at hi
   | letrec f x b e2 _ ih =>
     intro hi ρ μ
     obtain ⟨r, μ₁, h⟩ := ih hi _ μ
     exact ⟨_, _, .letrec h⟩
   | letin x e1 e2 ih1 ih2 =>
     intro hi ρ μ
-    simp only [Expr.inert, Bool.and_eq_true] at hi
+    simp only [Expr.pure, Bool.and_eq_true] at hi
     obtain ⟨r1, μ₁, h1⟩ := ih1 hi.1 ρ μ
     cases r1 with
     | err k => exact ⟨_, _, .letinErr h1⟩
@@ -732,7 +732,7 @@ theorem inert_total (e : Expr) : e.inert = true → ∀ ρ μ, ∃ r μ₁, Eval
       exact ⟨_, _, .letin h1 h2⟩
   | ite c t e ihc iht ihe =>
     intro hi ρ μ
-    simp only [Expr.inert, Bool.and_eq_true] at hi
+    simp only [Expr.pure, Bool.and_eq_true] at hi
     obtain ⟨rc, μ₁, hc⟩ := ihc hi.1.1 ρ μ
     cases rc with
     | err k => exact ⟨_, _, .ifErr hc⟩
@@ -750,7 +750,7 @@ theorem inert_total (e : Expr) : e.inert = true → ∀ ρ μ, ∃ r μ₁, Eval
           exact ⟨_, _, .ifF hc he⟩
   | binop op a b iha ihb =>
     intro hi ρ μ
-    simp only [Expr.inert, Bool.and_eq_true] at hi
+    simp only [Expr.pure, Bool.and_eq_true] at hi
     obtain ⟨ra, μ₁, ha⟩ := iha hi.1 ρ μ
     cases ra with
     | err k => exact ⟨_, _, .binopErrL ha⟩
@@ -761,7 +761,7 @@ theorem inert_total (e : Expr) : e.inert = true → ∀ ρ μ, ∃ r μ₁, Eval
       | ok vb => exact ⟨_, _, .binop ha hb⟩
   | cons a b iha ihb =>
     intro hi ρ μ
-    simp only [Expr.inert, Bool.and_eq_true] at hi
+    simp only [Expr.pure, Bool.and_eq_true] at hi
     obtain ⟨ra, μ₁, ha⟩ := iha hi.1 ρ μ
     cases ra with
     | err k => exact ⟨_, _, .consErrL ha⟩
@@ -775,7 +775,7 @@ theorem inert_total (e : Expr) : e.inert = true → ∀ ρ μ, ∃ r μ₁, Eval
         case false => exact ⟨_, _, .consNotList ha hb hl⟩
   | matchList s n x xs c ihs ihn ihc =>
     intro hi ρ μ
-    simp only [Expr.inert, Bool.and_eq_true] at hi
+    simp only [Expr.pure, Bool.and_eq_true] at hi
     obtain ⟨rs, μ₁, hs⟩ := ihs hi.1.1 ρ μ
     cases rs with
     | err k => exact ⟨_, _, .matchErr hs⟩
@@ -803,7 +803,7 @@ theorem inert_total (e : Expr) : e.inert = true → ∀ ρ μ, ∃ r μ₁, Eval
         case false => exact ⟨_, _, .assertF hc⟩
   | get a i iha ihi =>
     intro hi ρ μ
-    simp only [Expr.inert, Bool.and_eq_true] at hi
+    simp only [Expr.pure, Bool.and_eq_true] at hi
     obtain ⟨ra, μ₁, ha⟩ := iha hi.1 ρ μ
     cases ra with
     | err k => exact ⟨_, _, .getErrA ha⟩
@@ -841,7 +841,7 @@ theorem inert_total (e : Expr) : e.inert = true → ∀ ρ μ, ∃ r μ₁, Eval
       case false => exact ⟨_, _, .raiseNotExn hv hx⟩
   | tryw a k h iha ihh =>
     intro hi ρ μ
-    simp only [Expr.inert, Bool.and_eq_true] at hi
+    simp only [Expr.pure, Bool.and_eq_true] at hi
     obtain ⟨ra, μ₁, ha⟩ := iha hi.1 ρ μ
     cases ra with
     | ok v => exact ⟨_, _, .tryOk ha⟩
@@ -854,7 +854,7 @@ theorem inert_total (e : Expr) : e.inert = true → ∀ ρ μ, ∃ r μ₁, Eval
         exact ⟨_, _, .tryCatch ha hh⟩
   | exnCase s t x h m ihs ihh ihm =>
     intro hi ρ μ
-    simp only [Expr.inert, Bool.and_eq_true] at hi
+    simp only [Expr.pure, Bool.and_eq_true] at hi
     obtain ⟨rs, μ₁, hs⟩ := ihs hi.1.1 ρ μ
     cases rs with
     | err k => exact ⟨_, _, .exnCaseErr hs⟩
@@ -933,7 +933,7 @@ theorem literal_sound {a : AVal A} {c : Expr} {v : Value} (hl : literal a = some
         case isFalse => cases hl
 
 theorem constOf_some {H : Hints A} {σ : AEnv A} {e c : Expr} (h : constOf H σ e = some c) :
-    e.inert = true ∧ mayFail H σ e = false ∧ literal (aeval H σ e) = some c := by
+    e.pure = true ∧ mayFail H σ e = false ∧ literal (aeval H σ e) = some c := by
   unfold constOf at h
   split at h
   case isTrue hc =>
@@ -948,7 +948,7 @@ theorem fold_fwd {H : Hints A} {σ : AEnv A} {e c : Expr} {ρ ρ' : Env} {μ μ�
     (h : Eval ρ μ e r μ₁) (hμ : StoreRel H μ μ') :
     ∃ r' μ₁', Eval ρ' μ' c r' μ₁' ∧ OutRel H r r' ∧ StoreRel H μ₁ μ₁' := by
   obtain ⟨hi, hf, hl⟩ := constOf_some hc
-  rw [inert_store h hi]
+  rw [pure_store h hi]
   cases r with
   | err k =>
     -- `mayFail` said that `e` can't fail
@@ -967,8 +967,8 @@ theorem fold_bwd {H : Hints A} {σ : AEnv A} {e c : Expr} {ρ ρ' : Env} {μ μ'
     (h' : Eval ρ' μ' c r' μ₁') (hμ : StoreRel H μ μ') :
     ∃ r μ₁, Eval ρ μ e r μ₁ ∧ OutRel H r r' ∧ StoreRel H μ₁ μ₁' := by
   obtain ⟨hi, hf, hl⟩ := constOf_some hc
-  obtain ⟨r, μ₁, h⟩ := inert_total e hi ρ μ
-  have hμ₁ := inert_store h hi
+  obtain ⟨r, μ₁, h⟩ := pure_total e hi ρ μ
+  have hμ₁ := pure_store h hi
   subst hμ₁
   cases r with
   | err k =>

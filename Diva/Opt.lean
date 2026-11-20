@@ -6,7 +6,7 @@ import Diva.AbsInt.Infer
 `opt H σ e` rewrites `e` using the facts of the analysis, in an abstract environment
 `σ` describing the values of the free variables of `e`.
 
-Constant folding: an expression that is inert (`Expr.inert`: it terminates and
+Constant folding: an expression that is pure (`Expr.pure`: it terminates and
 doesn't change the store), that can't fail (`mayFail`), and whose value the
 analysis knows exactly, becomes that value.
 
@@ -34,10 +34,10 @@ def literal (a : AVal A) : Option Expr :=
       else if a.toFlat.leq (Flat.bools false true) && a.ff then some (.bool false)
       else none
 
-/-- The literal `e` certainly evaluates to, if `e` is inert, can't fail, and the
+/-- The literal `e` certainly evaluates to, if `e` is pure, can't fail, and the
     analysis knows its value exactly. -/
 def constOf (H : Hints A) (σ : AEnv A) (e : Expr) : Option Expr :=
-  if e.inert && !mayFail H σ e then literal (aeval H σ e) else none
+  if e.pure && !mayFail H σ e then literal (aeval H σ e) else none
 
 /-- The abstract environment of the body of `fun x -> b`, or of `let rec f x = b`
     (`s = some f`): `x` at `⊤`, and `f` as `aeval` gives it. -/
