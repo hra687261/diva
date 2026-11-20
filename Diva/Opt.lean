@@ -13,6 +13,9 @@ analysis knows exactly, becomes that value.
 Dead branches: `if c then t else e`, where `c` is pure, can't fail and is
 certainly `true`, becomes `t` (and `e` if `c` is certainly `false`).
 
+Proved assertions: `assert c`, where `c` is pure, can't fail and is certainly
+`true`, becomes `()`.
+
 A function's body is optimised with its parameter at `⊤`, not at the hint for the
 parameter. A hint is only checked at the calls the analysis sees, and a closure may
 be called from anywhere.
@@ -78,7 +81,11 @@ def opt (H : Hints A) (σ : AEnv A) (e : Expr) : Expr :=
       let vs := aeval H σ s
       .matchList (opt H σ s) (opt H σ n) x xs
         (opt H ((xs, vs.tails) :: (x, AVal.ofFlat vs.heads) :: σ) c)
-    | .assert c => .assert (opt H σ c)
+    | .assert c =>
+      match constOf H σ c with
+      -- the assertion certainly holds
+      | some (.bool true) => .unit
+      | _ => .assert (opt H σ c)
     | .alloc site n v => .alloc site (opt H σ n) (opt H σ v)
     | .get a i => .get (opt H σ a) (opt H σ i)
     | .set a i v => .set (opt H σ a) (opt H σ i) (opt H σ v)

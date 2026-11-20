@@ -37,6 +37,7 @@ mutual
     is one (`optimizes_opt`). Stating it as a relation lets the proofs use `cases` on
     the optimised expression. Either `e` is replaced by its value `c` (`fold`), or
     `if` is replaced by the branch that its condition selects (`iteT`, `iteF`), or
+    an assertion that certainly holds is replaced by `()` (`assertT`), or
     `e` keeps its shape and its sub-expressions are optimised (`step`). -/
 inductive Optimizes (H : Hints A) : AEnv A → Expr → Expr → Prop where
   | fold {σ e c} : constOf H σ e = some c → Optimizes H σ e c
@@ -44,6 +45,7 @@ inductive Optimizes (H : Hints A) : AEnv A → Expr → Expr → Prop where
       Optimizes H ((σ.assume c true).getD σ) t t' → Optimizes H σ (.ite c t e) t'
   | iteF {σ c t e e'} : constOf H σ c = some (.bool false) →
       Optimizes H ((σ.assume c false).getD σ) e e' → Optimizes H σ (.ite c t e) e'
+  | assertT {σ c} : constOf H σ c = some (.bool true) → Optimizes H σ (.assert c) .unit
   | step {σ e e'} : OptStep H σ e e' → Optimizes H σ e e'
 
 /-- `e'` has the shape of `e`, and each sub-expression of `e'` is an optimised version
@@ -159,7 +161,16 @@ theorem optimizes_opt (H : Hints A) (e : Expr) : ∀ σ, Optimizes H σ e (opt H
       exact .matchList (ihs _) (ihn _) (ihc _)
   | assert c ih =>
     intro σ
-    exact optimizes_of_none fun hc => by rw [opt.eq_def, hc]; exact .assert (ih _)
+    cases hc : constOf H σ (.assert c)
+    case some v =>
+      rw [opt.eq_def, hc]
+      exact .fold hc
+    case none =>
+      rw [opt.eq_def, hc]
+      simp only
+      split
+      next hct => exact .assertT hct
+      next => exact .step (.assert (ih _))
   | alloc site n v ihn ihv =>
     intro σ
     exact optimizes_of_none fun hc => by rw [opt.eq_def, hc]; exact .alloc (ihn _) (ihv _)
@@ -1045,8 +1056,8 @@ def FwdSim (H : Hints A) (R : AEnv A → Expr → Expr → Prop) (ρ : Env) (μ 
     R σ e e' → EnvRel H ρ ρ' → StoreRel H μ μ' →
     ∃ r' μ₁', Eval ρ' μ' e' r' μ₁' ∧ OutRel H r r' ∧ StoreRel H μ₁ μ₁'
 
-/-- Adds the cases where `e` is replaced by its value (`fold_fwd`) or by a branch
-    (`iteT`, `iteF`) to the cases where `e` keeps its shape. -/
+/-- Adds the cases of `fold`, `iteT`, `iteF` and `assertT` to the cases where `e`
+    keeps its shape. -/
 theorem lift_fwd {H : Hints A} {ρ : Env} {μ μ₁ : Store} {e : Expr} {r : Outcome}
     (h : Eval ρ μ e r μ₁) (ih : FwdSim H (OptStep H) ρ μ e r μ₁) :
     FwdSim H (Optimizes H) ρ μ e r μ₁ := by
@@ -1062,6 +1073,18 @@ theorem lift_fwd {H : Hints A} {ρ : Env} {μ μ₁ : Store} {e : Expr} {r : Out
     obtain ⟨r', μ₁', h', hr, hμ₁⟩ :=
       ih hσ hB (.ite (.fold hc) (optimizes_opt H _ _) hoe) hρ hμ
     exact ⟨r', μ₁', eval_ite_false h', hr, hμ₁⟩
+  | assertT hc =>
+    -- `c` gives `true` and doesn't change the store, so `assert c` gives `()`
+    cases h with
+    | assert hce =>
+      obtain ⟨_, rfl⟩ := constOf_bool hc hσ hB hce
+      exact ⟨_, _, .unit, .ok .unit, hμ⟩
+    | assertF hce => cases (constOf_bool hc hσ hB hce).1
+    | assertNotBool hce hv =>
+      obtain ⟨heq, _⟩ := constOf_bool hc hσ hB hce
+      cases heq
+      cases hv
+    | assertErr hce => cases (constOf_bool hc hσ hB hce).1
   | step hs => exact ih hσ hB hs hρ hμ
 
 /-- `sim_fwd`, when `e` keeps its shape. -/
@@ -1574,9 +1597,9 @@ def BwdSim (H : Hints A) (R : AEnv A → Expr → Expr → Prop) (ρ' : Env) (μ
     R σ e e' → EnvRel H ρ ρ' → StoreRel H μ μ' →
     ∃ r μ₁, Eval ρ μ e r μ₁ ∧ OutRel H r r' ∧ StoreRel H μ₁ μ₁'
 
-/-- Adds the cases where `e` is replaced by its value (`fold_bwd`) or by a branch
-    (`iteT`, `iteF`) to the cases where `e` keeps its shape. By recursion on `e`,
-    because the branch can itself be replaced. -/
+/-- Adds the cases of `fold`, `iteT`, `iteF` and `assertT` to the cases where `e`
+    keeps its shape. By recursion on `e`, because the branch kept by `iteT` or `iteF`
+    can itself be replaced. -/
 theorem lift_bwd {H : Hints A} {ρ' : Env} {μ' μ₁' : Store} {e' : Expr} {r' : Outcome}
     (h : Eval ρ' μ' e' r' μ₁') (ih : BwdSim H (OptStep H) ρ' μ' e' r' μ₁')
     {σ : AEnv A} {e : Expr} {ρ : Env} {μ : Store}
@@ -1602,6 +1625,13 @@ theorem lift_bwd {H : Hints A} {ρ' : Env} {μ' μ₁' : Store} {e' : Expr} {r' 
     rw [hse, Option.getD_some] at hoe
     obtain ⟨r, μ₁, he, hr, hμ₁⟩ := lift_bwd h ih hde (AEnv.assume_bound hB hse) hoe hρ hμ
     exact ⟨r, μ₁, .ifF hce he, hr, hμ₁⟩
+  | assertT hc =>
+    -- `()` gives `()`. `c` terminates, gives `true` and doesn't change the store.
+    cases h
+    obtain ⟨hi, _, _⟩ := constOf_some hc
+    obtain ⟨rc, μc, hce⟩ := pure_total _ hi ρ μ
+    obtain ⟨rfl, rfl⟩ := constOf_bool hc hσ hB hce
+    exact ⟨_, _, .assert hce, .ok .unit, hμ⟩
   | step hs => exact ih hσ hB hs hρ hμ
 termination_by sizeOf e
 

@@ -51,6 +51,15 @@ private def sameResult (s : String) : Bool :=
 #guard optimized "fun y -> if 1 / 0 < 3 then y else 0" =
   some "(fun y -> (if ((1 / 0) < 3) then y else 0))"
 
+-- proved assertions become `()`
+#guard optimized "fun x -> if x < 3 then (assert (x < 5); x) else 0" =
+  some "(fun x -> (if (x < 3) then (let _ = () in x) else 0))"
+-- TODO: remove the let-binding `let _ = () in ...`
+
+-- an assertion that may not hold is kept
+#guard optimized "fun x -> assert (x < 5); x" =
+  some "(fun x -> (let _ = (assert (x < 5)) in x))"
+
 -- TODO: calls are not optimized
 #guard optimized "let f x = x * x in f 3 + 1"   = some "(let f = (fun x -> (x * x)) in ((f 3) + 1))"
 #guard optimized "let f y = y + 1 in f (2 + 3)" = some "(let f = (fun y -> (y + 1)) in (f 5))"
@@ -63,3 +72,4 @@ private def sameResult (s : String) : Bool :=
 #guard sameResult "let rec fact n = if n <= 1 then 1 else n * fact (n - 1) in fact (2 + 3)"
 #guard sameResult "1 / 0 + 2"
 #guard sameResult "let f y = let x = 2 in if x < 3 then y + 1 else y in f 4"
+#guard sameResult "let f x = if x < 3 then (assert (x < 5); x) else 0 in f 1"
