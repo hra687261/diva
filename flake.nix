@@ -14,6 +14,9 @@
           # `elan` manages the Lean toolchain pinned in ./lean-toolchain
           # `git` is needed by Lake to fetch the ParseIt dependency.
           packages = [ pkgs.elan pkgs.git ];
+          # With `bindnow` Nix's linker resolves every symbol of a shared library
+          # when it is loaded.
+          hardeningDisable = [ "bindnow" ];
         };
       });
     };
