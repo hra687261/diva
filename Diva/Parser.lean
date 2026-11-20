@@ -19,8 +19,12 @@ def idStart : P Char := tokenFilter (fun c => c.isAlpha || c == '_')
 def idCont : P Char := tokenFilter (fun c =>
   c.isAlphanum || c == '_' || c == '\'')
 
-/-- Skip zero or more whitespace characters. -/
-def whitespace : P Unit := dropMany ASCII.whitespace *> pure ()
+/-- A comment `(* ... *)`. Unlike OCaml, comments don't nest. -/
+def comment : P Unit :=
+  ParseIt.Char.string "(*" *> dropUntil (ParseIt.Char.string "*)") anyToken *> pure ()
+
+/-- Skip zero or more whitespace characters and comments. -/
+def whitespace : P Unit := dropMany ((ASCII.whitespace *> pure ()) <|> comment) *> pure ()
 
 /-- Run `p`, then skip trailing whitespace. -/
 def lexeme (p : P α) : P α := p <* whitespace

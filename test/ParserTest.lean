@@ -122,3 +122,8 @@ private def parseStr (s : String) : Option String :=
 #guard parseStr "let rec f y = f y in let rec f y = f (y + 1) in f 0" =
   some "(let rec f#0 y#1 = (f#0 y#1) in (let rec f#2 y#3 = (f#2 (y#3 + 1)) in (f#2 0)))"
 #guard parseStr "let y = 1 in fun y -> y" = some "(let y = 1 in (fun y#0 -> y#0))"  -- only parameters
+
+-- comments `(* ... *)`, anywhere whitespace may be. They don't nest.
+#guard parseStr "(* a *) 1 + (* b * c *) 2 (* end *)" = some "(1 + 2)"
+#guard parseStr "let x = 1 (* one *)\n;; x"            = some "(let x = 1 in x)"
+#guard parseStr "1 (* unterminated"                     = none
