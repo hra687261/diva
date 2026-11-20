@@ -60,6 +60,16 @@ private def sameResult (s : String) : Bool :=
 #guard optimized "fun x -> assert (x < 5); x" =
   some "(fun x -> (let _ = (assert (x < 5)) in x))"
 
+-- identities: `x + 0`, `x * 1`, `0 + x`, ... become `x` when `x` is certainly an integer
+#guard optimized "fun x -> if x < 3 then x * 1 + 0 else 0" =
+  some "(fun x -> (if (x < 3) then x else 0))"
+#guard optimized "fun x -> if x < 3 then 0 + (1 * x) / 1 else 0" =
+  some "(fun x -> (if (x < 3) then x else 0))"
+#guard optimized "fun x -> let z = 0 in if x < 3 then x - z else 0" =
+  some "(fun x -> (let z = 0 in (if (x < 3) then x else 0)))"
+-- `x` may not be an integer: `x + 0` may fail, and is kept
+#guard optimized "fun x -> x + 0" = some "(fun x -> (x + 0))"
+
 -- TODO: calls are not optimized
 #guard optimized "let f x = x * x in f 3 + 1"   = some "(let f = (fun x -> (x * x)) in ((f 3) + 1))"
 #guard optimized "let f y = y + 1 in f (2 + 3)" = some "(let f = (fun y -> (y + 1)) in (f 5))"
@@ -73,3 +83,5 @@ private def sameResult (s : String) : Bool :=
 #guard sameResult "1 / 0 + 2"
 #guard sameResult "let f y = let x = 2 in if x < 3 then y + 1 else y in f 4"
 #guard sameResult "let f x = if x < 3 then (assert (x < 5); x) else 0 in f 1"
+#guard sameResult "let f x = if x < 3 then 0 + (1 * x) / 1 else 0 in f 2"
+#guard sameResult "let f x = x + 0 in f true"

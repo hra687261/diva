@@ -16,6 +16,10 @@ certainly `true`, becomes `t` (and `e` if `c` is certainly `false`).
 Proved assertions: `assert c`, where `c` is pure, can't fail and is certainly
 `true`, becomes `()`.
 
+Identities: `a + 0`, `a - 0`, `a * 1` and `a / 1` become `a`, and `0 + b` and `1 * b`
+become `b`. The dropped side must be pure, can't fail and be certainly that integer.
+-- TODO: this should ideally use type information to determine neutral values etc
+
 A function's body is optimised with its parameter at `⊤`, not at the hint for the
 parameter. A hint is only checked at the calls the analysis sees, and a closure may
 be called from anywhere.
@@ -45,6 +49,38 @@ def literal (a : AVal A) : Option Expr :=
 def constOf (H : Hints A) (σ : AEnv A) (e : Expr) : Option Expr :=
   if e.pure && !mayFail H σ e then literal (aeval H σ e) else none
 
+/-- The integer `n` such that `x op n = x` for every integer `x`. -/
+def _root_.Diva.BinOp.rightUnit : BinOp → Option Int
+  | .add | .sub => some 0
+  | .mul | .div => some 1
+  | _ => none
+
+/-- The integer `n` such that `n op x = x` for every integer `x`. -/
+def _root_.Diva.BinOp.leftUnit : BinOp → Option Int
+  | .add => some 0
+  | .mul => some 1
+  | _ => none
+
+/-- `e` is certainly the integer `n` (`constOf` gives `n`). -/
+def isInt (H : Hints A) (σ : AEnv A) (e : Expr) (n : Int) : Bool :=
+  match constOf H σ e with
+  | some (.int m) => m == n
+  | _ => false
+
+/-- `a op b` gives what `a` gives: `b` is certainly `op`'s right unit, and `a op b`
+    can't fail (so `a` gives an integer). -/
+def rightIdentity (H : Hints A) (σ : AEnv A) (op : BinOp) (a b : Expr) : Bool :=
+  match op.rightUnit with
+  | some n => !mayFail H σ (.binop op a b) && isInt H σ b n
+  | none => false
+
+/-- `a op b` gives what `b` gives: `a` is certainly `op`'s left unit, and `a op b`
+    can't fail (so `b` gives an integer). -/
+def leftIdentity (H : Hints A) (σ : AEnv A) (op : BinOp) (a b : Expr) : Bool :=
+  match op.leftUnit with
+  | some n => !mayFail H σ (.binop op a b) && isInt H σ a n
+  | none => false
+
 /-- The abstract environment of the body of `fun x -> b`, or of `let rec f x = b`
     (`s = some f`): `x` at `⊤`, and `f` as `aeval` gives it. -/
 def bodyEnv (H : Hints A) (σ : AEnv A) (s : Option String) (x : String) (b : Expr) :
@@ -66,7 +102,11 @@ def opt (H : Hints A) (σ : AEnv A) (e : Expr) : Expr :=
         (opt H ((f, letrecVal H σ f x b) :: σ) e2)
     | .app f a => .app (opt H σ f) (opt H σ a)
     | .letin x e1 e2 => .letin x (opt H σ e1) (opt H ((x, aeval H σ e1) :: σ) e2)
-    | .binop op a b => .binop op (opt H σ a) (opt H σ b)
+    | .binop op a b =>
+      -- `a + 0`, `a - 0`, `a * 1`, `a / 1` become `a`, and `0 + b`, `1 * b` become `b`
+      if rightIdentity H σ op a b then opt H σ a
+      else if leftIdentity H σ op a b then opt H σ b
+      else .binop op (opt H σ a) (opt H σ b)
     | .cons a b => .cons (opt H σ a) (opt H σ b)
     | .ite c t e =>
       match constOf H σ c with

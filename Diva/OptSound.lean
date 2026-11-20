@@ -38,6 +38,8 @@ mutual
     the optimised expression. Either `e` is replaced by its value `c` (`fold`), or
     `if` is replaced by the branch that its condition selects (`iteT`, `iteF`), or
     an assertion that certainly holds is replaced by `()` (`assertT`), or
+    `a op b` is replaced by one side, the other being a unit of `op` (`identR`,
+    `identL`), or
     `e` keeps its shape and its sub-expressions are optimised (`step`). -/
 inductive Optimizes (H : Hints A) : AEnv A → Expr → Expr → Prop where
   | fold {σ e c} : constOf H σ e = some c → Optimizes H σ e c
@@ -45,6 +47,12 @@ inductive Optimizes (H : Hints A) : AEnv A → Expr → Expr → Prop where
       Optimizes H ((σ.assume c true).getD σ) t t' → Optimizes H σ (.ite c t e) t'
   | iteF {σ c t e e'} : constOf H σ c = some (.bool false) →
       Optimizes H ((σ.assume c false).getD σ) e e' → Optimizes H σ (.ite c t e) e'
+  | identR {σ op a a' b n} : op.rightUnit = some n → constOf H σ b = some (.int n) →
+      mayFail H σ (.binop op a b) = false → Optimizes H σ a a' →
+      Optimizes H σ (.binop op a b) a'
+  | identL {σ op a b b' n} : op.leftUnit = some n → constOf H σ a = some (.int n) →
+      mayFail H σ (.binop op a b) = false → Optimizes H σ b b' →
+      Optimizes H σ (.binop op a b) b'
   | assertT {σ c} : constOf H σ c = some (.bool true) → Optimizes H σ (.assert c) .unit
   | step {σ e e'} : OptStep H σ e e' → Optimizes H σ e e'
 
@@ -105,6 +113,37 @@ inductive OptStep (H : Hints A) : AEnv A → Expr → Expr → Prop where
       OptStep H σ (.exnCase s t x h m) (.exnCase s' t x h' m')
 end
 
+theorem isInt_true {H : Hints A} {σ : AEnv A} {e : Expr} {n : Int}
+    (h : isInt H σ e n = true) : constOf H σ e = some (.int n) := by
+  unfold isInt at h
+  split at h
+  next m hm =>
+    simp only [beq_iff_eq] at h
+    rw [hm, h]
+  next => cases h
+
+theorem rightIdentity_true {H : Hints A} {σ : AEnv A} {op : BinOp} {a b : Expr}
+    (h : rightIdentity H σ op a b = true) :
+    ∃ n, op.rightUnit = some n ∧ constOf H σ b = some (.int n) ∧
+      mayFail H σ (.binop op a b) = false := by
+  unfold rightIdentity at h
+  split at h
+  next n hu =>
+    simp only [Bool.and_eq_true, Bool.not_eq_true'] at h
+    exact ⟨n, hu, isInt_true h.2, h.1⟩
+  next => cases h
+
+theorem leftIdentity_true {H : Hints A} {σ : AEnv A} {op : BinOp} {a b : Expr}
+    (h : leftIdentity H σ op a b = true) :
+    ∃ n, op.leftUnit = some n ∧ constOf H σ a = some (.int n) ∧
+      mayFail H σ (.binop op a b) = false := by
+  unfold leftIdentity at h
+  split at h
+  next n hu =>
+    simp only [Bool.and_eq_true, Bool.not_eq_true'] at h
+    exact ⟨n, hu, isInt_true h.2, h.1⟩
+  next => cases h
+
 /-- `opt H σ e` is an optimised version of `e`, when `constOf` gives `none` too. -/
 theorem optimizes_of_none {H : Hints A} {σ : AEnv A} {e : Expr}
     (h : constOf H σ e = none → OptStep H σ e (opt H σ e)) :
@@ -150,7 +189,23 @@ theorem optimizes_opt (H : Hints A) (e : Expr) : ∀ σ, Optimizes H σ e (opt H
       next => exact .step (.ite (ihc _) (iht _) (ihe _))
   | binop op a b iha ihb =>
     intro σ
-    exact optimizes_of_none fun hc => by rw [opt.eq_def, hc]; exact .binop (iha _) (ihb _)
+    cases hc : constOf H σ (.binop op a b)
+    case some v =>
+      rw [opt.eq_def, hc]
+      exact .fold hc
+    case none =>
+      rw [opt.eq_def, hc]
+      simp only
+      split
+      next hr =>
+        obtain ⟨n, hu, hb, hf⟩ := rightIdentity_true hr
+        exact .identR hu hb hf (iha _)
+      next =>
+        split
+        next hl =>
+          obtain ⟨n, hu, ha, hf⟩ := leftIdentity_true hl
+          exact .identL hu ha hf (ihb _)
+        next => exact .step (.binop (iha _) (ihb _))
   | cons a b iha ihb =>
     intro σ
     exact optimizes_of_none fun hc => by rw [opt.eq_def, hc]; exact .cons (iha _) (ihb _)
@@ -1027,6 +1082,73 @@ theorem constOf_bool {H : Hints A} {σ : AEnv A} {c : Expr} {b : Bool} {ρ : Env
       rw [hv]
       exact ⟨rfl, pure_store h hi⟩
 
+/-- If `constOf` gives the integer `n` for `c`, `c` gives `n` and doesn't change the
+    store. -/
+theorem constOf_int {H : Hints A} {σ : AEnv A} {c : Expr} {n : Int} {ρ : Env}
+    {μ μ₁ : Store} {r : Outcome} (hc : constOf H σ c = some (.int n))
+    (hσ : σ.Describes ρ) (hB : σ.Bound ρ) (h : Eval ρ μ c r μ₁) :
+    r = .ok (.int n) ∧ μ₁ = μ := by
+  obtain ⟨hi, hf, hl⟩ := constOf_some hc
+  cases r with
+  | err k =>
+    have hm := mayFail_sound (H := H) hσ hB h
+    rw [hf] at hm
+    cases hm
+  | ok v =>
+    rcases literal_sound hl (aeval_sound hσ hB h) with ⟨m, hm, hv⟩ | ⟨b, hb, _⟩
+    · cases hm
+      rw [hv]
+      exact ⟨rfl, pure_store h hi⟩
+    · cases hb
+
+/-- `v op n`, with `n` the right unit of `op`, gives the value `w` only if `v` is
+    `w`. -/
+theorem denote_rightUnit_ok {op : BinOp} {n : Int} {v w : Value}
+    (hu : op.rightUnit = some n) (h : op.denote v (.int n) = .ok w) : v = w := by
+  cases op
+  case add => cases hu; cases v <;> simp_all [BinOp.denote]
+  case sub => cases hu; cases v <;> simp_all [BinOp.denote]
+  case mul => cases hu; cases v <;> simp_all [BinOp.denote]
+  case div => cases hu; cases v <;> simp_all [BinOp.denote]
+  all_goals cases hu
+
+/-- `n op v`, with `n` the left unit of `op`, gives the value `w` only if `v` is
+    `w`. -/
+theorem denote_leftUnit_ok {op : BinOp} {n : Int} {v w : Value}
+    (hu : op.leftUnit = some n) (h : op.denote (.int n) v = .ok w) : v = w := by
+  cases op
+  case add => cases hu; cases v <;> simp_all [BinOp.denote]
+  case mul => cases hu; cases v <;> simp_all [BinOp.denote]
+  all_goals cases hu
+
+/-- If `a op n` gives a value, with `n` the right unit of `op`, `a` gives that
+    value. -/
+theorem eval_identR {op : BinOp} {n : Int} {ρ : Env} {μ μ₁ : Store} {a : Expr}
+    {w : Value} (hu : op.rightUnit = some n)
+    (h : Eval ρ μ (.binop op a (.int n)) (.ok w) μ₁) : Eval ρ μ a (.ok w) μ₁ := by
+  generalize hr : Outcome.ok w = r at h
+  cases h with
+  | binop ha hb =>
+    cases hb
+    rw [← hr, ← denote_rightUnit_ok hu hr.symm]
+    exact ha
+  | binopErrL _ => cases hr
+  | binopErrR _ hb => cases hb
+
+/-- If `n op b` gives a value, with `n` the left unit of `op`, `b` gives that
+    value. -/
+theorem eval_identL {op : BinOp} {n : Int} {ρ : Env} {μ μ₁ : Store} {b : Expr}
+    {w : Value} (hu : op.leftUnit = some n)
+    (h : Eval ρ μ (.binop op (.int n) b) (.ok w) μ₁) : Eval ρ μ b (.ok w) μ₁ := by
+  generalize hr : Outcome.ok w = r at h
+  cases h with
+  | binop ha hb =>
+    cases ha
+    rw [← hr, ← denote_leftUnit_ok hu hr.symm]
+    exact hb
+  | binopErrL ha => cases ha
+  | binopErrR _ _ => cases hr
+
 /-- `if true then t else e` gives what `t` gives. -/
 theorem eval_ite_true {ρ : Env} {μ μ₁ : Store} {t e : Expr} {r : Outcome}
     (h : Eval ρ μ (.ite (.bool true) t e) r μ₁) : Eval ρ μ t r μ₁ := by
@@ -1085,6 +1207,24 @@ theorem lift_fwd {H : Hints A} {ρ : Env} {μ μ₁ : Store} {e : Expr} {r : Out
       cases heq
       cases hv
     | assertErr hce => cases (constOf_bool hc hσ hB hce).1
+  | identR hu hb hf hoa =>
+    -- `a' op n` is related to `e` by `OptStep`, and gives what `a'` gives
+    obtain ⟨r', μ₁', h', hr, hμ₁⟩ := ih hσ hB (.binop hoa (.fold hb)) hρ hμ
+    cases hr with
+    | ok hv => exact ⟨_, _, eval_identR hu h', .ok hv, hμ₁⟩
+    | err _ =>
+      -- `a op b` can't fail
+      have hm := mayFail_sound (H := H) hσ hB h
+      rw [hf] at hm
+      cases hm
+  | identL hu ha hf hob =>
+    obtain ⟨r', μ₁', h', hr, hμ₁⟩ := ih hσ hB (.binop (.fold ha) hob) hρ hμ
+    cases hr with
+    | ok hv => exact ⟨_, _, eval_identL hu h', .ok hv, hμ₁⟩
+    | err _ =>
+      have hm := mayFail_sound (H := H) hσ hB h
+      rw [hf] at hm
+      cases hm
   | step hs => exact ih hσ hB hs hρ hμ
 
 /-- `sim_fwd`, when `e` keeps its shape. -/
@@ -1632,6 +1772,47 @@ theorem lift_bwd {H : Hints A} {ρ' : Env} {μ' μ₁' : Store} {e' : Expr} {r' 
     obtain ⟨rc, μc, hce⟩ := pure_total _ hi ρ μ
     obtain ⟨rfl, rfl⟩ := constOf_bool hc hσ hB hce
     exact ⟨_, _, .assert hce, .ok .unit, hμ⟩
+  | @identR _ op _ _ _ n hu hb hf hoa =>
+    obtain ⟨r, μ₁, ha, hr, hμ₁⟩ := lift_bwd h ih hσ hB hoa hρ hμ
+    -- `b` terminates, gives `n` and doesn't change the store
+    obtain ⟨hi, _, _⟩ := constOf_some hb
+    obtain ⟨rb, μb, hbe⟩ := pure_total _ hi ρ μ₁
+    obtain ⟨rfl, rfl⟩ := constOf_int hb hσ hB hbe
+    cases r with
+    | err k => exact ⟨_, _, .binopErrL ha, hr, hμ₁⟩
+    | ok v =>
+      have hs := Eval.binop (op := op) ha hbe
+      cases hd : op.denote v (.int n) with
+      | err k =>
+        -- `a op b` can't fail
+        rw [hd] at hs
+        have hm := mayFail_sound (H := H) hσ hB hs
+        rw [hf] at hm
+        cases hm
+      | ok w =>
+        rw [hd] at hs
+        obtain rfl := denote_rightUnit_ok hu hd
+        exact ⟨_, _, hs, hr, hμ₁⟩
+  | @identL _ op _ _ _ n hu ha hf hob =>
+    -- `a` terminates, gives `n` and doesn't change the store
+    obtain ⟨hi, _, _⟩ := constOf_some ha
+    obtain ⟨ra, μa, hae⟩ := pure_total _ hi ρ μ
+    obtain ⟨rfl, rfl⟩ := constOf_int ha hσ hB hae
+    obtain ⟨r, μ₁, hb, hr, hμ₁⟩ := lift_bwd h ih hσ hB hob hρ hμ
+    cases r with
+    | err k => exact ⟨_, _, .binopErrR hae hb, hr, hμ₁⟩
+    | ok v =>
+      have hs := Eval.binop (op := op) hae hb
+      cases hd : op.denote (.int n) v with
+      | err k =>
+        rw [hd] at hs
+        have hm := mayFail_sound (H := H) hσ hB hs
+        rw [hf] at hm
+        cases hm
+      | ok w =>
+        rw [hd] at hs
+        obtain rfl := denote_leftUnit_ok hu hd
+        exact ⟨_, _, hs, hr, hμ₁⟩
   | step hs => exact ih hσ hB hs hρ hμ
 termination_by sizeOf e
 
