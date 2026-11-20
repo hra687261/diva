@@ -8,13 +8,18 @@ name = "ParseIt"
 git = "https://github.com/fgdorais/lean4-parseit"
 rev = "main"
 
+[[require]]
+name = "Cli"
+git = "https://github.com/leanprover/lean4-cli"
+rev = "v4.36.0-rc1"
+
 [[lean_lib]]
 name = "Diva"
 
 [[lean_lib]]
 name = "DivaTest"
 srcDir = "test"
-globs = ["ParserTest", "InterpTest", "AbsIntItv", "AbsIntTest", "ReportTest", "OptTest"]
+globs = ["ParserTest", "InterpTest", "AbsIntItv", "AbsIntTest", "ReportTest", "OptTest", "CommandsTest"]
 
 [[lean_exe]]
 name = "diva"
