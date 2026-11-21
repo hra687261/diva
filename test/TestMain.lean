@@ -5,6 +5,7 @@ import AbsIntTest
 import ReportTest
 import OptTest
 import CommandsTest
+import DeductiveTest
 
 /-! The test driver of `lake test`. Building it builds the test modules above, which
 checks their `#guard`s. Running it runs the end-to-end tests of `test/cli.sh`. -/

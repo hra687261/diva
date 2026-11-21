@@ -15,3 +15,5 @@ import Diva.Opt
 import Diva.OptSound
 import Diva.Commands
 import Diva.Cert
+import Diva.Triple
+import Diva.Wp
