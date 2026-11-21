@@ -42,7 +42,8 @@ def withParse (src : String) (cmd : Expr → Result) : Result :=
   | .ok e => cmd e
   | .error msg => { err := [s!"parse error: {msg}"], code := 1 }
 
-/-- `diva run`: the value of the program. A runtime error exits with code 1. -/
+/-- `diva run`: parse the program `src`, run it, and print the value it returns. If
+    the run fails, or takes more than `fuel` steps, print why and exit with code 1. -/
 def run (src : String) : Result :=
   withParse src fun e =>
     match eval fuel [] [] e with
@@ -50,26 +51,31 @@ def run (src : String) : Result :=
     | .err k _ => { err := [s!"runtime error: {ppErr k}"], code := 1 }
     | .outOfFuel => { err := ["out of fuel"], code := 1 }
 
-/-- `diva check`: where the program may fail. If it may fail, exits with code 1. -/
+/-- `diva check`: parse the program `src`, and print the places where the analysis
+    says it may fail. Exit with code 1 if it may fail, and 0 if it can't. -/
 def check (src : String) : Result :=
   withParse src fun e =>
     let H := inferHints ([] : AEnv Itv) e
     let msgs := Report.report ([] : AEnv Itv) e
     { out := msgs, code := if mayFail H [] e then 1 else 0 }
 
-/-- `diva opt`: the optimised program. -/
+/-- `diva opt`: parse the program `src`, optimise it using what the analysis knows
+    about its values, and print the optimised program. -/
 def opt (src : String) : Result :=
   withParse src fun e => { out := [Report.clean (toString (Opt.optimize ([] : AEnv Itv) e))] }
 
-/-- `diva hints`: the inferred hints, as `name : values`. `$f` is the result of the
-    function `f`. Names keep their `#n` suffix: it makes them unique, and hints are
-    keyed by name. -/
+/-- `diva hints`: parse the program `src`, infer its hints, and print them, one per
+    line, as `name : values`. A hint gives the values that a function parameter can
+    take, or that a function can return: `$f` is the result of the function `f`.
+    Names keep their `#n` suffix: it makes them unique, and hints are keyed by name. -/
 def hints (src : String) : Result :=
   withParse src fun e =>
     { out := (inferHints ([] : AEnv Itv) e).map fun (x, a) => s!"{x} : {a}" }
 
-/-- `diva cert`: the certificate of the program (`Cert.certificate`), with the inferred
-    hints. If the program may fail, there is none, and it exits with code 1. -/
+/-- `diva cert`: parse the program `src`, and print its certificate
+    (`Cert.certificate`): a Lean file stating that the program never fails, with the
+    hints inferred for it. If the analysis says that the program may fail, there is
+    no certificate: print why and exit with code 1. -/
 def cert (src : String) : Result :=
   withParse src fun e =>
     match Cert.certificate (inferHints ([] : AEnv Itv) e) e with
