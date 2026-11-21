@@ -14,3 +14,4 @@ import Diva.Report
 import Diva.Opt
 import Diva.OptSound
 import Diva.Commands
+import Diva.Cert

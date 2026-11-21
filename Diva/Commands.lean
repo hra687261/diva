@@ -3,6 +3,7 @@ import Diva.Interp
 import Diva.AbsInt.ItvDomain
 import Diva.Report
 import Diva.Opt
+import Diva.Cert
 
 /-!
 # Command-line commands (untrusted)
@@ -15,6 +16,7 @@ the file and prints.
 - `check`: say where the program may fail, or that it can't fail.
 - `opt`: print the optimised program.
 - `hints`: print the hints inferred for the program, one per line.
+- `cert`: print a certificate, a Lean file stating that the program can't fail.
 -/
 
 namespace Diva.Commands
@@ -65,5 +67,14 @@ def opt (src : String) : Result :=
 def hints (src : String) : Result :=
   withParse src fun e =>
     { out := (inferHints ([] : AEnv Itv) e).map fun (x, a) => s!"{x} : {a}" }
+
+/-- `diva cert`: the certificate of the program (`Cert.certificate`), with the inferred
+    hints. If the program may fail, there is none, and it exits with code 1. -/
+def cert (src : String) : Result :=
+  withParse src fun e =>
+    match Cert.certificate (inferHints ([] : AEnv Itv) e) e with
+    | some c => { out := [c] }
+    | none => { err := ["the program may fail, so there is no certificate (see `diva check`)"],
+                code := 1 }
 
 end Diva.Commands

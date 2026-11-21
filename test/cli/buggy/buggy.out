@@ -23,3 +23,7 @@ $sum#2 : [-∞, +∞]
 l#4 : list
 [exit 0]
 
+$ diva cert --check buggy.ml
+the program may fail, so there is no certificate (see `diva check`)
+[exit 1]
+

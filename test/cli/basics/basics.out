@@ -31,3 +31,7 @@ $range#9 : list
 b#11 : 5
 [exit 0]
 
+$ diva cert --check basics.ml
+the program may fail, so there is no certificate (see `diva check`)
+[exit 1]
+

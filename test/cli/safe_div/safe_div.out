@@ -17,3 +17,8 @@ x#2 : [1, +∞]
 x#3 : -5
 [exit 0]
 
+$ diva cert --check safe_div.ml
+wrote safe_div.lean
+certificate checked by Lean: the program never fails
+[exit 0]
+

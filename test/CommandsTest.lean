@@ -1,4 +1,5 @@
 import Diva.Commands
+import Diva.AbsInt.ItvDomain
 
 open Diva Commands
 
@@ -24,3 +25,14 @@ open Diva Commands
 #guard hints "let f y = 10 / y in f 3 + f 7" == { out := ["y#0 : [3, 7]"] }
 #guard hints "let rec g n = if n <= 0 then 0 else g (n - 1) in g 5" ==
   { out := ["n#1 : [0, 5]", "$g#0 : 0"] }
+
+-- `cert`: a Lean file stating that the program can't fail, or nothing if it may fail
+#guard ((cert "10 / 2").out.head!.splitOn "\n").contains "  (.binop .div (.int 10) (.int 2))"
+#guard cert "10 / 0" == {
+  err := ["the program may fail, so there is no certificate (see `diva check`)"], code := 1 }
+
+-- programs and hints as Lean terms
+#guard Cert.expr (.letin "x" (.int (-5)) (.var "x")) = "(.letin \"x\" (.int (-5)) (.var \"x\"))"
+#guard Cert.hints [("y#0", AbsInt.Flat.ofInt (.range (.fin 3) .posInf))] =
+  "[\n  (\"y#0\", { int := (.range (.fin 3) .posInf), tt := false, ff := false, unit := false, \
+list := false, fn := false, loc := false, exn := false })]"
