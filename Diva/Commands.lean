@@ -4,6 +4,7 @@ import Diva.AbsInt.ItvDomain
 import Diva.Report
 import Diva.Opt
 import Diva.Cert
+import Diva.Prove
 
 /-!
 # Command-line commands (untrusted)
@@ -17,6 +18,7 @@ the file and prints.
 - `opt`: print the optimised program.
 - `hints`: print the hints inferred for the program, one per line.
 - `cert`: print a certificate, a Lean file stating that the program can't fail.
+- `prove`: print a Lean file stating that the functions meet their contracts.
 -/
 
 namespace Diva.Commands
@@ -82,5 +84,17 @@ def cert (src : String) : Result :=
     | some c => { out := [c] }
     | none => { err := ["the program may fail, so there is no certificate (see `diva check`)"],
                 code := 1 }
+
+/-- `diva prove`: parse the program `src`, and print the Lean file (`Prove.file`) that
+    states and proves that its functions meet their contracts. If the program doesn't
+    parse, has no contract, or has a contract that isn't supported, print why and exit
+    with code 1. -/
+def prove (src : String) : Result :=
+  match parseItems src with
+  | .error msg => { err := [s!"parse error: {msg}"], code := 1 }
+  | .ok is =>
+    match Prove.file is with
+    | .ok f => { out := [f] }
+    | .error msg => { err := [msg], code := 1 }
 
 end Diva.Commands

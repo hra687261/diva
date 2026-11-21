@@ -3,14 +3,14 @@
 #
 # Each `test/cli/<folder>/<name>.ml` is a test, one per folder. It is copied to a
 # temporary folder, and each command of `commands` is run on it there. The outputs and
-# exit codes go to `<name>.out`, and `cert` writes the certificate `<name>.lean`. The
-# temporary folder is compared with the test's folder. A missing `<name>.out` is
-# created. `--update` rewrites all of them.
+# exit codes go to `<name>.out`. `cert` writes the certificate `<name>.lean`, and `prove`
+# writes `prove.lean`. The temporary folder is compared with the test's folder. A missing
+# `<name>.out` is created. `--update` rewrites all of them.
 set -u
 export PATH=$HOME/.elan/bin:$PATH
 lake build diva >/dev/null || exit 1
 diva=$PWD/.lake/build/bin/diva
-commands=(run check opt hints "cert --check")
+commands=(run check opt hints "cert --check" "prove --check -o prove.lean")
 fails=0
 
 # The output of each command on the program $1, run from its folder.
@@ -30,7 +30,7 @@ for test in $(find test/cli -name "*.ml" | sort); do
   cp "$test" "$work"
   outputs "$work/$(basename "$test")" >"$work/$(basename "${test%.ml}").out"
   if [ "${1:-}" = "--update" ] || [ ! -f "${test%.ml}.out" ]; then
-    rm -f "${test%.ml}.lean"
+    rm -f "$dir"/*.lean
     cp "$work"/* "$dir"
     echo "wrote $dir"
   elif d=$(diff -ruN "$dir" "$work"); then

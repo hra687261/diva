@@ -1,0 +1,26 @@
+$ diva run max.ml
+2
+[exit 0]
+
+$ diva check max.ml
+no runtime error is possible
+[exit 0]
+
+$ diva opt max.ml
+(let max = (fun a -> (fun b -> (if (a < b) then b else a))) in ((max 1) 2))
+[exit 0]
+
+$ diva hints max.ml
+a#0 : 1
+b#1 : 2
+[exit 0]
+
+$ diva cert --check max.ml
+wrote max.lean
+certificate checked by Lean: the program never fails
+[exit 0]
+
+$ diva prove --check -o prove.lean max.ml
+`max` has a contract and several parameters: not supported yet
+[exit 1]
+

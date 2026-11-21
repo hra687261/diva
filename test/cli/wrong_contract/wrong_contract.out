@@ -1,0 +1,33 @@
+$ diva run wrong_contract.ml
+55
+[exit 0]
+
+$ diva check wrong_contract.ml
+no runtime error is possible
+[exit 0]
+
+$ diva opt wrong_contract.ml
+(let rec sum n = (if (n <= 0) then 0 else (n + (sum (n - 1)))) in (sum 10))
+[exit 0]
+
+$ diva hints wrong_contract.ml
+n#1 : [0, 10]
+$sum#0 : [0, +∞]
+[exit 0]
+
+$ diva cert --check wrong_contract.ml
+wrote wrong_contract.lean
+certificate checked by Lean: the program never fails
+[exit 0]
+
+$ diva prove --check -o prove.lean wrong_contract.ml
+wrote prove.lean
+prove.lean:25:12: error: omega could not prove the goal:
+No usable constraints found. You may need to unfold definitions so `omega` can see linear arithmetic facts about `Nat` and `Int`, which may also involve multiplication, division, and modular remainder by constants.
+prove.lean:25:12: error: omega could not prove the goal:
+a possible counterexample may satisfy the constraints
+  a ≥ 1
+where
+ a := n
+[exit 1]
+

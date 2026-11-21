@@ -27,3 +27,7 @@ $ diva cert --check buggy.ml
 the program may fail, so there is no certificate (see `diva check`)
 [exit 1]
 
+$ diva prove --check -o prove.lean buggy.ml
+no function has a contract: write one in a `(*@ ... *)` comment after a function
+[exit 1]
+

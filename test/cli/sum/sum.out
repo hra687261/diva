@@ -1,0 +1,27 @@
+$ diva run sum.ml
+55
+[exit 0]
+
+$ diva check sum.ml
+no runtime error is possible
+[exit 0]
+
+$ diva opt sum.ml
+(let rec sum n = (if (n <= 0) then 0 else (n + (sum (n - 1)))) in (sum 10))
+[exit 0]
+
+$ diva hints sum.ml
+n#1 : [0, 10]
+$sum#0 : [0, +∞]
+[exit 0]
+
+$ diva cert --check sum.ml
+wrote sum.lean
+certificate checked by Lean: the program never fails
+[exit 0]
+
+$ diva prove --check -o prove.lean sum.ml
+wrote prove.lean
+checked by Lean: the functions meet their contracts
+[exit 0]
+

@@ -22,3 +22,7 @@ wrote safe_div.lean
 certificate checked by Lean: the program never fails
 [exit 0]
 
+$ diva prove --check -o prove.lean safe_div.ml
+no function has a contract: write one in a `(*@ ... *)` comment after a function
+[exit 1]
+

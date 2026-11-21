@@ -19,9 +19,10 @@ def idStart : P Char := tokenFilter (fun c => c.isAlpha || c == '_')
 def idCont : P Char := tokenFilter (fun c =>
   c.isAlphanum || c == '_' || c == '\'')
 
-/-- A comment `(* ... *)`. Unlike OCaml, comments don't nest. -/
+/-- A comment `(* ... *)`. Unlike OCaml, comments don't nest. A comment that starts
+    with `(*@` is a contract (Gospel), so it isn't skipped: see `specComment`. -/
 def comment : P Unit :=
-  ParseIt.Char.string "(*" *> dropUntil (ParseIt.Char.string "*)") anyToken *> pure ()
+  ParseIt.Char.string "(*" *> notFollowedBy (ParseIt.Char.string "@") *> dropUntil (ParseIt.Char.string "*)") anyToken *> pure ()
 
 /-- Skip zero or more whitespace characters and comments. -/
 def whitespace : P Unit := dropMany ((ASCII.whitespace *> pure ()) <|> comment) *> pure ()
@@ -98,6 +99,23 @@ where
     | (.tag c x, h) :: rest => .exnCase (.var "%exn") c x h (go rest)
     | (.any k, h) :: _ => .letin k (.var "%exn") h
 
+/-- A declaration `let f ... = e` or `let rec f x ... = e`, without what follows
+    it. -/
+inductive Binding where
+  /-- `let f = e`. For `let f x y = e`, `e` is `fun x y -> e`. -/
+  | val : String → Expr → Binding
+  /-- `let rec f x = e`. For `let rec f x y = e`, `e` is `fun y -> e`. -/
+  | recFn : String → String → Expr → Binding
+
+/-- The name the declaration defines. -/
+def Binding.name : Binding → String
+  | .val f _ | .recFn f _ _ => f
+
+/-- The declaration, followed by `e`. -/
+def Binding.bind : Binding → Expr → Expr
+  | .val f a, e => .letin f a e
+  | .recFn f x a, e => .letrec f x a e
+
 /-! ### Expression grammar -/
 
 mutual
@@ -113,7 +131,7 @@ partial def expr : P Expr :=
     <|> assignExpr
 
 /-- `let [rec] f x y = e`, shared by `let ... in` and top-level declarations. -/
-partial def binding : P (String × (Expr → Expr)) := do
+partial def binding : P Binding := do
   keyword "let"
   let isRec := (← option? (keyword "rec")).isSome
   let f ← binderTok
@@ -121,18 +139,17 @@ partial def binding : P (String × (Expr → Expr)) := do
   symbol "="
   let rhs ← seqExpr
   match isRec, ps, rhs with
-  | false, _, _ => return (f, .letin f (lams ps rhs))
-  | true, x :: ps, _ => return (f, .letrec f x (lams ps rhs))
-  | true, [], .lam x rhs' => return (f, .letrec f x rhs')
+  | false, _, _ => return .val f (lams ps rhs)
+  | true, x :: ps, _ => return .recFn f x (lams ps rhs)
+  | true, [], .lam x rhs' => return .recFn f x rhs'
   | true, [], _ => throwUnexpected -- `let rec` must define a function
 
 /-- `let x = e1 in e2` -/
 partial def letinxpr : P Expr := do
-  let (_, k) ← binding
+  let b ← binding
   keyword "in"
-  -- fun e2 -> (let [_ = e1]* in e2)
   let e2 ← seqExpr
-  return k e2
+  return b.bind e2
 
 /-- `fun x y -> e` -/
 partial def funExpr : P Expr := do
@@ -363,15 +380,103 @@ partial def boolLit : P Expr :=
 
 end
 
-/-- A top-level item: a declaration `let f x = e` (without `in`), or an
-    expression. -/
+/-! ### Contracts (Gospel)
+
+A contract follows a top-level function, in a comment that starts with `(*@`:
+```
+let rec sum n = if n <= 0 then 0 else n + sum (n - 1)
+(*@ r = sum n
+    requires n >= 0
+    ensures r >= 0 *)
+```
+-/
+
+/-- A name in a contract. `requires` and `ensures` start a clause, so they aren't
+    names. -/
+def specIdent : P String := do
+  let x ← identTok
+  if x == "requires" || x == "ensures" then throwUnexpected else pure x
+
+mutual
+
+/-- `a && b` (also written `a /\ b`), or a comparison. -/
+partial def term : P Term := do
+  let a ← cmpTerm
+  (do (symbol "&&" <|> symbol "/\\"); let b ← term; return .and a b) <|> pure a
+
+/-- `a op b` for a comparison `op`, or `a`. -/
+partial def cmpTerm : P Term := do
+  let a ← sumTerm
+  let op ← option? ((symbol "=" *> pure BinOp.eq) <|> (symbol "<>" *> pure .ne) <|>
+    (symbol "<=" *> pure .le) <|> (symbol "<" *> pure .lt) <|>
+    (symbol ">=" *> pure .ge) <|> (symbol ">" *> pure .gt))
+  match op with
+  | some op => return .binop op a (← sumTerm)
+  | none => return a
+
+/-- `a + b - c ...`, left-associative. -/
+partial def sumTerm : P Term := do
+  sumRest (← mulTerm)
+
+partial def sumRest (a : Term) : P Term :=
+  (do symbol "+"; let b ← mulTerm; sumRest (.binop .add a b)) <|>
+  (do symbol "-"; let b ← mulTerm; sumRest (.binop .sub a b)) <|>
+  pure a
+
+/-- `a * b * c ...`, left-associative. -/
+partial def mulTerm : P Term := do
+  mulRest (← atomTerm)
+
+/-- The `*` of the `*)` that ends the contract isn't a product. -/
+partial def mulRest (a : Term) : P Term :=
+  (do notFollowedBy (symbol "*)"); symbol "*"; let b ← atomTerm; mulRest (.binop .mul a b))
+  <|> pure a
+
+/-- An integer, a name, `( t )`, or `-t` (`0 - t`). -/
+partial def atomTerm : P Term :=
+  (Term.int <$> intTok) <|> (Term.var <$> specIdent) <|>
+  (do symbol "("; let t ← term; symbol ")"; return t) <|>
+  (do symbol "-"; let t ← atomTerm; return .binop .sub (.int 0) t)
+
+end
+
+/-- The header `r = f x` of a contract: the names of the result, the function and the
+    parameters. -/
+def specHeader : P (String × String × List String) := do
+  let r ← specIdent
+  symbol "="
+  let f ← specIdent
+  let xs ← takeMany specIdent
+  return (r, f, xs.toList)
+
+/-- A clause `requires t` (`true`) or `ensures t` (`false`). -/
+def clause : P (Bool × Term) :=
+  (do keyword "requires"; return (true, ← term)) <|>
+  (do keyword "ensures"; return (false, ← term))
+
+/-- A contract `(*@ r = f x requires ... ensures ... *)`. The header is optional. -/
+def specComment : P Spec := do
+  symbol "(*@"
+  let header ← option? specHeader
+  let clauses := (← takeMany clause).toList
+  symbol "*)"
+  let (result, name, params) := match header with
+    | some (r, f, xs) => (r, some f, xs)
+    | none => ("result", none, [])
+  return { result, name, params,
+           requires := clauses.filterMap fun (r, t) => if r then some t else none,
+           ensures := clauses.filterMap fun (r, t) => if r then none else some t }
+
+/-- A top-level item: a declaration `let f x = e` (without `in`), with the contract
+    that follows it if there is one, or an expression. -/
 inductive Item where
-  | decl : String → (Expr → Expr) → Item
+  | decl : Binding → Option Spec → Item
   | expr : Expr → Item
 
 def declItem : P Item := do
-  let (f, k) ← binding
-  return .decl f k
+  let b ← binding
+  let s ← option? specComment
+  return .decl b s
 
 def item : P Item :=
   (Item.expr <$> letinxpr) <|>
@@ -383,18 +488,21 @@ def Item.toExpr : List Item → Expr
   | [] => .unit
   | [.expr e] => e
   | .expr e :: r => .letin "_" e (Item.toExpr r)
-  | [.decl f k] => k (.var f)
-  | .decl _ k :: r => k (Item.toExpr r)
+  | [.decl b _] => b.bind (.var b.name)
+  | .decl b _ :: r => b.bind (Item.toExpr r)
 
-/-- A program: top-level items.
+/-- The top-level items of a program.
     As in OCaml, `;;` is optional between declarations but required before an
     expression that isn't first. -/
-def program : P Expr := do
+def items : P (List Item) := do
   let _ ← dropMany (symbol ";;")
   let first ← option? item
   let rest ← takeMany (declItem <|> (takeMany1 (symbol ";;") *> item))
   let _ ← dropMany (symbol ";;")
-  return Item.toExpr (first.toList ++ rest.toList)
+  return first.toList ++ rest.toList
+
+/-- A program: its top-level items, as one expression. -/
+def program : P Expr := Item.toExpr <$> items
 
 /-- The state of `resolve`: the next site number and the next name number. -/
 structure Fresh where
@@ -461,6 +569,13 @@ def resolve (sc : List (String × String)) : Expr → StateM Fresh Expr
 def parse (s : String) : Except String Expr :=
   match (whitespace *> program <* endOfInput).parseString s with
   | .ok e => .ok ((resolve [] e).run' {})
+  | .error err => .error s!"Parse error near byte {err.pos.byteIdx}"
+
+/-- Parse a complete program into its top-level items, with their contracts. The
+    names are the ones of the source: there is no `resolve`. -/
+def parseItems (s : String) : Except String (List Item) :=
+  match (whitespace *> items <* endOfInput).parseString s with
+  | .ok is => .ok is
   | .error err => .error s!"Parse error near byte {err.pos.byteIdx}"
 
 end Diva

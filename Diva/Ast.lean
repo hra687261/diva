@@ -123,4 +123,34 @@ instance : Repr Expr := ⟨fun e _ => Std.Format.text (ppExpr e)⟩
 
 instance : ToString Expr := ⟨ppExpr⟩
 
+/-- A term of a contract: integers, names, `+`, `-`, `*`, comparisons and `&&`.
+    Contracts use a small part of Gospel, the specification language for OCaml:
+    https://ocaml-gospel.github.io/gospel/ -/
+inductive Term where
+  | int : Int → Term
+  | var : String → Term
+  | binop : BinOp → Term → Term → Term
+  | and : Term → Term → Term
+  deriving Inhabited, Repr
+
+/-- The names used in `t`. -/
+def Term.vars : Term → List String
+  | .int _ => []
+  | .var x => [x]
+  | .binop _ a b | .and a b => a.vars ++ b.vars
+
+/-- The contract of a function, written in a Gospel comment after it:
+    `(*@ r = f x requires ... ensures ... *)`. -/
+structure Spec where
+  /-- The name of the result in `ensures`: `r` in the header `r = f x`, `result`
+      without a header. -/
+  result : String := "result"
+  /-- The name of the function in the header, if there is one. -/
+  name : Option String := none
+  /-- The names of the parameters in the header. -/
+  params : List String := []
+  requires : List Term := []
+  ensures : List Term := []
+  deriving Inhabited, Repr
+
 end Diva

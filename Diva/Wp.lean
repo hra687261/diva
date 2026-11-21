@@ -40,17 +40,18 @@ abbrev Contracts := String → Option FunSpec
 /-- No function has a contract. -/
 def Contracts.none : Contracts := fun _ => Option.none
 
-/-- The function defined by `let rec f x = body`, in the environment `ρ`, with its
-    contract `spec`. -/
+/-- A function with the parameter `x`, defined in the environment `ρ`, with its
+    contract `spec`. `f` is `some f` for `let rec f x = body`, and `none` for
+    `let f x = body` (a function that can't call itself). -/
 structure RecFun where
-  f : String
+  f : Option String
   x : String
   body : Expr
   ρ : Env
   spec : FunSpec
 
 /-- The value of the function `g`: its closure. -/
-def RecFun.clos (g : RecFun) : Value := .clos (some g.f) g.x g.body g.ρ
+def RecFun.clos (g : RecFun) : Value := .clos g.f g.x g.body g.ρ
 
 /-- What a call of the function value `vf` on the argument `va` needs, so that `Q`
     holds after the call: `vf` is the closure of a function `g` of `Γ`, `va`
@@ -78,12 +79,12 @@ def wp (S : Contracts) : List RecFun → Expr → Post → Env → Store → Pro
   | Γ, .letrec f x body e₂, Q, ρ, μ =>
     ∃ sp, S f = some sp ∧ -- There exists a contract `sp` for `f`
       (∀ va μ₁, sp.pre va →
-        wp S (⟨f, x, body, ρ, sp⟩ :: Γ) body (fun v _ => sp.post va v)
+        wp S (⟨some f, x, body, ρ, sp⟩ :: Γ) body (fun v _ => sp.post va v)
           (callEnv (some f) x body ρ va) μ₁) ∧
       -- body meets the `f`'s contract `sp`
       -- `f` is added to `Γ` for recursive calls
       -- `μ₁` is any store because the function can be called with any store
-      wp S (⟨f, x, body, ρ, sp⟩ :: Γ) e₂ Q ((f, .clos (some f) x body ρ) :: ρ) μ
+      wp S (⟨some f, x, body, ρ, sp⟩ :: Γ) e₂ Q ((f, .clos (some f) x body ρ) :: ρ) μ
   -- the function is one of `Γ`, the argument meets its precondition, and its
   -- postcondition gives `Q`, whatever the store after the call
   | Γ, .app fn a, Q, ρ, μ =>
@@ -91,13 +92,19 @@ def wp (S : Contracts) : List RecFun → Expr → Post → Env → Store → Pro
     wp S Γ fn afterFn ρ μ
   | _, _, _, _, _ => False
 
+/-- The proof obligation of `g`: on every argument `va` that satisfies the precondition
+    of `g`, the body of `g` satisfies `wp` for the postcondition of `g`. Calls in the
+    body assume the contracts of `g` and of `Γ`, the functions defined before `g`. -/
+def RecFun.BodyOk (g : RecFun) (S : Contracts) (Γ : List RecFun) : Prop :=
+  ∀ va μ, g.spec.pre va →
+    wp S (g :: Γ) g.body (fun v _ => g.spec.post va v) (callEnv g.f g.x g.body g.ρ va) μ
+
 /-- Every function `g` of `Γ` meets its contract: its body satisfies `wp` for its
     contract. In that `wp`, the calls in the body of `g` can use the contract of `g`
     (recursive calls) and the contracts of the functions defined before `g`. -/
 def Verified (S : Contracts) : List RecFun → Prop
   | [] => True
-  | g :: Γ => Verified S Γ ∧ ∀ va μ, g.spec.pre va →
-      wp S (g :: Γ) g.body (fun v _ => g.spec.post va v) (callEnv (some g.f) g.x g.body g.ρ va) μ
+  | g :: Γ => Verified S Γ ∧ g.BodyOk S Γ
 
 /-- A function `g` of `Γ` meets its contract, with the functions defined before it. -/
 theorem Verified.of_mem {S : Contracts} {g : RecFun} :
@@ -199,7 +206,7 @@ theorem wp_sound {S : Contracts} {ρ : Env} {μ : Store} {e : Expr} {r : Outcome
     intro Γ Q hv hw
     obtain ⟨sp, _, hbody, he⟩ := hw
     -- `f` meets its contract, so `Γ` with `f` is verified
-    have hv' : Verified S (⟨f, x, body, ρ, sp⟩ :: Γ) := ⟨hv, hbody⟩
+    have hv' : Verified S (⟨some f, x, body, ρ, sp⟩ :: Γ) := ⟨hv, hbody⟩
     exact ih _ Q hv' he
   | app _ _ _ ihf iha ihb =>
     intro Γ Q hv hw
@@ -259,11 +266,31 @@ theorem wp_sound {S : Contracts} {ρ : Env} {μ : Store} {e : Expr} {r : Outcome
     rw [hv]
     exact h m
 
+/-- Prove a goal of integer arithmetic made of `∧`, `→` and `∀`, such as the goals that
+    `simp [wp]` leaves: introduce the hypotheses and the names, split each `∧`, then
+    run `omega` on each part. -/
+macro "split_omega" : tactic =>
+  `(tactic| (repeat (first | (intro) | (apply And.intro))) <;> omega)
+
 /-- A contract holds if its precondition implies the weakest precondition, with the
     contracts `S` of the functions defined by `let rec`. -/
 theorem triple_of_wp (S : Contracts) {P : Pre} {e : Expr} {Q : Post}
     (h : ∀ ρ μ, P ρ μ → wp S [] e Q ρ μ) : Triple P e Q := by
   intro ρ μ hp r μ' he
   exact wp_sound he [] Q trivial (h ρ μ hp)
+
+/-- The function `g` meets its contract: every call of `g` on an argument `va` that
+    satisfies the precondition of `g` gives a value that satisfies the postcondition
+    of `g`. A call of `g` on `va` runs the body of `g` in `callEnv` (`Eval.app`). -/
+def RecFun.Meets (g : RecFun) : Prop :=
+  ∀ va μ, g.spec.pre va →
+    Holds g.body (fun v _ => g.spec.post va v) (callEnv g.f g.x g.body g.ρ va) μ
+
+/-- If the proof obligations of `g` and of the functions `Γ` defined before `g` hold,
+    then `g` meets its contract. -/
+theorem RecFun.meets_of_verified {S : Contracts} {g : RecFun} {Γ : List RecFun}
+    (h : Verified S (g :: Γ)) : g.Meets := by
+  intro va μ hpre r μ' he
+  exact wp_sound he (g :: Γ) _ h (h.2 va μ hpre)
 
 end Diva

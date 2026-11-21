@@ -17,3 +17,4 @@ import Diva.Commands
 import Diva.Cert
 import Diva.Triple
 import Diva.Wp
+import Diva.Prove
