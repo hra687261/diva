@@ -5,7 +5,7 @@ import Diva.Wp
 # Deductive verification: contracts
 
 Each test proves a contract `Triple P e Q` for every input. `triple_of_wp` reduces
-it to "`P` implies `wp e Q`". `simp [wp, ...]` computes `wp` into arithmetic, and
+it to "`P` implies `wp S [] e Q`", where `S` gives the contracts of the functions. `simp [wp, ...]` computes `wp` into arithmetic, and
 `omega` proves it. No proof looks at the rules of `Eval`.
 
 The programs are written as `Expr` terms, because the kernel can't run the parser.
@@ -24,7 +24,7 @@ def resIs (p : Int → Prop) : Post :=
 /-- If `x ≥ 0`, then `x + 1 > 0`. -/
 example :
     Triple (intIs "x" (· ≥ 0)) (.binop .add (.var "x") (.int 1)) (resIs (· > 0)) := by
-  apply triple_of_wp
+  apply triple_of_wp .none
   intro ρ μ ⟨n, hx, hn⟩
   simp [wp, hx, BinOp.denote, resIs]
   omega
@@ -35,7 +35,7 @@ def absX : Expr :=
   .ite (.binop .lt (.var "x") (.int 0)) (.binop .sub (.int 0) (.var "x")) (.var "x")
 
 example : Triple (intIs "x" (fun _ => True)) absX (resIs (· ≥ 0)) := by
-  apply triple_of_wp
+  apply triple_of_wp .none
   intro ρ μ ⟨n, hx, _⟩
   simp [absX, wp, hx, BinOp.denote, Value.isBool, resIs]
   omega
@@ -47,7 +47,7 @@ example (a b : Int) :
     Triple (fun ρ _ => ρ.lookup "x" = some (.int a) ∧ ρ.lookup "y" = some (.int b))
       (.ite (.binop .lt (.var "x") (.var "y")) (.var "y") (.var "x"))
       (resIs (fun m => m ≥ a ∧ m ≥ b)) := by
-  apply triple_of_wp
+  apply triple_of_wp .none
   intro ρ μ ⟨hx, hy⟩
   simp [wp, hx, hy, BinOp.denote, Value.isBool, resIs]
   omega
@@ -59,7 +59,7 @@ example :
       (.letin "y" (.binop .add (.var "x") (.var "x"))
         (.assert (.binop .ge (.var "y") (.var "x"))))
       (fun _ _ => True) := by
-  apply triple_of_wp
+  apply triple_of_wp .none
   intro ρ μ ⟨n, hx, hn⟩
   simp [wp, hx, BinOp.denote, List.lookup]
   omega
@@ -69,7 +69,7 @@ example :
     Triple (intIs "x" (fun _ => True))
       (.binop .div (.int 100) (.ite (.binop .gt (.var "x") (.int 0)) (.var "x") (.int 1)))
       (fun _ _ => True) := by
-  apply triple_of_wp
+  apply triple_of_wp .none
   intro ρ μ ⟨n, hx, _⟩
   simp [wp, hx, BinOp.denote, Value.isBool]
   omega
@@ -82,6 +82,42 @@ counterexample, and `eval_sound` turns it into a proof that the contract fails. 
 example : ¬ Triple (intIs "x" (fun _ => True)) absX (resIs (· > 0)) := by
   intro h
   have hrun : Eval [("x", .int 0)] [] absX (.ok (.int 0)) [] := eval_sound (fuel := 10) rfl
+  obtain ⟨v, hv, m, hm, hpos⟩ := h [("x", .int 0)] [] ⟨0, rfl, trivial⟩ _ _ hrun
+  cases hv
+  cases hm
+  omega
+
+/-! ## Recursive functions
+
+A `let rec` has a contract, given by name. `wp` asks for a proof that the body meets
+the contract, assuming it at the recursive call. -/
+
+/-- `let rec sum n = if n <= 0 then 0 else n + sum (n - 1) in sum x` -/
+def sumX : Expr :=
+  .letrec "sum" "n"
+    (.ite (.binop .le (.var "n") (.int 0)) (.int 0)
+      (.binop .add (.var "n") (.app (.var "sum") (.binop .sub (.var "n") (.int 1)))))
+    (.app (.var "sum") (.var "x"))
+
+/-- The contract of `sum`: on an integer, it gives an integer `≥ 0`. -/
+def sumContracts : Contracts := fun f =>
+  if f = "sum" then some
+    { pre := fun va => ∃ n, va = .int n
+      post := fun _ v => ∃ m, v = .int m ∧ m ≥ 0 }
+  else none
+
+/-- `sum x ≥ 0`, for every integer `x`. -/
+example : Triple (intIs "x" (fun _ => True)) sumX (resIs (· ≥ 0)) := by
+  apply triple_of_wp sumContracts
+  intro ρ μ ⟨n, hx, _⟩
+  simp [sumX, sumContracts, wp, hx, BinOp.denote, Value.isBool, List.lookup, callEnv,
+    RecFun.clos, resIs]
+  omega
+
+/-- `sum x > 0` is wrong: `x = 0` gives `0`. -/
+example : ¬ Triple (intIs "x" (fun _ => True)) sumX (resIs (· > 0)) := by
+  intro h
+  have hrun : Eval [("x", .int 0)] [] sumX (.ok (.int 0)) [] := eval_sound (fuel := 10) rfl
   obtain ⟨v, hv, m, hm, hpos⟩ := h [("x", .int 0)] [] ⟨0, rfl, trivial⟩ _ _ hrun
   cases hv
   cases hm
