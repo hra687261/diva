@@ -6,6 +6,7 @@ import Diva.Opt
 import Diva.Cert
 import Diva.Prove
 import Diva.Oracle
+import Diva.ProveOracle
 
 /-!
 # Command-line commands (untrusted)
@@ -20,7 +21,8 @@ the file and prints.
 - `opt`: print the optimised program.
 - `hints`: print the hints inferred for the program, one per line.
 - `cert`: print a certificate, a Lean file stating that the program can't fail.
-- `prove`: print a Lean file stating that the functions meet their contracts.
+- `prove`: print a Lean file stating that the functions meet their contracts. With an
+  oracle (`proveOracle`), an LLM completes the proofs that Lean doesn't accept.
 -/
 
 namespace Diva.Commands
@@ -115,9 +117,24 @@ def cert (src : String) : Result :=
 def prove (src : String) : Result :=
   match parseItems src with
   | .error msg => { err := [s!"parse error: {msg}"], code := 1 }
-  | .ok is =>
-    match Prove.file is with
+  | .ok items =>
+    match Prove.file items with
     | .ok f => { out := [f] }
     | .error msg => { err := [msg], code := 1 }
+
+/-- `diva prove --oracle`: build the Lean file of `src` (`Prove.file`) and check it with
+    `lean`. Each proof that Lean doesn't accept is replaced by one from `oracle`, with
+    at most `rounds` questions in all (`ProveOracle.consult`). `check` says why a proof
+    from `oracle` can't be used (see `ParseProof.check`).
+    Exit with code 1 if Lean doesn't accept the last file. -/
+def proveOracle [Monad m] (oracle : String → m String) (lean : String → m (Option String))
+    (check : String → Option String) (rounds : Nat) (src : String) : m Result := do
+  match parseItems src with
+  | .error msg => return { err := [s!"parse error: {msg}"], code := 1 }
+  | .ok items =>
+    match ← (ProveOracle.consult oracle lean check items rounds).run with
+    | .error msg => return { err := [msg], code := 1 }
+    | .ok ⟨log, none⟩ => return { out := log ++ ["checked by Lean: the functions meet their contracts"] }
+    | .ok ⟨log, some errors⟩ => return { out := log, err := [errors], code := 1 }
 
 end Diva.Commands

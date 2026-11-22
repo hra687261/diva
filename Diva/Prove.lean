@@ -92,10 +92,20 @@ def verified : List String → String
 def gamma (Γ : List String) : String :=
   "[" ++ ", ".intercalate (Γ.map (· ++ "_fn")) ++ "]"
 
+/-- The proof of an obligation that `diva prove` writes: `simp` with the defs `simps`,
+    then `omega`. `x` is the name of the parameter. -/
+def defaultProof (x simps : String) : String :=
+  s!"  intro va μ ⟨{x}, hva, hpre⟩
+  subst hva
+  simp [{simps}]
+  all_goals split_omega"
+
 /-- The text for the function `f` with the contract `sp`: `f_fn`, `f_body` and
-    `f_correct`. `n` is its Lean name. -/
-def withContract (st : State) (n f : String) (s : Option String) (x : String)
-    (body : Expr) (env : String) (sp : Spec) : Except String String := do
+    `f_correct`. `n` is its Lean name. `proofs` gives the proofs of some obligations
+    (`f_body`), as tactics. The others get `defaultProof`. -/
+def withContract (proofs : List (String × String)) (st : State) (n f : String)
+    (s : Option String) (x : String) (body : Expr) (env : String) (sp : Spec) :
+    Except String String := do
   if let some g := sp.name then
     if g != f then throw s!"the contract after `{f}` is about `{g}`"
   let several := match body with | .lam .. => true | _ => sp.params.length > 1
@@ -106,6 +116,7 @@ def withContract (st : State) (n f : String) (s : Option String) (x : String)
   let simps := ", ".intercalate ((n ++ "_fn") :: st.defs ++
     ["wp", "BinOp.denote", "Value.isBool", "List.lookup", "callEnv", "RecFun.clos"])
   let kw := if s.isSome then "let rec" else "let"
+  let proof := (proofs.lookup (n ++ "_body")).getD (defaultProof p simps)
   return s!"/-- `{kw} {f} {x} = ...`, with its contract. -/
 def {n}_fn : RecFun where
   f := {match s with | some s => s!"some {Cert.str s}" | none => "none"}
@@ -116,10 +127,7 @@ def {n}_fn : RecFun where
 
 /-- The proof obligation of `{f}`. If the proof fails, write one by hand. -/
 theorem {n}_body : {n}_fn.BodyOk .none {gamma st.fns} := by
-  intro va μ ⟨{p}, hva, hpre⟩
-  subst hva
-  simp [{simps}]
-  all_goals split_omega
+{proof}
 
 /-- `{f}` meets its contract: every call of `{f}` on an argument that satisfies
     `requires` gives a result that satisfies `ensures`. -/
@@ -128,7 +136,7 @@ theorem {n}_correct : {n}_fn.Meets :=
 "
 
 /-- `prove` on one top-level item. -/
-def item (st : State) : Item → Except String State
+def item (proofs : List (String × String)) (st : State) : Item → Except String State
   | .expr _ => return { st with env := ("_", none) :: st.env }
   | .decl b sp => do
     let f := b.name
@@ -148,7 +156,7 @@ def item (st : State) : Item → Except String State
         throw s!"`{f}` has a contract, but `{y}`, defined before it, isn't a function: not supported yet"
       | .error _, none => return { st with env := (f, none) :: st.env }
       | .ok env, some sp =>
-        let text ← withContract st n f s x body env sp
+        let text ← withContract proofs st n f s x body env sp
         return { st with out := st.out.push text, env := (f, some s!"{n}_fn.clos") :: st.env,
                          fns := n :: st.fns, defs := (n ++ "_fn") :: st.defs }
       | .ok env, none =>
@@ -159,13 +167,15 @@ def {n}_val : Value := .clos {sStr} {Cert.str x} {Cert.expr body} {env}
         return { st with out := st.out.push text, env := (f, some s!"{n}_val") :: st.env,
                          defs := (n ++ "_val") :: st.defs }
 
-/-- The Lean file for the program `is` (its top-level items), or why there is
-    none. -/
-def file (is : List Item) : Except String String := do
-  let st ← is.foldlM item {}
+/-- The Lean file for the program whose top-level items are `items`, or why there is
+    none. `proofs` gives the proofs of some obligations, as tactics. -/
+def file (items : List Item) (proofs : List (String × String) := []) :
+    Except String String := do
+  let st ← items.foldlM (item proofs) {}
   if st.fns.isEmpty then
     throw "no function has a contract: write one in a `(*@ ... *)` comment after a function"
   return s!"import Diva.Wp
+import Diva.Axioms
 
 /-! Written by `diva prove`. For each function `f` with a contract, `f_fn` is the
 function, and the theorem `f_correct` states that `f` meets its contract. `f_body` is
@@ -173,6 +183,7 @@ the proof obligation of `f`. If its proof fails, write one by hand. -/
 
 open Diva
 
-" ++ "\n".intercalate st.out.toList
+" ++ "\n".intercalate st.out.toList ++
+    "\n" ++ "\n".intercalate (st.fns.reverse.map (s!"#only_standard_axioms {·}_correct")) ++ "\n"
 
 end Diva.Prove

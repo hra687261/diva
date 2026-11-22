@@ -20,11 +20,14 @@ name = "Diva"
 [[lean_lib]]
 name = "DivaTest"
 srcDir = "test"
-globs = ["ParserTest", "InterpTest", "AbsIntItv", "AbsIntTest", "ReportTest", "OptTest", "CommandsTest", "DeductiveTest", "OracleTest"]
+globs = ["ParserTest", "InterpTest", "AbsIntItv", "AbsIntTest", "ReportTest", "OptTest", "CommandsTest", "DeductiveTest", "OracleTest", "ProveOracleTest"]
 
 [[lean_exe]]
 name = "diva"
 root = "Main"
+# `diva prove --oracle` loads Lean's environment to parse proofs (`proofEnv`), which
+# runs code of Lean's library in the interpreter
+supportInterpreter = true
 
 # `lake test`: builds the tests of `DivaTest`, then runs `test/cli.sh`
 [[lean_exe]]

@@ -1,7 +1,7 @@
 import Diva.Report
 import Diva.AbsInt.Fact
 import Diva.Parser
-import Lean.Data.Json
+import Diva.Answer
 
 /-!
 # LLM oracle (untrusted)
@@ -44,7 +44,7 @@ def parseFact (keys : List String) (j : Json) : Except String (String × Flat A)
 /-- The hints in an answer `{"facts": [...]}`. Any other answer is an error. `keys`
     are the hint keys of the program. -/
 def parseFacts (keys : List String) (answer : String) : Except String (Hints A) := do
-  let j ← (Json.parse answer.trimAscii.toString).mapError fun _ => "the answer is not only JSON"
+  let j ← Answer.json answer
   let fs ← (j.getObjValAs? (Array Json) "facts").mapError fun _ => "the answer has no list `facts`"
   let H ← fs.toList.mapM (parseFact keys)
   if (H.map (·.1)).eraseDups.length != H.length then

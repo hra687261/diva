@@ -1,4 +1,5 @@
 import Diva.Wp
+import Diva.Axioms
 
 /-! Written by `diva prove`. For each function `f` with a contract, `f_fn` is the
 function, and the theorem `f_correct` states that `f` meets its contract. `f_body` is
@@ -51,3 +52,6 @@ theorem dist_body : dist_fn.BodyOk .none [abs_fn] := by
     `requires` gives a result that satisfies `ensures`. -/
 theorem dist_correct : dist_fn.Meets :=
   RecFun.meets_of_verified (S := .none) (Γ := [abs_fn]) ⟨⟨trivial, abs_body⟩, dist_body⟩
+
+#only_standard_axioms abs_correct
+#only_standard_axioms dist_correct

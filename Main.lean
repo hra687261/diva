@@ -16,6 +16,7 @@ def runWith' (cmd : String → IO Commands.Result) (p : Parsed) : IO UInt32 := d
   let path := p.positionalArg! "file" |>.as! String
   let r ← cmd (← readSource path)
   for l in r.out do IO.println l
+  (← IO.getStdout).flush
   for l in r.err do IO.eprintln l
   return r.code
 
@@ -53,15 +54,22 @@ def askCommand (cmd : String) (timeout : Option Nat) (question : String) : IO St
   if code != 0 then throw (IO.userError s!"the oracle `{cmd}` exited with code {code}")
   return answer
 
+/-- The value of the flag `--rounds`: how many times to ask the oracle (3 by default). -/
+def rounds (p : Parsed) : Nat :=
+  (p.flag? "rounds").map (·.as! Nat) |>.getD 3
+
+/-- The oracle that runs the shell command `cmd` for each question, and returns its
+    answer. If the flag `--timeout N` is given, `cmd` is stopped after `N` seconds. -/
+def oracleOf (p : Parsed) (cmd : String) : String → IO String :=
+  askCommand cmd ((p.flag? "timeout").map (·.as! Nat))
+
 /-- `diva check`. With `--oracle CMD`, the shell command `CMD` (an LLM, for example)
     is asked for hints when the check fails. `diva` checks them. -/
 def runCheck (p : Parsed) : IO UInt32 :=
   match p.flag? "oracle" with
   | none => runWith Commands.check p
   | some cmd =>
-    let rounds := (p.flag? "rounds").map (·.as! Nat) |>.getD 3
-    let timeout := (p.flag? "timeout").map (·.as! Nat)
-    runWith' (Commands.checkOracle (askCommand (cmd.as! String) timeout) rounds) p
+    runWith' (Commands.checkOracle (oracleOf p (cmd.as! String)) (rounds p)) p
 
 def runOpt := runWith Commands.opt
 def runHints := runWith Commands.hints
@@ -84,11 +92,31 @@ def outFile (p : Parsed) (path stdin : String) : String :=
   | some f => f.as! String
   | none => if path == "-" then stdin else (System.FilePath.withExtension path "lean").toString
 
+/-- Run Lean on the file `output`. If Lean accepts the file, the result is `none`.
+    Otherwise it is `some errors`.
+    The file imports Diva's modules, which only load in the Lean version that
+    built `diva`. If `lean` is elan's, `ELAN_TOOLCHAIN` makes it run that version. -/
+def runLean (output : String) : IO (Option String) := do
+  let toolchain := s!"leanprover/lean4:v{Lean.versionString}"
+  let out ← IO.Process.output
+    { cmd := "lean", args := #[output],
+      env := #[("LEAN_PATH", some (← libDir).toString), ("ELAN_TOOLCHAIN", some toolchain)] }
+  if out.exitCode == 0 then return none
+  return some (out.stdout ++ out.stderr)
+
+/-- The environment of the files that `diva prove` writes: Lean's own modules, and
+    `Diva.Wp`. It has the tactics, which `ParseProof.check` needs to parse a proof.
+    `main` must run `Lean.enableInitializersExecution` first. -/
+def proofEnv : IO Lean.Environment := do
+  let toolchain := s!"leanprover/lean4:v{Lean.versionString}"
+  let out ← IO.Process.output
+    { cmd := "lean", args := #["--print-prefix"], env := #[("ELAN_TOOLCHAIN", some toolchain)] }
+  Lean.initSearchPath out.stdout.trimAscii.toString [← libDir]
+  Lean.importModules #[{ module := `Diva.Wp }] {} (loadExts := true)
+
 /-- Write the Lean file that `cmd` gives for the program to `outFile`. With `--check`,
     also run Lean on that file, so Lean's errors give positions in it, and print the
-    message `ok` if Lean accepts it. The file imports Diva's modules, which only load in the Lean
-    version that built `diva`. If `lean` is elan's, `ELAN_TOOLCHAIN` makes it run that
-    version. -/
+    message `ok` if Lean accepts it (`runLean`). -/
 def writeAndCheck (cmd : String → Commands.Result) (stdin ok : String) (p : Parsed) :
     IO UInt32 := do
   let path := p.positionalArg! "file" |>.as! String
@@ -99,30 +127,46 @@ def writeAndCheck (cmd : String → Commands.Result) (stdin ok : String) (p : Pa
   IO.FS.writeFile output ("\n".intercalate r.out)
   IO.println s!"wrote {output}"
   if !p.hasFlag "check" then return 0
-  let toolchain := s!"leanprover/lean4:v{Lean.versionString}"
-  let out ← IO.Process.output
-    { cmd := "lean", args := #[output],
-      env := #[("LEAN_PATH", some (← libDir).toString), ("ELAN_TOOLCHAIN", some toolchain)] }
-  if out.exitCode == 0 then
+  match ← runLean output with
+  | none =>
     IO.println ok
     return 0
-  IO.print out.stdout
-  IO.eprint out.stderr
-  return 1
+  | some errors =>
+    IO.print errors
+    return 1
 
 /-- `diva cert`: write the certificate, a Lean file stating that the program never
     fails. -/
 def runCert := writeAndCheck Commands.cert "cert.lean"
   "certificate checked by Lean: the program never fails"
 
-/-- `diva prove`: write a Lean file stating that the functions meet their contracts. -/
-def runProve := writeAndCheck Commands.prove "prove.lean"
-  "checked by Lean: the functions meet their contracts"
+/-- `diva prove`: write a Lean file stating that the functions meet their contracts.
+    With `--oracle CMD`, the command `CMD` completes the proofs that Lean doesn't accept. -/
+def runProve (p : Parsed) : IO UInt32 :=
+  match p.flag? "oracle" with
+  | none => writeAndCheck Commands.prove "prove.lean"
+      "checked by Lean: the functions meet their contracts" p
+  | some cmd => do
+    let path := p.positionalArg! "file" |>.as! String
+    let output := outFile p path "prove.lean"
+    let lean (file : String) : IO (Option String) := do
+      IO.FS.writeFile output file
+      runLean output
+    let check := ParseProof.check (← proofEnv)
+    runWith' (Commands.proveOracle (oracleOf p (cmd.as! String)) lean check (rounds p)) p
 
 /-- `diva` without a command: print the help. -/
 def runDiva (p : Parsed) : IO UInt32 := do
   p.printHelp
   return 2
+
+def oracleDoc :=
+  "A shell command, such as an LLM, that reads a question on its standard input and answers on its standard output."
+
+def roundsDoc := "How many times to ask the oracle (3 by default)."
+
+def timeoutDoc :=
+  "How many seconds to wait for each answer of the oracle (no limit by default). If the time is up, the oracle is stopped, and `diva` stops with an error."
 
 def runCmd : Cmd := `[Cli|
   run VIA runRun;
@@ -131,13 +175,15 @@ def runCmd : Cmd := `[Cli|
     file : String; "The program (`-` reads the standard input)."
 ]
 
+def checkOracleDoc := oracleDoc ++ " It proposes hints, which are checked."
+
 def checkCmd : Cmd := `[Cli|
   check VIA runCheck;
   "Say where the program may fail. Exits with 1 if it may fail."
   FLAGS:
-    oracle : String; "A shell command, such as an LLM, that reads a question on its standard input and proposes hints on its standard output. The hints are checked."
-    rounds : Nat; "How many times to ask the oracle (3 by default)."
-    timeout : Nat; "How many seconds to wait for each answer of the oracle (no limit by default). If the time is up, the oracle is stopped, and `diva` stops with an error."
+    oracle : String; checkOracleDoc
+    rounds : Nat; roundsDoc
+    timeout : Nat; timeoutDoc
   ARGS:
     file : String; "The program (`-` reads the standard input)."
 ]
@@ -167,6 +213,9 @@ def certCmd : Cmd := `[Cli|
     file : String; "The program (`-` reads the standard input)."
 ]
 
+def proveOracleDoc :=
+  oracleDoc ++ " It completes the proofs that Lean doesn't accept. Implies `--check`."
+
 def proveCmd : Cmd := `[Cli|
   prove VIA runProve;
   "Write a Lean file stating that the functions meet their contracts, written in \
@@ -174,6 +223,9 @@ def proveCmd : Cmd := `[Cli|
   FLAGS:
     check; "Also run Lean on the file. Exits with 1 if Lean rejects it."
     o, output : String; "The file to write. By default `<name>.lean` for `<name>.ml`, `prove.lean` for `-`."
+    oracle : String; proveOracleDoc
+    rounds : Nat; roundsDoc
+    timeout : Nat; timeoutDoc
   ARGS:
     file : String; "The program (`-` reads the standard input)."
 ]
@@ -193,7 +245,9 @@ def divaCmd : Cmd := `[Cli|
 /-- An error, such as an oracle that takes too long, is printed as `error: ...`, with
     the exit code 1. `IO.Process.exit` ends `diva` without waiting for the tasks that
     are still running, such as the `timer` of `waitFor`. -/
-def main (args : List String) : IO UInt32 := do
+unsafe def main (args : List String) : IO UInt32 := do
+  -- `proofEnv` loads the tactics of Lean's library, which are added by initializers
+  Lean.enableInitializersExecution
   let code ← try divaCmd.validate args
     catch e =>
       IO.eprintln s!"error: {e}"

@@ -1,4 +1,5 @@
 import Diva.Wp
+import Diva.Axioms
 
 /-! Written by `diva prove`. For each function `f` with a contract, `f_fn` is the
 function, and the theorem `f_correct` states that `f` meets its contract. `f_body` is
@@ -28,3 +29,5 @@ theorem sum_body : sum_fn.BodyOk .none [] := by
     `requires` gives a result that satisfies `ensures`. -/
 theorem sum_correct : sum_fn.Meets :=
   RecFun.meets_of_verified (S := .none) (Γ := []) ⟨trivial, sum_body⟩
+
+#only_standard_axioms sum_correct

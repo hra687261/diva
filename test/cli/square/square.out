@@ -1,0 +1,61 @@
+$ diva run square.ml
+9
+[exit 0]
+
+$ diva check square.ml
+no runtime error is possible
+[exit 0]
+
+$ diva opt square.ml
+(let square = (fun x -> (x * x)) in (square 3))
+[exit 0]
+
+$ diva hints square.ml
+x#0 : 3
+[exit 0]
+
+$ diva cert --check square.ml
+wrote square.lean
+certificate checked by Lean: the program never fails
+[exit 0]
+
+$ diva prove --check -o prove.lean square.ml
+wrote prove.lean
+prove.lean:26:12: error: omega could not prove the goal:
+a possible counterexample may satisfy the constraints
+  a ≤ -1
+where
+ a := x * x
+prove.lean:25:37: warning: This simp argument is unused:
+  Value.isBool
+
+Hint: Omit it from the simp argument list.
+  [apply] simp [square_fn, wp, BinOp.denote, List.lookup, callEnv, RecFun.clos]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+prove.lean:25:73: warning: This simp argument is unused:
+  RecFun.clos
+
+Hint: Omit it from the simp argument list.
+  [apply] simp [square_fn, wp, BinOp.denote, Value.isBool, List.lookup, callEnv]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+[exit 1]
+
+$ diva prove --oracle ./llm.sh -o prove.lean square.ml
+round 1: the answer of the oracle isn't in the format: the answer is not only JSON
+round 2: the oracle proposes a proof of `square_body`
+  intro va μ ⟨x, hva, hpre⟩
+  subst hva
+  simp [square_fn, wp, BinOp.denote, List.lookup, callEnv]
+  grind
+round 3: the oracle proposes a proof of `square_body`
+  intro va μ ⟨x, hva, hpre⟩
+  subst hva
+  simp [square_fn, wp, BinOp.denote, List.lookup, callEnv]
+  rcases Int.le_total 0 x with h | h
+  · exact Int.mul_nonneg h h
+  · exact Int.mul_nonneg_of_nonpos_of_nonpos h h
+checked by Lean: the functions meet their contracts
+[exit 0]
+
