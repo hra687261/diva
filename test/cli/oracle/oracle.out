@@ -1,0 +1,42 @@
+$ diva run oracle.ml
+-2
+[exit 0]
+
+$ diva check oracle.ml
+`(10 / (f 0))`: possible division by zero (divisor: [-5, +∞])
+[exit 1]
+
+$ diva opt oracle.ml
+(let rec f n = (if (n >= 100) then (n - 105) else (f (n + 2))) in (10 / (f 0)))
+[exit 0]
+
+$ diva hints oracle.ml
+n#1 : [0, 101]
+$f#0 : [-5, +∞]
+[exit 0]
+
+$ diva cert --check oracle.ml
+the program may fail, so there is no certificate (see `diva check`)
+[exit 1]
+
+$ diva prove --check -o prove.lean oracle.ml
+no function has a contract: write one in a `(*@ ... *)` comment after a function
+[exit 1]
+
+$ diva check --oracle ./llm.sh oracle.ml
+round 1: the oracle proposes
+  an answer that isn't in the format: the answer is not only JSON
+rejected
+round 2: the oracle proposes
+  $f#0 : [-4, -1]
+rejected
+round 3: the oracle proposes
+  $f#0 : [-5, -4]
+accepted
+no runtime error is possible
+[exit 0]
+
+$ diva check --oracle ./slow.sh --timeout 1 oracle.ml
+error: the oracle `./slow.sh` didn't answer within 1 seconds
+[exit 1]
+

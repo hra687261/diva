@@ -113,29 +113,41 @@ def collect (H : Hints A) (σ : AEnv A) (e : Expr) : Hints A :=
     | [] => (k, if k.startsWith "$" then Flat.bot else Flat.top)
     | ps => (k, ps.foldl (fun acc p => acc.join p.2) Flat.bot)
 
-/-- `H` covers all its claims. -/
-def covers (H : Hints A) (σ : AEnv A) (e : Expr) : Bool :=
-  (collect H σ e).all fun (k, a) => a.leq ((H.lookup k).getD Flat.top)
+/-- `H`, with the hints of `fixed` replacing those of `H` for the same keys. For example,
+    `pin [(x, a)] [(x, b), (y, c)] = [(x, a), (y, c)]`. The inference calls `pin` after
+    each step, so the hints of `fixed` never change. The checker still checks them. -/
+def pin (fixed H : Hints A) : Hints A :=
+  H.map fun (k, a) => (k, (fixed.lookup k).getD a)
+
+/-- `H` covers all its claims, except those on the keys of `fixed`. -/
+def covers (fixed H : Hints A) (σ : AEnv A) (e : Expr) : Bool :=
+  (collect H σ e).all fun (k, a) =>
+    (fixed.lookup k).isSome || a.leq ((H.lookup k).getD Flat.top)
 
 /-- Grow `H`, with widening, until it covers its claims (or `n` rounds pass). -/
-def up (σ : AEnv A) (e : Expr) : Nat → Hints A → Hints A
+def up (fixed : Hints A) (σ : AEnv A) (e : Expr) : Nat → Hints A → Hints A
   | 0, H => H
   | n + 1, H =>
-    if covers H σ e then H
-    else up σ e n ((H.zip (collect H σ e)).map fun ((k, old), (_, now)) => (k, old.widen now))
+    if covers fixed H σ e then H
+    else
+      let H' := (H.zip (collect H σ e)).map fun ((k, old), (_, now)) => (k, old.widen now)
+      up fixed σ e n (pin fixed H')
 
 /-- Shrink `H` to its claims, as long as they still cover theirs (`n` rounds). -/
-def down (σ : AEnv A) (e : Expr) : Nat → Hints A → Hints A
+def down (fixed : Hints A) (σ : AEnv A) (e : Expr) : Nat → Hints A → Hints A
   | 0, H => H
   | n + 1, H =>
-    let H' := collect H σ e
-    if covers H' σ e then down σ e n H' else H
+    let H' := pin fixed (collect H σ e)
+    if covers fixed H' σ e then down fixed σ e n H' else H
 
-/-- Hints for `e`, whose free variables `σ` describes. Hints that are `top` are left
-    out: a missing hint means `top`. -/
-def inferHints (σ : AEnv A) (e : Expr) (rounds : Nat := 10) : Hints A :=
-  let H₀ := (hintKeys e).eraseDups.map (·, Flat.bot)
-  let H := down σ e rounds (up σ e rounds H₀)
+/-- The hints for the program `e`: the values of each parameter and of each function
+    result. `σ` gives the values of the variables that `e` uses without defining them.
+    The hints of `fixed` (given by the user or an LLM) are used unchanged. A hint that
+    allows any value (`top`) is left out, because a missing hint means `top`. -/
+def inferHints (σ : AEnv A) (e : Expr) (fixed : Hints A := []) (rounds : Nat := 10) :
+    Hints A :=
+  let H₀ := pin fixed ((hintKeys e).eraseDups.map (·, Flat.bot))
+  let H := down fixed σ e rounds (up fixed σ e rounds H₀)
   H.filter fun (_, a) => !Flat.top.leq a
 
 end Diva.AbsInt

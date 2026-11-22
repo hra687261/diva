@@ -114,10 +114,13 @@ def diagnose (H : Hints A) (σ : AEnv A) : Expr → List String
   -- `raise`, `try`, arrays and refs (`mayFail` says `true`)
   | e => [s!"{snippet e}: not analysed yet, so it may fail"]
 
-/-- The report for a program `e` whose free variables `σ` describes, with inferred
-    hints. -/
-def report (σ : AEnv A) (e : Expr) : List String :=
-  let H := inferHints σ e
+/-- What `diva check` prints for the program `e`: where `e` may fail, or that it
+    can't fail. `σ` gives the values of the variables that `e` uses without
+    defining them (`[]` for a complete program). `inferHints` infers the hints, but
+    uses the hints of `fixed` unchanged. The report still checks the hints of
+    `fixed`. -/
+def report (σ : AEnv A) (e : Expr) (fixed : Hints A := []) : List String :=
+  let H := inferHints σ e fixed
   if mayFail H σ e then
     match diagnose H σ e with
     | [] => ["may fail"]   -- not expected: `diagnose` follows `mayFail`

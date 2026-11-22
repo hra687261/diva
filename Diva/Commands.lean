@@ -5,6 +5,7 @@ import Diva.Report
 import Diva.Opt
 import Diva.Cert
 import Diva.Prove
+import Diva.Oracle
 
 /-!
 # Command-line commands (untrusted)
@@ -14,7 +15,8 @@ pure functions, so that tests can check them. `Main` parses the arguments, reads
 the file and prints.
 
 - `run`: evaluate the program and print its value.
-- `check`: say where the program may fail, or that it can't fail.
+- `check`: say where the program may fail, or that it can't fail. With an oracle
+  (`checkOracle`), if the check fails, an LLM is told where, and proposes hints.
 - `opt`: print the optimised program.
 - `hints`: print the hints inferred for the program, one per line.
 - `cert`: print a certificate, a Lean file stating that the program can't fail.
@@ -60,6 +62,27 @@ def check (src : String) : Result :=
     let H := inferHints ([] : AEnv Itv) e
     let msgs := Report.report ([] : AEnv Itv) e
     { out := msgs, code := if mayFail H [] e then 1 else 0 }
+
+/-- `diva check --oracle`: parse the program `src`, and ask `oracle` for hints, at most
+    `rounds` times, until the program is safe with them (`Oracle.consult`). Print each
+    round, then what `check` prints with the last hints. -/
+def checkOracle [Monad m] (oracle : String → m String) (rounds : Nat) (src : String) :
+    m Result :=
+  match parse src with
+  | .error msg => return { err := [s!"parse error: {msg}"], code := 1 }
+  | .ok e => do
+    let rs ← Oracle.consult oracle ([] : AEnv Itv) e rounds
+    let shown := rs.zipIdx.flatMap fun (r, i) =>
+      [s!"round {i + 1}: the oracle proposes"] ++
+        (match r.error with
+         | some msg => [s!"  an answer that isn't in the format: {msg}"]
+         | none =>
+           if r.hints.isEmpty then ["  nothing"] else r.hints.map fun (x, a) => s!"  {x} : {a}") ++
+        [if r.accepted then "accepted" else "rejected"]
+    let fixed := (rs.getLast?.map (·.hints)).getD []
+    let H := inferHints ([] : AEnv Itv) e fixed
+    return { out := shown ++ Report.report ([] : AEnv Itv) e fixed,
+             code := if mayFail H [] e then 1 else 0 }
 
 /-- `diva opt`: parse the program `src`, optimise it using what the analysis knows
     about its values, and print the optimised program. -/

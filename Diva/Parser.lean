@@ -571,6 +571,12 @@ def parse (s : String) : Except String Expr :=
   | .ok e => .ok ((resolve [] e).run' {})
   | .error err => .error s!"Parse error near byte {err.pos.byteIdx}"
 
+/-- Parse a formula of the contract language, such as `0 <= v && v < 10`. -/
+def parseTerm (s : String) : Except String Term :=
+  match (whitespace *> term <* endOfInput).parseString s with
+  | .ok t => .ok t
+  | .error err => .error s!"Parse error near byte {err.pos.byteIdx}"
+
 /-- Parse a complete program into its top-level items, with their contracts. The
     names are the ones of the source: there is no `resolve`. -/
 def parseItems (s : String) : Except String (List Item) :=

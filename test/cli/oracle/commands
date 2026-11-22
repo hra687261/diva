@@ -1,0 +1,2 @@
+check --oracle ./llm.sh
+check --oracle ./slow.sh --timeout 1

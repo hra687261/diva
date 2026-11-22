@@ -56,6 +56,11 @@ def join (a b : Flat A) : Flat A :=
   ⟨AbsDomain.join a.int b.int, a.tt || b.tt, a.ff || b.ff, a.unit || b.unit,
    a.list || b.list, a.fn || b.fn, a.loc || b.loc, a.exn || b.exn⟩
 
+/-- The values that both `a` and `b` describe. -/
+def meet (a b : Flat A) : Flat A :=
+  ⟨AbsDomain.meet a.int b.int, a.tt && b.tt, a.ff && b.ff, a.unit && b.unit,
+   a.list && b.list, a.fn && b.fn, a.loc && b.loc, a.exn && b.exn⟩
+
 def leq (a b : Flat A) : Bool :=
   AbsDomain.leq a.int b.int && (!a.tt || b.tt) && (!a.ff || b.ff) && (!a.unit || b.unit) &&
   (!a.list || b.list) && (!a.fn || b.fn) && (!a.loc || b.loc) && (!a.exn || b.exn)
