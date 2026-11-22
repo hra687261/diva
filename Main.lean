@@ -92,27 +92,28 @@ def outFile (p : Parsed) (path stdin : String) : String :=
   | some f => f.as! String
   | none => if path == "-" then stdin else (System.FilePath.withExtension path "lean").toString
 
-/-- Run Lean on the file `output`. If Lean accepts the file, the result is `none`.
-    Otherwise it is `some errors`.
-    The file imports Diva's modules, which only load in the Lean version that
-    built `diva`. If `lean` is elan's, `ELAN_TOOLCHAIN` makes it run that version. -/
-def runLean (output : String) : IO (Option String) := do
+/-- Make Lean find its own modules and Diva's (`libDir`). The files that `diva` checks
+    import Diva's modules, which only load in the Lean version that built `diva`.
+    If `lean` is elan's, `ELAN_TOOLCHAIN` makes it give that version's folder. -/
+def initSearchPath : IO Unit := do
   let toolchain := s!"leanprover/lean4:v{Lean.versionString}"
   let out ← IO.Process.output
-    { cmd := "lean", args := #[output],
-      env := #[("LEAN_PATH", some (← libDir).toString), ("ELAN_TOOLCHAIN", some toolchain)] }
-  if out.exitCode == 0 then return none
-  return some (out.stdout ++ out.stderr)
+    { cmd := "lean", args := #["--print-prefix"], env := #[("ELAN_TOOLCHAIN", some toolchain)] }
+  Lean.initSearchPath out.stdout.trimAscii.toString [← libDir]
+
+/-- Check the file `output` with Lean, inside `diva` (`CheckFile.run`). If Lean accepts
+    the file, and its theorems use only the standard axioms, the result is `none`.
+    Otherwise it is `some errors`, where `errors` is what is wrong, in Lean's format. -/
+def runLean (output : String) : IO (Option String) := do
+  initSearchPath
+  CheckFile.run output (← IO.FS.readFile output)
 
 /-- The environment of the files that `diva prove` writes: Lean's own modules, and
     `Diva.Wp`. It has the tactics, which `ParseProof.check` needs to parse a proof.
     `main` must run `Lean.enableInitializersExecution` first. -/
 def proofEnv : IO Lean.Environment := do
-  let toolchain := s!"leanprover/lean4:v{Lean.versionString}"
-  let out ← IO.Process.output
-    { cmd := "lean", args := #["--print-prefix"], env := #[("ELAN_TOOLCHAIN", some toolchain)] }
-  Lean.initSearchPath out.stdout.trimAscii.toString [← libDir]
-  Lean.importModules #[{ module := `Diva.Wp }] {} (loadExts := true)
+  initSearchPath
+  return (← CheckFile.header (Lean.Parser.mkInputContext "import Diva.Wp" "<header>")).1
 
 /-- Write the Lean file that `cmd` gives for the program to `outFile`. With `--check`,
     also run Lean on that file, so Lean's errors give positions in it, and print the

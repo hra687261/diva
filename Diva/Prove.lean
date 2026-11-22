@@ -175,7 +175,6 @@ def file (items : List Item) (proofs : List (String × String) := []) :
   if st.fns.isEmpty then
     throw "no function has a contract: write one in a `(*@ ... *)` comment after a function"
   return s!"import Diva.Wp
-import Diva.Axioms
 
 /-! Written by `diva prove`. For each function `f` with a contract, `f_fn` is the
 function, and the theorem `f_correct` states that `f` meets its contract. `f_body` is
@@ -183,7 +182,6 @@ the proof obligation of `f`. If its proof fails, write one by hand. -/
 
 open Diva
 
-" ++ "\n".intercalate st.out.toList ++
-    "\n" ++ "\n".intercalate (st.fns.reverse.map (s!"#only_standard_axioms {·}_correct")) ++ "\n"
+" ++ "\n".intercalate st.out.toList
 
 end Diva.Prove

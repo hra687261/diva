@@ -1,5 +1,4 @@
 import Diva.Wp
-import Diva.Axioms
 
 /-! Written by `diva prove`. For each function `f` with a contract, `f_fn` is the
 function, and the theorem `f_correct` states that `f` meets its contract. `f_body` is
@@ -31,5 +30,3 @@ theorem square_body : square_fn.BodyOk .none [] := by
     `requires` gives a result that satisfies `ensures`. -/
 theorem square_correct : square_fn.Meets :=
   RecFun.meets_of_verified (S := .none) (Γ := []) ⟨trivial, square_body⟩
-
-#only_standard_axioms square_correct

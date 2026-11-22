@@ -16,8 +16,9 @@ an oracle (an LLM) writes another proof. Lean checks it.
   parser. It rejects a proof that isn't only tactics, or that uses a keyword that
   could make Lean accept a false theorem, or run code: `sorry`, `native_decide`,
   `set_option`, `run_tac`, ...
-- At the end of the file, `#only_standard_axioms f_correct` (`Diva.Axioms`) fails if
-  a proof uses `sorry` or another axiom. It catches what `check` misses.
+- `lean` (given by `diva`, see `CheckFile.run`) checks the file, and then the axioms
+  of its theorems. A proof that uses `sorry` or another axiom is an error. This catches
+  what `check` misses, such as `exact sorryAx _ false`.
 - `consult` asks the oracle, at most `rounds` times, until Lean accepts the file.
 
 Only the proofs come from the oracle. The statements (`f_fn`, `f_body`,

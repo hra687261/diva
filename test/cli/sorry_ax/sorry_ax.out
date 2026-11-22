@@ -1,0 +1,41 @@
+$ diva run sorry_ax.ml
+9
+[exit 0]
+
+$ diva check sorry_ax.ml
+no runtime error is possible
+[exit 0]
+
+$ diva opt sorry_ax.ml
+(let square = (fun x -> (x * x)) in (square 3))
+[exit 0]
+
+$ diva hints sorry_ax.ml
+x#0 : 3
+[exit 0]
+
+$ diva cert --check sorry_ax.ml
+wrote sorry_ax.lean
+certificate checked by Lean: the program never fails
+[exit 0]
+
+$ diva prove --check -o prove.lean sorry_ax.ml
+wrote prove.lean
+prove.lean:25:12: error: omega could not prove the goal:
+a possible counterexample may satisfy the constraints
+  a ≤ -1
+where
+ a := x * x
+[exit 1]
+
+$ diva prove --oracle ./llm.sh --rounds 1 -o prove.lean sorry_ax.ml
+round 1: the oracle proposes a proof of `square_body`
+  intro va μ ⟨x, hva, hpre⟩
+  subst hva
+  simp [square_fn, wp, BinOp.denote, List.lookup, callEnv]
+  exact sorryAx _ false
+prove.lean:21:0: error: `square_body` uses the axioms [sorryAx], so it isn't proved
+prove.lean:29:0: error: `square_correct` uses the axioms [sorryAx], so it isn't proved
+
+[exit 1]
+

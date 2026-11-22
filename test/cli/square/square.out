@@ -21,25 +21,11 @@ certificate checked by Lean: the program never fails
 
 $ diva prove --check -o prove.lean square.ml
 wrote prove.lean
-prove.lean:26:12: error: omega could not prove the goal:
+prove.lean:25:12: error: omega could not prove the goal:
 a possible counterexample may satisfy the constraints
   a ≤ -1
 where
  a := x * x
-prove.lean:25:37: warning: This simp argument is unused:
-  Value.isBool
-
-Hint: Omit it from the simp argument list.
-  [apply] simp [square_fn, wp, BinOp.denote, List.lookup, callEnv, RecFun.clos]
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-prove.lean:25:73: warning: This simp argument is unused:
-  RecFun.clos
-
-Hint: Omit it from the simp argument list.
-  [apply] simp [square_fn, wp, BinOp.denote, Value.isBool, List.lookup, callEnv]
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
 [exit 1]
 
 $ diva prove --oracle ./llm.sh -o prove.lean square.ml

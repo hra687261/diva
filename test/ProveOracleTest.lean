@@ -1,5 +1,5 @@
 import Diva.Commands
-import Diva.Axioms
+import Diva.CheckFile
 
 open Diva ProveOracle Lean
 
@@ -77,20 +77,26 @@ def check (proof : String) : Option String :=
 #guard (Commands.proveOracle (fun _ => ("omega" : Id String)) lean check 1 src).out ==
   ["round 1: the answer of the oracle isn't in the format: the answer is not only JSON"]
 
--- `stop` closes the goal with `sorry`: `#only_standard_axioms` catches it
+/-- The axioms that the theorem `n` uses, other than the standard ones. -/
+def axiomsOf (n : Name) : Elab.Command.CommandElabM Unit := do
+  IO.println (CheckFile.otherAxioms (← getEnv) n)
+
+theorem proved : 1 + 1 = 2 := by omega
+
+/-- info: [] -/
+#guard_msgs in #eval axiomsOf `proved
+
+-- Lean only warns about `sorry`. `CheckFile.run` makes it an error, because of `sorryAx`.
+#guard_msgs (drop warning) in
 theorem uses_stop : 1 = 2 := by
   stop
   rfl
 
-/-- error: `uses_stop` depends on the axioms [sorryAx], so it isn't proved -/
-#guard_msgs in #only_standard_axioms uses_stop
+/-- info: [sorryAx] -/
+#guard_msgs in #eval axiomsOf `uses_stop
 
-theorem proved : 1 + 1 = 2 := by omega
+-- `decide +native` has no word of `ParseProof.forbidden`, but its axiom is found
+theorem native : 2 + 2 = 4 := by decide +native
 
-#guard_msgs in #only_standard_axioms proved
-
--- a proof that fails already has an error: no other error
-#guard_msgs (drop error) in
-theorem fails : 1 = 2 := by omega
-
-#guard_msgs in #only_standard_axioms fails
+/-- info: [native._native.decide.ax_1_1] -/
+#guard_msgs in #eval axiomsOf `native

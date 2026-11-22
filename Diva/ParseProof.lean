@@ -24,8 +24,10 @@ open Lean
     -/
 def forbidden : Std.HashSet String := Std.HashSet.ofList
   ["sorry", "admit", "stop", "native_decide",
-    -- prove any goal, or trust compiled code instead of the kernel. The axiom check
-    -- (`#only_standard_axioms`) catches them too, but only after running Lean.
+    -- prove any goal, or trust compiled code instead of the kernel. These words are
+    -- redundant: the axiom check (`CheckFile.run`) catches them too, but only after
+    -- Lean checks the file. Here they are rejected before that, with a clear error
+    -- message.
    "set_option",
     -- could turn off checks, such as `debug.skipKernelTC`
    "run_tac", "by_elab", "unsafe"]

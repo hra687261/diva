@@ -22,9 +22,9 @@ certificate checked by Lean: the program never fails
 
 $ diva prove --check -o prove.lean wrong_contract.ml
 wrote prove.lean
-prove.lean:26:12: error: omega could not prove the goal:
+prove.lean:25:12: error: omega could not prove the goal:
 No usable constraints found. You may need to unfold definitions so `omega` can see linear arithmetic facts about `Nat` and `Int`, which may also involve multiplication, division, and modular remainder by constants.
-prove.lean:26:12: error: omega could not prove the goal:
+prove.lean:25:12: error: omega could not prove the goal:
 a possible counterexample may satisfy the constraints
   a ≥ 1
 where
