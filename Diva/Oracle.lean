@@ -67,7 +67,7 @@ def prompt (σ : AEnv A) (e : Expr) (fixed : Hints A) (rejected : Option String)
   let rejected := match rejected with
     | none => ""
     | some why => s!"\nYour previous answer was rejected: {why}\n"
-  s!"DIVA, a verifier for a small subset of OCaml, can't prove that this program never
+  s!"DIVA, a verifier for a small ML-like language, can't prove that this program never
 fails (division by zero, failed `assert`, type error).
 
 The program (each parameter and each recursive function has a unique name):

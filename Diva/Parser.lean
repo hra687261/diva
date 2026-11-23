@@ -106,6 +106,7 @@ inductive Binding where
   | val : String → Expr → Binding
   /-- `let rec f x = e`. For `let rec f x y = e`, `e` is `fun y -> e`. -/
   | recFn : String → String → Expr → Binding
+  deriving BEq
 
 /-- The name the declaration defines. -/
 def Binding.name : Binding → String
@@ -472,6 +473,7 @@ def specComment : P Spec := do
 inductive Item where
   | decl : Binding → Option Spec → Item
   | expr : Expr → Item
+  deriving BEq
 
 def declItem : P Item := do
   let b ← binding

@@ -24,3 +24,4 @@ import Diva.AbsInt.Fact
 import Diva.Answer
 import Diva.Oracle
 import Diva.ProveOracle
+import Diva.ContractOracle

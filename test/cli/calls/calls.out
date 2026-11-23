@@ -1,0 +1,52 @@
+$ diva run calls.ml
+12
+[exit 0]
+
+$ diva check calls.ml
+no runtime error is possible
+[exit 0]
+
+$ diva opt calls.ml
+(let double = (fun x -> (x + x)) in (let quad = (fun x -> (double (double x))) in (quad 3)))
+[exit 0]
+
+$ diva hints calls.ml
+x#0 : [3, +∞]
+x#1 : 3
+[exit 0]
+
+$ diva cert --check calls.ml
+wrote calls.lean
+certificate checked by Lean: the program never fails
+[exit 0]
+
+$ diva prove --check -o prove.lean calls.ml
+wrote prove.lean
+prove.lean:28:12: error: omega could not prove the goal:
+a possible counterexample may satisfy the constraints
+  a ≥ 0
+where
+ a := x
+[exit 1]
+
+$ diva spec --oracle ./llm.sh -o prove.lean calls.ml
+round 1: the oracle proposes
+  (*@ r = double x ensures (r >= 0) *)
+rejected by Lean
+round 2: the oracle proposes
+  (*@ r = double x requires (x >= 0) ensures (r >= 0) *)
+accepted
+
+let double x = x + x
+(*@ r = double x
+    requires x >= 0
+    ensures r >= 0 *)
+
+let quad x = double (double x)
+(*@ r = quad x
+    requires x >= 0
+    ensures r >= 0 *)
+
+;; quad 3
+[exit 0]
+

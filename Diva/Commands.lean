@@ -7,6 +7,7 @@ import Diva.Cert
 import Diva.Prove
 import Diva.Oracle
 import Diva.ProveOracle
+import Diva.ContractOracle
 
 /-!
 # Command-line commands (untrusted)
@@ -23,6 +24,8 @@ the file and prints.
 - `cert`: print a certificate, a Lean file stating that the program can't fail.
 - `prove`: print a Lean file stating that the functions meet their contracts. With an
   oracle (`proveOracle`), an LLM completes the proofs that Lean doesn't accept.
+- `spec`: an LLM writes the contracts of the functions called by the functions with a
+  contract, and Lean checks the file of `prove` (`specOracle`).
 -/
 
 namespace Diva.Commands
@@ -136,5 +139,26 @@ def proveOracle [Monad m] (oracle : String → m String) (lean : String → m (O
     | .error msg => return { err := [msg], code := 1 }
     | .ok ⟨log, none⟩ => return { out := log ++ ["checked by Lean: the functions meet their contracts"] }
     | .ok ⟨log, some errors⟩ => return { out := log, err := [errors], code := 1 }
+
+/-- `diva spec --oracle`: parse the program `src`, and ask `oracle` for the contracts of
+    the functions that the functions with a contract call (`ContractOracle.consult`),
+    at most `rounds` times. `lean` checks the file of `prove` for the program with these
+    contracts (`none`: accepted, or Lean's errors). Print each round, then the program
+    with the new contracts. Exit with code 1 if no answer is accepted. -/
+def specOracle [Monad m] (oracle : String → m String) (lean : String → m (Option String))
+    (rounds : Nat) (src : String) : m Result := do
+  match parseItems src with
+  | .error msg => return { err := [s!"parse error: {msg}"], code := 1 }
+  | .ok items =>
+    if items.all fun | .decl _ sp => sp.isNone | .expr _ => true then
+      return { err := ["no function has a contract: write the contract of the main function"],
+               code := 1 }
+    if ContractOracle.needed items |>.isEmpty then
+      return { err := ["the functions called by the functions with a contract have one: \
+                        use `diva prove`"], code := 1 }
+    let r ← ContractOracle.consult oracle lean src items rounds
+    match r.program with
+    | some prog => return { out := r.log ++ ["", prog] }
+    | none => return { out := r.log, err := [r.errors], code := 1 }
 
 end Diva.Commands

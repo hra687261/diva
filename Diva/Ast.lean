@@ -76,7 +76,7 @@ inductive Expr where
     -- `try e with k -> h`: catch any exception as `k`
   | exnCase : Expr → String → String → Expr → Expr → Expr
     -- `match e1 with E x -> e2 | _ -> e3`: test the tag of the exception `e1`
-  deriving Inhabited
+  deriving Inhabited, BEq
 
 /-- `e` contains no call and doesn't have side effects on the store (no `Array.make`,
     `<-`, `ref` or `:=`). Such expressions can be optimized and replaced by their
@@ -131,7 +131,7 @@ inductive Term where
   | var : String → Term
   | binop : BinOp → Term → Term → Term
   | and : Term → Term → Term
-  deriving Inhabited, Repr
+  deriving Inhabited, Repr, BEq
 
 /-- The names used in `t`. -/
 def Term.vars : Term → List String
@@ -151,6 +151,6 @@ structure Spec where
   params : List String := []
   requires : List Term := []
   ensures : List Term := []
-  deriving Inhabited, Repr
+  deriving Inhabited, Repr, BEq
 
 end Diva

@@ -63,7 +63,8 @@ def prompt (file name errors : String) (rejected : Option String) : String :=
   let rejected := match rejected with
     | none => ""
     | some why => s!"\nYour previous answer was rejected: {why}\n"
-  s!"DIVA wrote this Lean 4 file to prove that OCaml functions meet their contracts.
+  s!"DIVA wrote this Lean 4 file to prove that functions in a small ML-like language
+meet their contracts.
 Lean rejects the proof of `{name}`.
 
 The file:
