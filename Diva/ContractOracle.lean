@@ -8,7 +8,8 @@ The user writes the contract of a function `f`. To prove it, `diva prove` needs 
 contracts of the functions that `f` calls. Here an oracle (an LLM) writes them.
 
 - `needed` lists the functions without a contract that need one: those called by a
-  function with a contract, or by a function in that list.
+  function with a contract, or by a function in that list. If no function has a
+  contract, all the functions need one (`functions`).
 - `prompt` is the question: the program, the functions that need a contract, and
   why the previous answer was rejected.
 - `consult` asks the oracle, at most `rounds` times, for the whole program with the
@@ -56,6 +57,21 @@ def needed (items : List Item) : List String :=
       else []).eraseDups
   (decls.foldl (fun need _ => step need) []).eraseDups
 
+/-- The functions of `items`: the declarations `let rec f x = ...` and `let f x = ...`. -/
+def functions (items : List Item) : List String :=
+  items.filterMap fun
+    | .decl (.recFn f _ _) _ | .decl (.val f (.lam ..)) _ => some f
+    | _ => none
+
+/-- No item of `items` has a contract. -/
+def noContract (items : List Item) : Bool :=
+  items.all fun | .decl _ sp => sp.isNone | .expr _ => true
+
+/-- The functions of `items` that need a contract: `needed`, or all the functions if no
+    function has a contract. -/
+def toSpecify (items : List Item) : List String :=
+  if noContract items then functions items else needed items
+
 /-- The term `t` as Gospel. -/
 def termText : Term → String
   | .int n => toString n
@@ -63,12 +79,14 @@ def termText : Term → String
   | .binop op a b => s!"({termText a} {ppBinOp op} {termText b})"
   | .and a b => s!"({termText a} && {termText b})"
 
-/-- The contract `sp` of the function `f` as Gospel, on one line. -/
-def specText (f : String) (sp : Spec) : String :=
-  let header := s!"{sp.result} = {sp.name.getD f} {" ".intercalate sp.params}"
-  let rs := sp.requires.map fun t => s!" requires {termText t}"
-  let es := sp.ensures.map fun t => s!" ensures {termText t}"
-  s!"(*@ {header.trimAscii}{String.join rs}{String.join es} *)"
+/-- The contract `sp` as Gospel, on one line. -/
+def specText (sp : Spec) : String :=
+  let header := match sp.name with
+    | some g => [" ".intercalate (sp.result :: "=" :: g :: sp.params)]
+    | none => []
+  let rs := sp.requires.map fun t => s!"requires {termText t}"
+  let es := sp.ensures.map fun t => s!"ensures {termText t}"
+  "(*@ " ++ " ".intercalate (header ++ rs ++ es) ++ " *)"
 
 /-- The program in an answer `{"program": [line, ...]}`: the lines, joined. Any other
     answer is an error. -/
@@ -79,12 +97,20 @@ def parseProgram (answer : String) : Except String String := do
   return "\n".intercalate lines.toList
 
 /-- The question to the oracle about the program `src`. `need` are the functions that
-    need a contract. `previous` is the previous answer, and why it was rejected. -/
-def prompt (src : String) (need : List String) (previous : Option (String × String)) :
-    String :=
+    need a contract. `scratch` says that no function has one yet. `previous` is the
+    previous answer, and why it was rejected. -/
+def prompt (src : String) (need : List String) (scratch : Bool)
+    (previous : Option (String × String)) : String :=
+  let need := ", ".intercalate (need.map (s!"`{·}`"))
+  let task := if scratch then
+      s!"This program has no contract. Write a contract for each function: {need}. Each
+contract says what the function computes, as precisely as you can."
+    else
+      s!"To prove the contracts of this program, DIVA needs a contract for each function
+that they call. These functions have none: {need}."
   let rejected := match previous with
     | none => ""
-    | some (prog, why) => s!"
+    | some (prog, reason) => s!"
 Your previous answer was rejected:
 
 ```
@@ -93,15 +119,14 @@ Your previous answer was rejected:
 
 Why:
 
-{why}
+{reason}
 "
   s!"DIVA proves that functions in a small ML-like language meet their contracts.
 A contract is written after each function: `(*@ r = f x requires ... ensures ... *)`.
 It can use integers, the parameter, the result, `+`, `-`, `*`, comparisons and `&&`. The
 parameter and the result are integers.
 
-To prove the contracts of this program, DIVA needs a contract for each function
-that they call. These functions have none: {", ".intercalate (need.map (s!"`{·}`"))}.
+{task}
 
 ```
 {src}
@@ -125,7 +150,7 @@ structure Outcome where
 /-- The new contracts of `items'` (they are not in `items`), one line each. -/
 def newSpecs (items items' : List Item) : List String :=
   (items.zip items').filterMap fun
-    | (.decl _ none, .decl b (some sp)) => some s!"  {specText b.name sp}"
+    | (.decl _ none, .decl b (some sp)) => some s!"  {b.name}: {specText sp}"
     | _ => none
 
 /-- Why the program `items'` of the oracle is rejected without running Lean: it changes
@@ -137,7 +162,7 @@ def changes (items items' : List Item) : Option String :=
       if sp' != some sp then some s!"it changes the contract of `{b.name}`" else none
     | _ => none
 
-/-- Ask `oracle` for the contracts of the functions `needed` by the program `src`,
+/-- Ask `oracle` for the contracts of the functions of `toSpecify` in the program `src`,
     at most `rounds` times, until Lean accepts the file of `diva prove` for the
     program. `lean` checks a file: `none` if Lean accepts it, or Lean's errors. -/
 def consult [Monad m] (oracle : String → m String) (lean : String → m (Option String))
@@ -147,7 +172,7 @@ where
   go : Nat → Nat → Option (String × String) → List String → m Outcome
     | 0, _, previous, log => return ⟨log, none, (previous.map (·.2)).getD ""⟩
     | k + 1, i, previous, log => do
-      let answer ← oracle (prompt src (needed items) previous)
+      let answer ← oracle (prompt src (toSpecify items) (noContract items) previous)
       match parseProgram answer with
       | .error msg =>
         let log := log ++ [s!"round {i}: the answer of the oracle isn't in the format: {msg}"]

@@ -1,0 +1,42 @@
+$ diva run clamp.ml
+100
+[exit 0]
+
+$ diva check clamp.ml
+no runtime error is possible
+[exit 0]
+
+$ diva opt clamp.ml
+(let clamp = (fun x -> (if (x < 0) then 0 else (if (x > 100) then 100 else x))) in (clamp 150))
+[exit 0]
+
+$ diva hints clamp.ml
+x#0 : 150
+[exit 0]
+
+$ diva cert --check clamp.ml
+wrote clamp.lean
+certificate checked by Lean: the program never fails
+[exit 0]
+
+$ diva prove --check -o prove.lean clamp.ml
+no function has a contract: write one in a `(*@ ... *)` comment after a function
+[exit 1]
+
+$ diva spec --oracle ./llm.sh -o prove.lean clamp.ml
+round 1: the oracle proposes
+  clamp: (*@ r = clamp x ensures ((r >= 0) && ((r <= 100) && (r >= x))) *)
+rejected by Lean
+round 2: the oracle proposes
+  clamp: (*@ r = clamp x ensures ((r >= 0) && (r <= 100)) *)
+accepted
+
+warning: the oracle wrote all the contracts. Read them to know what is proved.
+
+let clamp x = if x < 0 then 0 else if x > 100 then 100 else x
+(*@ r = clamp x
+    ensures r >= 0 && r <= 100 *)
+
+;; clamp 150
+[exit 0]
+

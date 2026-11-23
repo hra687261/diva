@@ -31,10 +31,10 @@ where
 
 $ diva spec --oracle ./llm.sh -o prove.lean calls.ml
 round 1: the oracle proposes
-  (*@ r = double x ensures (r >= 0) *)
+  double: (*@ r = double x ensures (r >= 0) *)
 rejected by Lean
 round 2: the oracle proposes
-  (*@ r = double x requires (x >= 0) ensures (r >= 0) *)
+  double: (*@ r = double x requires (x >= 0) ensures (r >= 0) *)
 accepted
 
 let double x = x + x

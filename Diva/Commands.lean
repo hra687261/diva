@@ -25,7 +25,7 @@ the file and prints.
 - `prove`: print a Lean file stating that the functions meet their contracts. With an
   oracle (`proveOracle`), an LLM completes the proofs that Lean doesn't accept.
 - `spec`: an LLM writes the contracts of the functions called by the functions with a
-  contract, and Lean checks the file of `prove` (`specOracle`).
+  contract (or of all the functions, if none has one), and Lean checks the file of `prove` (`specOracle`).
 -/
 
 namespace Diva.Commands
@@ -142,7 +142,8 @@ def proveOracle [Monad m] (oracle : String → m String) (lean : String → m (O
 
 /-- `diva spec --oracle`: parse the program `src`, and ask `oracle` for the contracts of
     the functions that the functions with a contract call (`ContractOracle.consult`),
-    at most `rounds` times. `lean` checks the file of `prove` for the program with these
+    at most `rounds` times. If no function has a contract, ask for the contracts of all
+    the functions. `lean` checks the file of `prove` for the program with these
     contracts (`none`: accepted, or Lean's errors). Print each round, then the program
     with the new contracts. Exit with code 1 if no answer is accepted. -/
 def specOracle [Monad m] (oracle : String → m String) (lean : String → m (Option String))
@@ -150,15 +151,17 @@ def specOracle [Monad m] (oracle : String → m String) (lean : String → m (Op
   match parseItems src with
   | .error msg => return { err := [s!"parse error: {msg}"], code := 1 }
   | .ok items =>
-    if items.all fun | .decl _ sp => sp.isNone | .expr _ => true then
-      return { err := ["no function has a contract: write the contract of the main function"],
-               code := 1 }
-    if ContractOracle.needed items |>.isEmpty then
-      return { err := ["the functions called by the functions with a contract have one: \
-                        use `diva prove`"], code := 1 }
+    if ContractOracle.toSpecify items |>.isEmpty then
+      let msg := if ContractOracle.noContract items then "the program has no function"
+        else "the functions called by the functions with a contract have one: use `diva prove`"
+      return { err := [msg], code := 1 }
     let r ← ContractOracle.consult oracle lean src items rounds
     match r.program with
-    | some prog => return { out := r.log ++ ["", prog] }
+    | some prog =>
+      let warning := if ContractOracle.noContract items then
+          ["", "warning: the oracle wrote all the contracts. Read them to know what is proved."]
+        else []
+      return { out := r.log ++ warning ++ ["", prog] }
     | none => return { out := r.log, err := [r.errors], code := 1 }
 
 end Diva.Commands

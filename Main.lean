@@ -247,8 +247,9 @@ def specOracleDoc := oracleDoc ++ " It writes the program with the new contracts
 
 def specCmd : Cmd := `[Cli|
   spec VIA runSpec;
-  "Ask an LLM for the contracts of the functions called by the functions with a contract, \
-   and prove all the contracts with Lean. Print the program with the new contracts. \
+  "Ask an LLM for the contracts of the functions called by the functions with a contract \
+   (or of all the functions, if none has one), and prove all the contracts with Lean. \
+   Print the program with the new contracts. \
    Exits with 1 if no answer is accepted."
   FLAGS:
     oracle : String; specOracleDoc

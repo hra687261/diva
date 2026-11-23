@@ -29,8 +29,15 @@ def lean (_ : String) : Id (Option String) := none
 -- an answer that Lean accepts: the round, then the program
 #guard (Commands.specOracle (fun _ => (answer src : Id String)) lean 1 src).out ==
   ["round 1: the oracle proposes", "accepted", "", src]
--- no contract: write the main one first
-#guard (Commands.specOracle (fun _ => ("" : Id String)) lean 1 "let f x = x").code == 1
 -- an answer that isn't only JSON is rejected, and the oracle is asked again
 #guard (Commands.specOracle (fun _ => (src : Id String)) lean 1 src).out ==
   ["round 1: the answer of the oracle isn't in the format: the answer is not only JSON"]
+-- no contract: the oracle writes the contracts of all the functions, with a warning
+#guard toSpecify (items "let f x = x\nlet g x = f x\n;; g 1") == ["f", "g"]
+#guard (Commands.specOracle (fun _ => (answer "let f x = x\n(*@ ensures result = x *)" : Id String))
+    lean 1 "let f x = x").out ==
+  ["round 1: the oracle proposes", "  f: (*@ ensures (result = x) *)", "accepted", "",
+   "warning: the oracle wrote all the contracts. Read them to know what is proved.", "",
+   "let f x = x\n(*@ ensures result = x *)"]
+#guard (Commands.specOracle (fun _ => ("" : Id String)) lean 1 "1 + 2").err ==
+  ["the program has no function"]

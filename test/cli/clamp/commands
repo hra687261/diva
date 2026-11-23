@@ -1,0 +1,1 @@
+spec --oracle ./llm.sh -o prove.lean

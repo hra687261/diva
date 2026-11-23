@@ -1,0 +1,30 @@
+import Diva.Wp
+
+/-! Written by `diva prove`. For each function `f` with a contract, `f_fn` is the
+function, and the theorem `f_correct` states that `f` meets its contract. `f_body` is
+the proof obligation of `f`. If its proof fails, write one by hand. -/
+
+open Diva
+
+/-- `let clamp x = ...`, with its contract. -/
+def clamp_fn : RecFun where
+  f := none
+  x := "x"
+  body := (.ite (.binop .lt (.var "x") (.int 0)) (.int 0) (.ite (.binop .gt (.var "x") (.int 100)) (.int 100) (.var "x")))
+  ρ := []
+  spec := {
+    pre := fun arg₀ => ∃ x : Int, arg₀ = .int x ∧ True
+    post := fun arg₀ res₀ => ∃ x r : Int, arg₀ = .int x ∧ res₀ = .int r ∧
+      ((r ≥ 0) ∧ (r ≤ 100)) }
+
+/-- The proof obligation of `clamp`. If the proof fails, write one by hand. -/
+theorem clamp_body : clamp_fn.BodyOk .none [] := by
+  intro va μ ⟨x, hva, hpre⟩
+  subst hva
+  simp [clamp_fn, wp, BinOp.denote, Value.isBool, List.lookup, callEnv, RecFun.clos]
+  all_goals split_omega
+
+/-- `clamp` meets its contract: every call of `clamp` on an argument that satisfies
+    `requires` gives a result that satisfies `ensures`. -/
+theorem clamp_correct : clamp_fn.Meets :=
+  RecFun.meets_of_verified (S := .none) (Γ := []) ⟨trivial, clamp_body⟩
