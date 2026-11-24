@@ -1,0 +1,1 @@
+synth --oracle ./llm.sh -o prove.lean

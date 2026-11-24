@@ -168,6 +168,18 @@ def runSpec (p : Parsed) : IO UInt32 := do
     runLean output
   runWith' (Commands.specOracle (oracleOf p (cmd.as! String)) lean (rounds p)) p
 
+/-- `diva synth --oracle CMD`: the command `CMD` writes the code of the functions whose
+    body is `assert false`. Lean checks the file of `diva prove`, which is written to
+    `outFile`. -/
+def runSynth (p : Parsed) : IO UInt32 := do
+  let some cmd := p.flag? "oracle" | throw (IO.userError "`diva synth` needs `--oracle CMD`")
+  let path := p.positionalArg! "file" |>.as! String
+  let output := outFile p path "prove.lean"
+  let lean (file : String) : IO (Option String) := do
+    IO.FS.writeFile output file
+    runLean output
+  runWith' (Commands.synthOracle (oracleOf p (cmd.as! String)) lean (rounds p)) p
+
 /-- `diva` without a command: print the help. -/
 def runDiva (p : Parsed) : IO UInt32 := do
   p.printHelp
@@ -260,6 +272,22 @@ def specCmd : Cmd := `[Cli|
     file : String; "The program (`-` reads the standard input)."
 ]
 
+def synthOracleDoc := oracleDoc ++ " It writes the program with the code. Required."
+
+def synthCmd : Cmd := `[Cli|
+  synth VIA runSynth;
+  "Ask an LLM for the code of the functions whose body is `assert false`, and prove with \
+   Lean that the code meets their contracts. Print the program with the code. \
+   Exits with 1 if no answer is accepted."
+  FLAGS:
+    oracle : String; synthOracleDoc
+    rounds : Nat; roundsDoc
+    timeout : Nat; timeoutDoc
+    o, output : String; "The Lean file to write. By default `<name>.lean` for `<name>.ml`, `prove.lean` for `-`."
+  ARGS:
+    file : String; "The program (`-` reads the standard input)."
+]
+
 def divaCmd : Cmd := `[Cli|
   diva VIA runDiva; ["dev"]
   "A simple program verifier."
@@ -270,7 +298,8 @@ def divaCmd : Cmd := `[Cli|
     hintsCmd;
     certCmd;
     proveCmd;
-    specCmd
+    specCmd;
+    synthCmd
 ]
 
 /-- An error, such as an oracle that takes too long, is printed as `error: ...`, with

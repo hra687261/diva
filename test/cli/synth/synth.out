@@ -1,0 +1,42 @@
+$ diva run synth.ml
+runtime error: assertion failed
+[exit 1]
+
+$ diva check synth.ml
+`(assert false)` may fail
+`(abs (0 - 7))`: the function called may fail
+[exit 1]
+
+$ diva opt synth.ml
+(let abs = (fun x -> (assert false)) in (abs -7))
+[exit 0]
+
+$ diva hints synth.ml
+x#0 : -7
+[exit 0]
+
+$ diva cert --check synth.ml
+the program may fail, so there is no certificate (see `diva check`)
+[exit 1]
+
+$ diva prove --check -o prove.lean synth.ml
+wrote prove.lean
+prove.lean:25:12: error: omega could not prove the goal:
+No usable constraints found. You may need to unfold definitions so `omega` can see linear arithmetic facts about `Nat` and `Int`, which may also involve multiplication, division, and modular remainder by constants.
+[exit 1]
+
+$ diva synth --oracle ./llm.sh -o prove.lean synth.ml
+round 1: the oracle proposes
+rejected: it changes the program outside the stubs, or a contract, or it leaves a stub
+round 2: the oracle proposes
+rejected by Lean
+round 3: the oracle proposes
+accepted
+
+let abs x = if x < 0 then 0 - x else x
+(*@ r = abs x
+    ensures r >= 0 && r >= x && r >= 0 - x *)
+
+;; abs (0 - 7)
+[exit 0]
+

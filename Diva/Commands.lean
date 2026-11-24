@@ -8,6 +8,7 @@ import Diva.Prove
 import Diva.Oracle
 import Diva.ProveOracle
 import Diva.ContractOracle
+import Diva.SynthOracle
 
 /-!
 # Command-line commands (untrusted)
@@ -26,6 +27,8 @@ the file and prints.
   oracle (`proveOracle`), an LLM completes the proofs that Lean doesn't accept.
 - `spec`: an LLM writes the contracts of the functions called by the functions with a
   contract (or of all the functions, if none has one), and Lean checks the file of `prove` (`specOracle`).
+- `synth`: an LLM writes the code of the functions whose body is `assert false`, and
+  Lean proves that it meets their contracts (`synthOracle`).
 -/
 
 namespace Diva.Commands
@@ -162,6 +165,27 @@ def specOracle [Monad m] (oracle : String → m String) (lean : String → m (Op
           ["", "warning: the oracle wrote all the contracts. Read them to know what is proved."]
         else []
       return { out := r.log ++ warning ++ ["", prog] }
+    | none => return { out := r.log, err := [r.errors], code := 1 }
+
+/-- `diva synth --oracle`: parse the program `src`, and ask `oracle` for the code of its
+    stubs, the functions `let f x = assert false` (`SynthOracle.consult`), at most
+    `rounds` times. `lean` checks the file of `prove` for the program with this code
+    (`none`: accepted, or Lean's errors). Print each round, then the program. Exit with
+    code 1 if no answer is accepted. -/
+def synthOracle [Monad m] (oracle : String → m String) (lean : String → m (Option String))
+    (rounds : Nat) (src : String) : m Result := do
+  match parseItems src with
+  | .error msg => return { err := [s!"parse error: {msg}"], code := 1 }
+  | .ok items =>
+    let fs := SynthOracle.stubs items
+    if fs.isEmpty then
+      return { err := ["no function to write: write `let f x = assert false`, then its contract"],
+               code := 1 }
+    if let some (f, _) := fs.find? (·.2.isNone) then
+      return { err := [s!"the stub `{f}` has no contract"], code := 1 }
+    let r ← SynthOracle.consult oracle lean src items rounds
+    match r.program with
+    | some prog => return { out := r.log ++ ["", prog] }
     | none => return { out := r.log, err := [r.errors], code := 1 }
 
 end Diva.Commands

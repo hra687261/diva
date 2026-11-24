@@ -25,3 +25,4 @@ import Diva.Answer
 import Diva.Oracle
 import Diva.ProveOracle
 import Diva.ContractOracle
+import Diva.SynthOracle

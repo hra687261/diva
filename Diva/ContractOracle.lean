@@ -162,17 +162,20 @@ def changes (items items' : List Item) : Option String :=
       if sp' != some sp then some s!"it changes the contract of `{b.name}`" else none
     | _ => none
 
-/-- Ask `oracle` for the contracts of the functions of `toSpecify` in the program `src`,
-    at most `rounds` times, until Lean accepts the file of `diva prove` for the
-    program. `lean` checks a file: `none` if Lean accepts it, or Lean's errors. -/
-def consult [Monad m] (oracle : String → m String) (lean : String → m (Option String))
-    (src : String) (items : List Item) (rounds : Nat) : m Outcome :=
+/-- Ask `oracle` for a program, at most `rounds` times, until Lean accepts the file of
+    `diva prove` for it. `ask previous` is the question, where `previous` is the
+    previous answer and why it was rejected. `changes` says why an answer is rejected
+    before running Lean, if it is. `describe` gives the lines that describe an answer.
+    `lean` checks a file: `none` if Lean accepts it, or Lean's errors. -/
+def consultWith [Monad m] (oracle : String → m String) (lean : String → m (Option String))
+    (ask : Option (String × String) → String) (changes : List Item → Option String)
+    (describe : List Item → List String) (rounds : Nat) : m Outcome :=
   go rounds 1 none []
 where
   go : Nat → Nat → Option (String × String) → List String → m Outcome
     | 0, _, previous, log => return ⟨log, none, (previous.map (·.2)).getD ""⟩
     | k + 1, i, previous, log => do
-      let answer ← oracle (prompt src (toSpecify items) (noContract items) previous)
+      let answer ← oracle (ask previous)
       match parseProgram answer with
       | .error msg =>
         let log := log ++ [s!"round {i}: the answer of the oracle isn't in the format: {msg}"]
@@ -183,8 +186,8 @@ where
         | .error msg =>
           go k (i + 1) (some (prog, s!"it doesn't parse: {msg}")) (log ++ ["rejected: it doesn't parse"])
         | .ok items' =>
-          let log := log ++ newSpecs items items'
-          if let some why := changes items items' then
+          let log := log ++ describe items'
+          if let some why := changes items' then
             go k (i + 1) (some (prog, why)) (log ++ [s!"rejected: {why}"])
           else match Prove.file items' with
             | .error msg => go k (i + 1) (some (prog, msg)) (log ++ [s!"rejected: {msg}"])
@@ -193,5 +196,14 @@ where
               | none => return ⟨log ++ ["accepted"], some prog, ""⟩
               | some errors =>
                 go k (i + 1) (some (prog, errors)) (log ++ ["rejected by Lean"])
+
+/-- Ask `oracle` for the contracts of the functions of `toSpecify` in the program `src`
+    (its items are `items`), at most `rounds` times, until Lean accepts the file of
+    `diva prove` for the program. `lean` checks a file: `none` if Lean accepts it, or
+    Lean's errors. -/
+def consult [Monad m] (oracle : String → m String) (lean : String → m (Option String))
+    (src : String) (items : List Item) (rounds : Nat) : m Outcome :=
+  consultWith oracle lean (prompt src (toSpecify items) (noContract items)) (changes items)
+    (newSpecs items) rounds
 
 end Diva.ContractOracle
