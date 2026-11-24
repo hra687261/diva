@@ -1,0 +1,32 @@
+$ diva run sumsq.ml
+385
+[exit 0]
+
+$ diva check sumsq.ml
+no runtime error is possible
+[exit 0]
+
+$ diva opt sumsq.ml
+(let rec sumsq n = (fun acc -> (if (n = 0) then acc else (let acc = (acc + (n * n)) in (if (acc < 0) then 0 else ((sumsq (n - 1)) acc))))) in ((sumsq 10) 0))
+[exit 0]
+
+$ diva hints sumsq.ml
+n#1 : [-∞, 10]
+$sumsq#0 : [0, +∞]
+acc#2 : [0, +∞]
+[exit 0]
+
+$ diva cert --check sumsq.ml
+wrote sumsq.lean
+certificate checked by Lean: the program never fails
+[exit 0]
+
+$ diva prove --check -o prove.lean sumsq.ml
+no function has a contract: write one in a `(*@ ... *)` comment after a function
+[exit 1]
+
+$ diva prove --infer --check -o prove.lean sumsq.ml
+wrote prove.lean
+checked by Lean: the functions meet their contracts
+[exit 0]
+

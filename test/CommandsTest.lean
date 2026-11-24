@@ -42,3 +42,10 @@ list := false, fn := false, loc := false, exn := false })]"
   ["`f` has a contract, but `y`, defined before it, isn't a function: not supported yet"]
 #guard (prove ";; 1\nlet f x = x + 1\n(*@ r = f x ensures r > x *)").err ==
   ["`f` has a contract, but an expression `;; ...` comes before it: not supported yet"]
+
+-- `prove --infer`: a function without a contract gets the contract of its hints
+#guard (SpecOfHints.inferContracts ((parseItems
+  "let rec count n = if n <= 0 then 0 else 1 + count (n - 1)\n;; count 5").toOption.getD [])).2 ==
+  ["count"]
+#guard (SpecOfHints.inferContracts ((parseItems "let f x = x\n;; f true").toOption.getD [])).2 ==
+  []

@@ -5,6 +5,7 @@ import Diva.Report
 import Diva.Opt
 import Diva.Cert
 import Diva.Prove
+import Diva.SpecOfHints
 import Diva.Oracle
 import Diva.ProveOracle
 import Diva.ContractOracle
@@ -119,12 +120,14 @@ def cert (src : String) : Result :=
 /-- `diva prove`: parse the program `src`, and print the Lean file (`Prove.file`) that
     states and proves that its functions meet their contracts. If the program doesn't
     parse, has no contract, or has a contract that isn't supported, print why and exit
-    with code 1. -/
-def prove (src : String) : Result :=
+    with code 1. With `infer`, each function without a contract gets the contract that
+    the analysis infers (`SpecOfHints.inferContracts`). -/
+def prove (src : String) (infer : Bool := false) : Result :=
   match parseItems src with
   | .error msg => { err := [s!"parse error: {msg}"], code := 1 }
   | .ok items =>
-    match Prove.file items with
+    let (items, inferred) := if infer then SpecOfHints.inferContracts items else (items, [])
+    match Prove.file items (inferred := inferred) with
     | .ok f => { out := [f] }
     | .error msg => { err := [msg], code := 1 }
 

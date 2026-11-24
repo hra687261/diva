@@ -145,7 +145,7 @@ def runCert := writeAndCheck Commands.cert "cert.lean"
     With `--oracle CMD`, the command `CMD` completes the proofs that Lean doesn't accept. -/
 def runProve (p : Parsed) : IO UInt32 :=
   match p.flag? "oracle" with
-  | none => writeAndCheck Commands.prove "prove.lean"
+  | none => writeAndCheck (Commands.prove (infer := p.hasFlag "infer")) "prove.lean"
       "checked by Lean: the functions meet their contracts" p
   | some cmd => do
     let path := p.positionalArg! "file" |>.as! String
@@ -247,6 +247,7 @@ def proveCmd : Cmd := `[Cli|
    `(*@ requires ... ensures ... *)` comments. Exits with 1 if there is no contract."
   FLAGS:
     check; "Also run Lean on the file. Exits with 1 if Lean rejects it."
+    infer; "Give each function without a contract the contract that the analysis infers (see `diva hints`)."
     o, output : String; "The file to write. By default `<name>.lean` for `<name>.ml`, `prove.lean` for `-`."
     oracle : String; proveOracleDoc
     rounds : Nat; roundsDoc

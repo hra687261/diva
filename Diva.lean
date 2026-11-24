@@ -20,6 +20,7 @@ import Diva.Wp
 import Diva.CheckFile
 import Diva.ParseProof
 import Diva.Prove
+import Diva.SpecOfHints
 import Diva.AbsInt.Fact
 import Diva.Answer
 import Diva.Oracle

@@ -136,12 +136,13 @@ def moreParams : Expr → List String × Expr
 
 /-- The text for the function `f` with the contract `sp`: `f_fn`, `f_body` and
     `f_correct`. `n` is its Lean name. `empty` says that `f` has no contract in the
-    program, and `sp` is the empty contract. `x` is its first parameter, and `body` is what
+    program, and `sp` is the empty contract. `inferred` says that the analysis
+    inferred `sp`. `x` is its first parameter, and `body` is what
     comes after it. `proofs` gives the proofs of some obligations (`f_body`), as
     tactics. The others get `defaultProof`. -/
 def withContract (proofs : List (String × String)) (st : State) (n f : String)
     (s : Option String) (x : String) (body : Expr) (env : String) (sp : Spec)
-    (empty : Bool := false) : Except String String := do
+    (empty : Bool := false) (inferred : Bool := false) : Except String String := do
   if let some g := sp.name then
     if g != f then throw s!"the contract after `{f}` is about `{g}`"
   let (rest, inner) := moreParams body
@@ -157,8 +158,11 @@ def withContract (proofs : List (String × String)) (st : State) (n f : String)
   let proof := (proofs.lookup (n ++ "_body")).getD (defaultProof xs simps)
   let restField := if rest.isEmpty then ""
     else s!"\n  rest := [{", ".intercalate (rest.map Cert.str)}]"
-  let what := if empty then s!"without a contract: it gets the empty contract. Its proof
-    says that `{f}` doesn't fail on integers" else "with its contract"
+  let what :=
+    if empty then s!"without a contract: it gets the empty contract. Its proof
+    says that `{f}` doesn't fail on integers"
+    else if inferred then "with the contract that the analysis infers (`diva hints`)"
+    else "with its contract"
   return s!"/-- `{kw} {f} {" ".intercalate code} = ...`, {what}. -/
 def {n}_fn : RecFun where
   name := {Cert.str f}
@@ -221,8 +225,9 @@ def calledWithoutContract (items : List Item) : List String :=
 /-- `prove` on one top-level item. `called` are the functions without a contract that
     a function with a contract calls. `file` computes them with `calledWithoutContract`.
     Each one gets the empty contract: integer parameters and result, with no
-    `requires` and no `ensures`. Its proof says that it doesn't fail. -/
-def item (proofs : List (String × String)) (called : List String) (st : State) :
+    `requires` and no `ensures`. Its proof says that it doesn't fail. `inferred` are
+    the functions whose contract the analysis inferred (`SpecOfHints`). -/
+def item (proofs : List (String × String)) (called inferred : List String) (st : State) :
     Item → Except String State
   | .expr _ => return { st with env := ("_", none) :: st.env }
   | .decl b sp => do
@@ -245,7 +250,7 @@ def item (proofs : List (String × String)) (called : List String) (st : State) 
         throw s!"`{f}` has a contract, but {before}: not supported yet"
       | .error _, none => return { st with env := (f, none) :: st.env }
       | .ok env, some sp =>
-        let text ← withContract proofs st n f s x body env sp
+        let text ← withContract proofs st n f s x body env sp (inferred := inferred.contains f)
         return { st with out := st.out.push text, env := (f, some s!"{n}_fn.clos") :: st.env,
                          fns := n :: st.fns, defs := (n ++ "_fn") :: st.defs }
       | .ok env, none =>
@@ -261,10 +266,11 @@ def {n}_val : Value := .clos {sStr} {Cert.str x} {Cert.expr body} {env}
                          defs := (n ++ "_val") :: st.defs }
 
 /-- The Lean file for the program whose top-level items are `items`, or why there is
-    none. `proofs` gives the proofs of some obligations, as tactics. -/
-def file (items : List Item) (proofs : List (String × String) := []) :
-    Except String String := do
-  let st ← items.foldlM (item proofs (calledWithoutContract items)) {}
+    none. `proofs` gives the proofs of some obligations, as tactics. `inferred` are the
+    functions whose contract the analysis inferred. -/
+def file (items : List Item) (proofs : List (String × String) := [])
+    (inferred : List String := []) : Except String String := do
+  let st ← items.foldlM (item proofs (calledWithoutContract items) inferred) {}
   if st.fns.isEmpty then
     throw "no function has a contract: write one in a `(*@ ... *)` comment after a function"
   return s!"import Diva.Wp
