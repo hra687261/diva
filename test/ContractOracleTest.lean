@@ -13,7 +13,7 @@ def items (src : String) : List Item := (parseItems src).toOption.getD []
 def src := "let a x = x\nlet b x = a x\nlet c x = b x\n(*@ ensures result = x *)\nlet d x = x"
 
 -- the functions that need a contract: those called by `c`, and the ones they call
-#guard needed (items src) == ["b", "a"]
+#guard calledWithoutContract (items src) == ["b", "a"]
 
 -- an answer that changes the code, or a contract of the user, is rejected
 #guard changes (items src) (items "let a x = x\nlet b x = a x\nlet c x = b x\n(*@ ensures result = x *)\nlet d x = 0") ==
@@ -41,3 +41,9 @@ def lean (_ : String) : Id (Option String) := none
    "let f x = x\n(*@ ensures result = x *)"]
 #guard (Commands.specOracle (fun _ => ("" : Id String)) lean 1 "1 + 2").err ==
   ["the program has no function"]
+
+-- a local name with the name of a function isn't a call of that function
+#guard calledWithoutContract
+  (items "let a x = x\nlet c x = let a = 3 in a + x\n(*@ ensures result = x *)") == []
+#guard calledWithoutContract
+  (items "let a x = x\nlet c x = (fun a -> a) x\n(*@ ensures result = x *)") == []

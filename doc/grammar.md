@@ -6,8 +6,9 @@ The comment after each rule says which commands support it:
 - `check`: `diva check` and `diva cert` analyse the program. For a rule without
   `check`, they say that the program may fail.
 - `prove`: `diva prove`, `diva spec` and `diva synth` prove the contracts. A
-  function with a contract can use only the rules marked `prove`, and only call
-  functions that have a contract.
+  function with a contract can use only the rules marked `prove`. The functions that
+  it calls without a contract get the empty contract: `diva prove` proves that they
+  don't fail, and nothing about their result.
 
 ## Programs
 

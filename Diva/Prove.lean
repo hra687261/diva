@@ -11,9 +11,11 @@ the file has:
   `split_omega`. If that proof fails, the user writes one by hand in the file;
 - `f_correct`: `f` meets its contract (`RecFun.Meets`), from the obligations.
 
-The parameters and the result of a function with a contract are integers. The
-functions without a contract are written as values (`f_val`), because the functions
-defined after them can call them.
+The parameters and the result of a function with a contract are integers. A function
+without a contract that a function with a contract calls gets the empty contract: no
+`requires` and no `ensures`. Its proof says that it doesn't fail. The other functions
+without a contract are written as values (`f_val`), because the functions defined
+after them can call them.
 
 Nothing here is trusted. Reading `f_fn` and the theorem `f_correct` in the file is
 enough to know what is proved.
@@ -133,12 +135,13 @@ def moreParams : Expr → List String × Expr
   | e => ([], e)
 
 /-- The text for the function `f` with the contract `sp`: `f_fn`, `f_body` and
-    `f_correct`. `n` is its Lean name. `x` is its first parameter, and `body` is what
+    `f_correct`. `n` is its Lean name. `empty` says that `f` has no contract in the
+    program, and `sp` is the empty contract. `x` is its first parameter, and `body` is what
     comes after it. `proofs` gives the proofs of some obligations (`f_body`), as
     tactics. The others get `defaultProof`. -/
 def withContract (proofs : List (String × String)) (st : State) (n f : String)
-    (s : Option String) (x : String) (body : Expr) (env : String) (sp : Spec) :
-    Except String String := do
+    (s : Option String) (x : String) (body : Expr) (env : String) (sp : Spec)
+    (empty : Bool := false) : Except String String := do
   if let some g := sp.name then
     if g != f then throw s!"the contract after `{f}` is about `{g}`"
   let (rest, inner) := moreParams body
@@ -154,7 +157,9 @@ def withContract (proofs : List (String × String)) (st : State) (n f : String)
   let proof := (proofs.lookup (n ++ "_body")).getD (defaultProof xs simps)
   let restField := if rest.isEmpty then ""
     else s!"\n  rest := [{", ".intercalate (rest.map Cert.str)}]"
-  return s!"/-- `{kw} {f} {" ".intercalate code} = ...`, with its contract. -/
+  let what := if empty then s!"without a contract: it gets the empty contract. Its proof
+    says that `{f}` doesn't fail on integers" else "with its contract"
+  return s!"/-- `{kw} {f} {" ".intercalate code} = ...`, {what}. -/
 def {n}_fn : RecFun where
   name := {Cert.str f}
   f := {match s with | some s => s!"some {Cert.str s}" | none => "none"}
@@ -173,8 +178,52 @@ theorem {n}_correct : {n}_fn.Meets :=
   RecFun.meets_of_verified (S := .none) (Γ := {gamma st.fns}) ⟨{verified st.fns}, {n}_body⟩
 "
 
-/-- `prove` on one top-level item. -/
-def item (proofs : List (String × String)) (st : State) : Item → Except String State
+/-- The free names of `e`: the names that `e` uses, minus the names in `bound` and the
+    names that `e` binds. A name is bound by `fun`, `let`, `let rec`,
+    `match ... with x :: xs`, `try ... with k` and `E x`. `bound` are the names
+    bound by the expressions "above" `e`: in `fun y -> e`, `y` is in `bound`
+    for `e`. -/
+def freeNames (bound : List String) : Expr → List String
+  | .int _ | .bool _ | .unit | .nil => []
+  | .var x => if bound.contains x then [] else [x]
+  | .lam x b => freeNames (x :: bound) b
+  | .letin x a b => freeNames bound a ++ freeNames (x :: bound) b
+  | .letrec f x a b => freeNames (f :: x :: bound) a ++ freeNames (f :: bound) b
+  | .matchList s n x xs c =>
+    freeNames bound s ++ freeNames bound n ++ freeNames (x :: xs :: bound) c
+  | .tryw a k h => freeNames bound a ++ freeNames (k :: bound) h
+  | .exnCase s _ x h m =>
+    freeNames bound s ++ freeNames (x :: bound) h ++ freeNames bound m
+  | .assert b | .len b | .ref _ b | .deref b | .exn _ b | .raise b => freeNames bound b
+  | .app a b | .binop _ a b | .cons a b | .get a b | .assign a b | .alloc _ a b =>
+    freeNames bound a ++ freeNames bound b
+  | .ite a b c | .set a b c => freeNames bound a ++ freeNames bound b ++ freeNames bound c
+
+/-- The free names of the top-level declaration `b`. In `let rec f x = e`, `f` and `x`
+    are bound in `e`. -/
+def declFreeNames : Binding → List String
+  | .val _ e => freeNames [] e
+  | .recFn f x e => freeNames [f, x] e
+
+/-- The functions of `items` without a contract that are called by a function with a
+    contract, or by a function of this list. -/
+def calledWithoutContract (items : List Item) : List String :=
+  let decls := items.filterMap fun | .decl b sp => some (b, sp.isSome) | .expr _ => none
+  -- `called`: the functions found so far. Each step adds the ones that they call.
+  let step (called : List String) : List String :=
+    called ++ (decls.flatMap fun (b, has) =>
+      if has || called.contains b.name then
+        (declFreeNames b).filter fun y =>
+          !called.contains y && decls.any fun (c, hasC) => c.name == y && !hasC
+      else []).eraseDups
+  (decls.foldl (fun called _ => step called) []).eraseDups
+
+/-- `prove` on one top-level item. `called` are the functions without a contract that
+    a function with a contract calls. `file` computes them with `calledWithoutContract`.
+    Each one gets the empty contract: integer parameters and result, with no
+    `requires` and no `ensures`. Its proof says that it doesn't fail. -/
+def item (proofs : List (String × String)) (called : List String) (st : State) :
+    Item → Except String State
   | .expr _ => return { st with env := ("_", none) :: st.env }
   | .decl b sp => do
     let f := b.name
@@ -200,6 +249,10 @@ def item (proofs : List (String × String)) (st : State) : Item → Except Strin
         return { st with out := st.out.push text, env := (f, some s!"{n}_fn.clos") :: st.env,
                          fns := n :: st.fns, defs := (n ++ "_fn") :: st.defs }
       | .ok env, none =>
+        if called.contains f then
+          let text ← withContract proofs st n f s x body env {} (empty := true)
+          return { st with out := st.out.push text, env := (f, some s!"{n}_fn.clos") :: st.env,
+                           fns := n :: st.fns, defs := (n ++ "_fn") :: st.defs }
         let sStr := match s with | some s => s!"some {Cert.str s}" | none => "none"
         let text := s!"/-- `{f}`, which has no contract. -/
 def {n}_val : Value := .clos {sStr} {Cert.str x} {Cert.expr body} {env}
@@ -211,7 +264,7 @@ def {n}_val : Value := .clos {sStr} {Cert.str x} {Cert.expr body} {env}
     none. `proofs` gives the proofs of some obligations, as tactics. -/
 def file (items : List Item) (proofs : List (String × String) := []) :
     Except String String := do
-  let st ← items.foldlM (item proofs) {}
+  let st ← items.foldlM (item proofs (calledWithoutContract items)) {}
   if st.fns.isEmpty then
     throw "no function has a contract: write one in a `(*@ ... *)` comment after a function"
   return s!"import Diva.Wp

@@ -8,7 +8,7 @@ import Diva.Answer
 The user writes the contract of a function `f`. To prove it, `diva prove` needs the
 contracts of the functions that `f` calls. Here an oracle (an LLM) writes them.
 
-- `needed` lists the functions without a contract that need one: those called by a
+- `calledWithoutContract` lists the functions without a contract that need one: those called by a
   function with a contract, or by a function in that list. If no function has a
   contract, all the functions need one (`functions`).
 - `prompt` is the question: the program, the functions that need a contract, and
@@ -27,36 +27,12 @@ to do. (similar things can be applied to other interactions with llms)
 
 namespace Diva.ContractOracle
 
-/-- The names used in `e`. It may also give names defined in `e`. -/
-def names : Expr → List String
-  | .int _ | .bool _ | .unit | .nil => []
-  | .var x => [x]
-  | .lam _ b | .assert b | .len b | .ref _ b | .deref b | .exn _ b | .raise b => names b
-  | .app a b | .binop _ a b | .cons a b | .get a b | .assign a b | .letin _ a b
-  | .alloc _ a b | .letrec _ _ a b | .tryw a _ b => names a ++ names b
-  | .ite a b c | .set a b c | .matchList a b _ _ c | .exnCase a _ _ b c =>
-    names a ++ names b ++ names c
+export Prove (calledWithoutContract)
 
 /-- The item `i` without its contract. -/
 def code : Item → Item
   | .decl b _ => .decl b none
   | i => i
-
-/-- The body of a declaration. -/
-def body : Binding → Expr
-  | .val _ e | .recFn _ _ e => e
-
-/-- The functions of `items` without a contract that need one: those called by a
-    function with a contract, or by a function of this list. -/
-def needed (items : List Item) : List String :=
-  let decls := items.filterMap fun | .decl b sp => some (b, sp.isSome) | .expr _ => none
-  let step (need : List String) : List String :=
-    need ++ (decls.flatMap fun (b, has) =>
-      if has || need.contains b.name then
-        (names (body b)).filter fun y =>
-          !need.contains y && decls.any fun (c, hasC) => c.name == y && !hasC
-      else []).eraseDups
-  (decls.foldl (fun need _ => step need) []).eraseDups
 
 /-- The functions of `items`: the declarations `let rec f x = ...` and `let f x = ...`. -/
 def functions (items : List Item) : List String :=
@@ -68,10 +44,10 @@ def functions (items : List Item) : List String :=
 def noContract (items : List Item) : Bool :=
   items.all fun | .decl _ sp => sp.isNone | .expr _ => true
 
-/-- The functions of `items` that need a contract: `needed`, or all the functions if no
+/-- The functions of `items` that need a contract: `calledWithoutContract`, or all the functions if no
     function has a contract. -/
 def toSpecify (items : List Item) : List String :=
-  if noContract items then functions items else needed items
+  if noContract items then functions items else calledWithoutContract items
 
 /-- The term `t` as Gospel. -/
 def termText : Term → String
