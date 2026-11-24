@@ -79,9 +79,6 @@ def intTok : P Int := lexeme do
   let n ← ASCII.parseNat
   return Int.ofNat n
 
-/-- `fun x y -> e` is `fun x -> fun y -> e`. -/
-def lams (xs : List String) (body : Expr) : Expr := xs.foldr .lam body
-
 /-- The pattern of a `try` handler: `E x` / `E` (an exception tag), or `k` / `_`
     (any exception). -/
 inductive Handler where

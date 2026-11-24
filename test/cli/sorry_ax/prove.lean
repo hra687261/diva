@@ -8,14 +8,19 @@ open Diva
 
 /-- `let square x = ...`, with its contract. -/
 def square_fn : RecFun where
+  name := "square"
   f := none
   x := "x"
   body := (.binop .mul (.var "x") (.var "x"))
   ρ := []
   spec := {
-    pre := fun arg₀ => ∃ x : Int, arg₀ = .int x ∧ True
-    post := fun arg₀ res₀ => ∃ x r : Int, arg₀ = .int x ∧ res₀ = .int r ∧
-      (r ≥ 0) }
+    pre := fun
+      | [arg₀] => ∃ x : Int, arg₀ = .int x ∧ True
+      | _ => False
+    post := fun
+      | [arg₀], res₀ => ∃ x r : Int, arg₀ = .int x ∧ res₀ = .int r ∧
+        (r ≥ 0)
+      | _, _ => False }
 
 /-- The proof obligation of `square`. If the proof fails, write one by hand. -/
 theorem square_body : square_fn.BodyOk .none [] := by
@@ -24,7 +29,7 @@ theorem square_body : square_fn.BodyOk .none [] := by
   simp [square_fn, wp, BinOp.denote, List.lookup, callEnv]
   exact sorryAx _ false
 
-/-- `square` meets its contract: every call of `square` on an argument that satisfies
+/-- `square` meets its contract: every call of `square` on arguments that satisfy
     `requires` gives a result that satisfies `ensures`. -/
 theorem square_correct : square_fn.Meets :=
   RecFun.meets_of_verified (S := .none) (Γ := []) ⟨trivial, square_body⟩

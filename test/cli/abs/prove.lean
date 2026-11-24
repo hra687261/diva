@@ -8,14 +8,19 @@ open Diva
 
 /-- `let abs x = ...`, with its contract. -/
 def abs_fn : RecFun where
+  name := "abs"
   f := none
   x := "x"
   body := (.ite (.binop .lt (.var "x") (.int 0)) (.binop .sub (.int 0) (.var "x")) (.var "x"))
   ρ := []
   spec := {
-    pre := fun arg₀ => ∃ x : Int, arg₀ = .int x ∧ True
-    post := fun arg₀ res₀ => ∃ x r : Int, arg₀ = .int x ∧ res₀ = .int r ∧
-      ((r ≥ 0) ∧ ((r ≥ x) ∧ (r ≥ (0 - x)))) }
+    pre := fun
+      | [arg₀] => ∃ x : Int, arg₀ = .int x ∧ True
+      | _ => False
+    post := fun
+      | [arg₀], res₀ => ∃ x r : Int, arg₀ = .int x ∧ res₀ = .int r ∧
+        ((r ≥ 0) ∧ ((r ≥ x) ∧ (r ≥ (0 - x))))
+      | _, _ => False }
 
 /-- The proof obligation of `abs`. If the proof fails, write one by hand. -/
 theorem abs_body : abs_fn.BodyOk .none [] := by
@@ -24,21 +29,26 @@ theorem abs_body : abs_fn.BodyOk .none [] := by
   simp [abs_fn, wp, BinOp.denote, Value.isBool, List.lookup, callEnv, RecFun.clos]
   all_goals split_omega
 
-/-- `abs` meets its contract: every call of `abs` on an argument that satisfies
+/-- `abs` meets its contract: every call of `abs` on arguments that satisfy
     `requires` gives a result that satisfies `ensures`. -/
 theorem abs_correct : abs_fn.Meets :=
   RecFun.meets_of_verified (S := .none) (Γ := []) ⟨trivial, abs_body⟩
 
 /-- `let dist a = ...`, with its contract. -/
 def dist_fn : RecFun where
+  name := "dist"
   f := none
   x := "a"
   body := (.app (.var "abs") (.binop .sub (.var "a") (.int 10)))
   ρ := [("abs", abs_fn.clos)]
   spec := {
-    pre := fun arg₀ => ∃ a : Int, arg₀ = .int a ∧ True
-    post := fun arg₀ res₀ => ∃ a result : Int, arg₀ = .int a ∧ res₀ = .int result ∧
-      (result ≥ 0) }
+    pre := fun
+      | [arg₀] => ∃ a : Int, arg₀ = .int a ∧ True
+      | _ => False
+    post := fun
+      | [arg₀], res₀ => ∃ a result : Int, arg₀ = .int a ∧ res₀ = .int result ∧
+        (result ≥ 0)
+      | _, _ => False }
 
 /-- The proof obligation of `dist`. If the proof fails, write one by hand. -/
 theorem dist_body : dist_fn.BodyOk .none [abs_fn] := by
@@ -47,7 +57,7 @@ theorem dist_body : dist_fn.BodyOk .none [abs_fn] := by
   simp [dist_fn, abs_fn, wp, BinOp.denote, Value.isBool, List.lookup, callEnv, RecFun.clos]
   all_goals split_omega
 
-/-- `dist` meets its contract: every call of `dist` on an argument that satisfies
+/-- `dist` meets its contract: every call of `dist` on arguments that satisfy
     `requires` gives a result that satisfies `ensures`. -/
 theorem dist_correct : dist_fn.Meets :=
   RecFun.meets_of_verified (S := .none) (Γ := [abs_fn]) ⟨⟨trivial, abs_body⟩, dist_body⟩

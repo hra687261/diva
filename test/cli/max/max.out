@@ -21,6 +21,7 @@ certificate checked by Lean: the program never fails
 [exit 0]
 
 $ diva prove --check -o prove.lean max.ml
-`max` has a contract and several parameters: not supported yet
-[exit 1]
+wrote prove.lean
+checked by Lean: the functions meet their contracts
+[exit 0]
 

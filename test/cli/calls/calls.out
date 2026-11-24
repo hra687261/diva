@@ -22,7 +22,7 @@ certificate checked by Lean: the program never fails
 
 $ diva prove --check -o prove.lean calls.ml
 wrote prove.lean
-prove.lean:28:12: error: omega could not prove the goal:
+prove.lean:33:12: error: omega could not prove the goal:
 a possible counterexample may satisfy the constraints
   a ≥ 0
 where

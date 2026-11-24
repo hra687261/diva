@@ -21,7 +21,7 @@ certificate checked by Lean: the program never fails
 
 $ diva prove --check -o prove.lean sorry_ax.ml
 wrote prove.lean
-prove.lean:25:12: error: omega could not prove the goal:
+prove.lean:30:12: error: omega could not prove the goal:
 a possible counterexample may satisfy the constraints
   a ≤ -1
 where
@@ -34,8 +34,8 @@ round 1: the oracle proposes a proof of `square_body`
   subst hva
   simp [square_fn, wp, BinOp.denote, List.lookup, callEnv]
   exact sorryAx _ false
-prove.lean:21:0: error: `square_body` uses the axioms [sorryAx], so it isn't proved
-prove.lean:29:0: error: `square_correct` uses the axioms [sorryAx], so it isn't proved
+prove.lean:26:0: error: `square_body` uses the axioms [sorryAx], so it isn't proved
+prove.lean:34:0: error: `square_correct` uses the axioms [sorryAx], so it isn't proved
 
 [exit 1]
 

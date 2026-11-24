@@ -1,0 +1,35 @@
+$ diva run params.ml
+15
+[exit 0]
+
+$ diva check params.ml
+no runtime error is possible
+[exit 0]
+
+$ diva opt params.ml
+(let rec mul a = (fun b -> (if (b <= 0) then 0 else (a + ((mul a) (b - 1))))) in (let max = (fun a -> (fun b -> (if (a < b) then b else a))) in (let max3 = (fun a -> (fun b -> (fun c -> ((max ((max a) b)) c)))) in (let area = (fun w -> (fun h -> ((mul ((max w) 0)) h))) in ((area (((max3 1) 5) 2)) 3)))))
+[exit 0]
+
+$ diva hints params.ml
+a#1 : [1, +∞]
+$mul#0 : [0, +∞]
+b#2 : [0, 3]
+a#3 : [1, +∞]
+b#4 : [0, 5]
+a#5 : 1
+b#6 : 5
+c#7 : 2
+w#8 : [1, +∞]
+h#9 : 3
+[exit 0]
+
+$ diva cert --check params.ml
+wrote params.lean
+certificate checked by Lean: the program never fails
+[exit 0]
+
+$ diva prove --check -o prove.lean params.ml
+wrote prove.lean
+checked by Lean: the functions meet their contracts
+[exit 0]
+

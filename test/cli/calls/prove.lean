@@ -8,14 +8,19 @@ open Diva
 
 /-- `let double x = ...`, with its contract. -/
 def double_fn : RecFun where
+  name := "double"
   f := none
   x := "x"
   body := (.binop .add (.var "x") (.var "x"))
   ρ := []
   spec := {
-    pre := fun arg₀ => ∃ x : Int, arg₀ = .int x ∧ (x ≥ 0)
-    post := fun arg₀ res₀ => ∃ x r : Int, arg₀ = .int x ∧ res₀ = .int r ∧
-      (r ≥ 0) }
+    pre := fun
+      | [arg₀] => ∃ x : Int, arg₀ = .int x ∧ (x ≥ 0)
+      | _ => False
+    post := fun
+      | [arg₀], res₀ => ∃ x r : Int, arg₀ = .int x ∧ res₀ = .int r ∧
+        (r ≥ 0)
+      | _, _ => False }
 
 /-- The proof obligation of `double`. If the proof fails, write one by hand. -/
 theorem double_body : double_fn.BodyOk .none [] := by
@@ -24,21 +29,26 @@ theorem double_body : double_fn.BodyOk .none [] := by
   simp [double_fn, wp, BinOp.denote, Value.isBool, List.lookup, callEnv, RecFun.clos]
   all_goals split_omega
 
-/-- `double` meets its contract: every call of `double` on an argument that satisfies
+/-- `double` meets its contract: every call of `double` on arguments that satisfy
     `requires` gives a result that satisfies `ensures`. -/
 theorem double_correct : double_fn.Meets :=
   RecFun.meets_of_verified (S := .none) (Γ := []) ⟨trivial, double_body⟩
 
 /-- `let quad x = ...`, with its contract. -/
 def quad_fn : RecFun where
+  name := "quad"
   f := none
   x := "x"
   body := (.app (.var "double") (.app (.var "double") (.var "x")))
   ρ := [("double", double_fn.clos)]
   spec := {
-    pre := fun arg₀ => ∃ x : Int, arg₀ = .int x ∧ (x ≥ 0)
-    post := fun arg₀ res₀ => ∃ x r : Int, arg₀ = .int x ∧ res₀ = .int r ∧
-      (r ≥ 0) }
+    pre := fun
+      | [arg₀] => ∃ x : Int, arg₀ = .int x ∧ (x ≥ 0)
+      | _ => False
+    post := fun
+      | [arg₀], res₀ => ∃ x r : Int, arg₀ = .int x ∧ res₀ = .int r ∧
+        (r ≥ 0)
+      | _, _ => False }
 
 /-- The proof obligation of `quad`. If the proof fails, write one by hand. -/
 theorem quad_body : quad_fn.BodyOk .none [double_fn] := by
@@ -47,7 +57,7 @@ theorem quad_body : quad_fn.BodyOk .none [double_fn] := by
   simp [quad_fn, double_fn, wp, BinOp.denote, Value.isBool, List.lookup, callEnv, RecFun.clos]
   all_goals split_omega
 
-/-- `quad` meets its contract: every call of `quad` on an argument that satisfies
+/-- `quad` meets its contract: every call of `quad` on arguments that satisfy
     `requires` gives a result that satisfies `ensures`. -/
 theorem quad_correct : quad_fn.Meets :=
   RecFun.meets_of_verified (S := .none) (Γ := [double_fn]) ⟨⟨trivial, double_body⟩, quad_body⟩

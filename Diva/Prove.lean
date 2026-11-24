@@ -11,7 +11,7 @@ the file has:
   `split_omega`. If that proof fails, the user writes one by hand in the file;
 - `f_correct`: `f` meets its contract (`RecFun.Meets`), from the obligations.
 
-The parameter and the result of a function with a contract are integers. The
+The parameters and the result of a function with a contract are integers. The
 functions without a contract are written as values (`f_val`), because the functions
 defined after them can call them.
 
@@ -39,23 +39,45 @@ def conj (ts : List Term) : String :=
   | [] => "True"
   | _ => " ∧ ".intercalate (ts.map term)
 
-/-- The contract `sp` as a Lean term of type `FunSpec`. `x` is the name of the
-    parameter. Every name of `sp` must be `x`, or the result in `ensures`. The
-    argument and the result are `arg₀` and `res₀`: an OCaml name can't be one of them. -/
-def funSpec (f x : String) (sp : Spec) : Except String String := do
-  if sp.result == x then
-    throw s!"the contract of `{f}` uses `{x}` for the parameter and for the result"
+/-- `i` with subscript digits: `12` gives `₁₂`. -/
+def subscript (i : Nat) : String :=
+  String.map (fun c => Char.ofNat (c.toNat - '0'.toNat + '₀'.toNat)) (toString i)
+
+/-- The names `arg₀`, `arg₁`, ... of the arguments, one for each name of `xs`.
+    (We use subcrtipts because to avoid name clashes) -/
+def argNames (xs : List String) : List String :=
+  (List.range xs.length).map (s!"arg{subscript ·}")
+
+/-- The contract `sp` as a Lean term of type `FunSpec`. `xs` are the names of the
+    parameters in `sp`. Every name of `sp` must be one of `xs`, or the result in
+    `ensures`. The arguments and the result are `arg₀`, `arg₁`, ... and `res₀`: a name
+    of the program can't be one of them, because the parser doesn't accept `₀`. -/
+def funSpec (f : String) (xs : List String) (sp : Spec) : Except String String := do
+  if xs.eraseDups.length != xs.length then
+    throw s!"the contract of `{f}` uses the same name for two parameters"
+  if xs.contains sp.result then
+    throw s!"the contract of `{f}` uses `{sp.result}` for a parameter and for the result"
+  let params := ", ".intercalate (xs.map (s!"`{·}`"))
   for t in sp.requires do
     for y in t.vars do
-      if y != x then throw s!"the contract of `{f}` uses `{y}` in `requires`, which isn't the parameter `{x}`"
+      if !xs.contains y then
+        throw s!"the contract of `{f}` uses `{y}` in `requires`, which isn't a parameter ({params})"
   for t in sp.ensures do
     for y in t.vars do
-      if y != x && y != sp.result then
-        throw s!"the contract of `{f}` uses `{y}`, which isn't the parameter `{x}` or the result `{sp.result}`"
+      if !xs.contains y && y != sp.result then
+        throw s!"the contract of `{f}` uses `{y}`, which isn't a parameter ({params}) or the result `{sp.result}`"
+  let args := argNames xs
+  let pattern := "[" ++ ", ".intercalate args ++ "]"
+  let isInt := " ∧ ".intercalate ((args.zip xs).map fun (a, x) => s!"{a} = .int {x}")
+  let names := " ".intercalate xs
   return s!"\{
-    pre := fun arg₀ => ∃ {x} : Int, arg₀ = .int {x} ∧ {conj sp.requires}
-    post := fun arg₀ res₀ => ∃ {x} {sp.result} : Int, arg₀ = .int {x} ∧ res₀ = .int {sp.result} ∧
-      {conj sp.ensures} }"
+    pre := fun
+      | {pattern} => ∃ {names} : Int, {isInt} ∧ {conj sp.requires}
+      | _ => False
+    post := fun
+      | {pattern}, res₀ => ∃ {names} {sp.result} : Int, {isInt} ∧ res₀ = .int {sp.result} ∧
+        {conj sp.ensures}
+      | _, _ => False }"
 
 /-- What `prove` knows while it goes through the top-level items. -/
 structure State where
@@ -93,35 +115,51 @@ def gamma (Γ : List String) : String :=
   "[" ++ ", ".intercalate (Γ.map (· ++ "_fn")) ++ "]"
 
 /-- The proof of an obligation that `diva prove` writes: `simp` with the defs `simps`,
-    then `omega`. `x` is the name of the parameter. -/
-def defaultProof (x simps : String) : String :=
-  s!"  intro va μ ⟨{x}, hva, hpre⟩
-  subst hva
+    then `omega`. `xs` are the names of the parameters in the contract. -/
+def defaultProof (xs : List String) (simps : String) : String :=
+  let (vs, hs) := match xs with
+    | [_] => (["va"], ["hva"])
+    | _ => ((argNames xs).map (·.replace "arg" "va"), (argNames xs).map (·.replace "arg" "hva"))
+  s!"  intro {" ".intercalate vs} μ ⟨{", ".intercalate (xs ++ hs)}, hpre⟩
+  subst {" ".intercalate hs}
   simp [{simps}]
   all_goals split_omega"
 
+/-- The parameters of the function whose body is `body`, after its first parameter,
+    and its body after them: `fun y -> fun z -> e` gives `[y, z]` and `e`. -/
+def moreParams : Expr → List String × Expr
+  | .lam y e => let (ys, e') := moreParams e
+    (y :: ys, e')
+  | e => ([], e)
+
 /-- The text for the function `f` with the contract `sp`: `f_fn`, `f_body` and
-    `f_correct`. `n` is its Lean name. `proofs` gives the proofs of some obligations
-    (`f_body`), as tactics. The others get `defaultProof`. -/
+    `f_correct`. `n` is its Lean name. `x` is its first parameter, and `body` is what
+    comes after it. `proofs` gives the proofs of some obligations (`f_body`), as
+    tactics. The others get `defaultProof`. -/
 def withContract (proofs : List (String × String)) (st : State) (n f : String)
     (s : Option String) (x : String) (body : Expr) (env : String) (sp : Spec) :
     Except String String := do
   if let some g := sp.name then
     if g != f then throw s!"the contract after `{f}` is about `{g}`"
-  let several := match body with | .lam .. => true | _ => sp.params.length > 1
-  if several then
-    throw s!"`{f}` has a contract and several parameters: not supported yet"
-  let p := sp.params.headD x
-  let spec ← funSpec f p sp
+  let (rest, inner) := moreParams body
+  let code := x :: rest
+  -- the names of the parameters in the contract: the ones of its header, if it has one
+  let xs := if sp.params.isEmpty then code else sp.params
+  if xs.length != code.length then
+    throw s!"the contract of `{f}` has {xs.length} parameters, but `{f}` has {code.length}"
+  let spec ← funSpec f xs sp
   let simps := ", ".intercalate ((n ++ "_fn") :: st.defs ++
     ["wp", "BinOp.denote", "Value.isBool", "List.lookup", "callEnv", "RecFun.clos"])
   let kw := if s.isSome then "let rec" else "let"
-  let proof := (proofs.lookup (n ++ "_body")).getD (defaultProof p simps)
-  return s!"/-- `{kw} {f} {x} = ...`, with its contract. -/
+  let proof := (proofs.lookup (n ++ "_body")).getD (defaultProof xs simps)
+  let restField := if rest.isEmpty then ""
+    else s!"\n  rest := [{", ".intercalate (rest.map Cert.str)}]"
+  return s!"/-- `{kw} {f} {" ".intercalate code} = ...`, with its contract. -/
 def {n}_fn : RecFun where
+  name := {Cert.str f}
   f := {match s with | some s => s!"some {Cert.str s}" | none => "none"}
-  x := {Cert.str x}
-  body := {Cert.expr body}
+  x := {Cert.str x}{restField}
+  body := {Cert.expr inner}
   ρ := {env}
   spec := {spec}
 
@@ -129,7 +167,7 @@ def {n}_fn : RecFun where
 theorem {n}_body : {n}_fn.BodyOk .none {gamma st.fns} := by
 {proof}
 
-/-- `{f}` meets its contract: every call of `{f}` on an argument that satisfies
+/-- `{f}` meets its contract: every call of `{f}` on arguments that satisfy
     `requires` gives a result that satisfies `ensures`. -/
 theorem {n}_correct : {n}_fn.Meets :=
   RecFun.meets_of_verified (S := .none) (Γ := {gamma st.fns}) ⟨{verified st.fns}, {n}_body⟩

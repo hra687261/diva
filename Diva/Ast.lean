@@ -124,6 +124,12 @@ instance : Repr Expr := ⟨fun e _ => Std.Format.text (ppExpr e)⟩
 
 instance : ToString Expr := ⟨ppExpr⟩
 
+/-- `fun x₁ -> ... -> fun xₙ -> body`, for the parameters `xs = [x₁, ..., xₙ]`. So
+    `fun x y -> e` is `fun x -> fun y -> e`. -/
+@[simp] def lams : List String → Expr → Expr
+  | [], body => body
+  | x :: xs, body => .lam x (lams xs body)
+
 /-- A term of a contract: integers, names, `+`, `-`, `*`, comparisons and `&&`.
     Contracts use a small part of Gospel, the specification language for OCaml:
     https://ocaml-gospel.github.io/gospel/ -/

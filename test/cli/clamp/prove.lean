@@ -8,14 +8,19 @@ open Diva
 
 /-- `let clamp x = ...`, with its contract. -/
 def clamp_fn : RecFun where
+  name := "clamp"
   f := none
   x := "x"
   body := (.ite (.binop .lt (.var "x") (.int 0)) (.int 0) (.ite (.binop .gt (.var "x") (.int 100)) (.int 100) (.var "x")))
   ρ := []
   spec := {
-    pre := fun arg₀ => ∃ x : Int, arg₀ = .int x ∧ True
-    post := fun arg₀ res₀ => ∃ x r : Int, arg₀ = .int x ∧ res₀ = .int r ∧
-      ((r ≥ 0) ∧ (r ≤ 100)) }
+    pre := fun
+      | [arg₀] => ∃ x : Int, arg₀ = .int x ∧ True
+      | _ => False
+    post := fun
+      | [arg₀], res₀ => ∃ x r : Int, arg₀ = .int x ∧ res₀ = .int r ∧
+        ((r ≥ 0) ∧ (r ≤ 100))
+      | _, _ => False }
 
 /-- The proof obligation of `clamp`. If the proof fails, write one by hand. -/
 theorem clamp_body : clamp_fn.BodyOk .none [] := by
@@ -24,7 +29,7 @@ theorem clamp_body : clamp_fn.BodyOk .none [] := by
   simp [clamp_fn, wp, BinOp.denote, Value.isBool, List.lookup, callEnv, RecFun.clos]
   all_goals split_omega
 
-/-- `clamp` meets its contract: every call of `clamp` on an argument that satisfies
+/-- `clamp` meets its contract: every call of `clamp` on arguments that satisfy
     `requires` gives a result that satisfies `ensures`. -/
 theorem clamp_correct : clamp_fn.Meets :=
   RecFun.meets_of_verified (S := .none) (Γ := []) ⟨trivial, clamp_body⟩

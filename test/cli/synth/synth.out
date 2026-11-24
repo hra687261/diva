@@ -21,7 +21,7 @@ the program may fail, so there is no certificate (see `diva check`)
 
 $ diva prove --check -o prove.lean synth.ml
 wrote prove.lean
-prove.lean:25:12: error: omega could not prove the goal:
+prove.lean:30:12: error: omega could not prove the goal:
 No usable constraints found. You may need to unfold definitions so `omega` can see linear arithmetic facts about `Nat` and `Int`, which may also involve multiplication, division, and modular remainder by constants.
 [exit 1]
 

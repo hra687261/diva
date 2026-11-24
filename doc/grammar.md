@@ -14,8 +14,8 @@ The comment after each rule says which commands support it:
 ```
 program ::= item item ...
 item    ::= let x = e                     -- run, check, prove (after the functions with a contract)
-          | let f x ... = e contract?     -- run, check, prove (one parameter only)
-          | let rec f x ... = e contract? -- run, check, prove (one parameter only)
+          | let f x ... = e contract?     -- run, check, prove
+          | let rec f x ... = e contract? -- run, check, prove
           | ;; e                          -- run, check, prove (after the functions with a contract)
 ```
 
@@ -59,18 +59,21 @@ Integers have no bounds.
 
 ## Contracts
 
-A contract is a comment after a function `f` with one parameter:
+A contract is a comment after a function `f`, here with the parameters `x` and `y`:
 
 ```
-contract ::= (*@ r = f x
+contract ::= (*@ r = f x y
                  requires t
                  ensures t *)
-t ::= n | x | r                      -- an integer, the parameter, the result
+t ::= n | x | y | r                  -- an integer, a parameter, the result
     | t op t                         -- op: + - * = <> < <= > >=
     | t && t
 ```
 
-- `requires` can use only the parameter `x`. `ensures` can use `x` and the result `r`.
+- `requires` can use only the parameters. `ensures` can use the parameters and the
+  result `r`.
 - There can be several `requires` and several `ensures`, or none.
-- Without the header `r = f x`, the result is `result`.
-- In `diva prove`, the parameter and the result are integers.
+- Without the header `r = f x y`, the parameters have the names of the code, and the
+  result is `result`.
+- In `diva prove`, the parameters and the result are integers.
+- A function with a contract can be called only with all its arguments: `f a b`.

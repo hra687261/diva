@@ -102,7 +102,7 @@ def sumX : Expr :=
 /-- The contract of `sum`: on an integer, it gives an integer `≥ 0`. -/
 def sumContracts : Contracts := fun f =>
   if f = "sum" then some
-    { pre := fun va => ∃ n, va = .int n
+    { pre := fun | [va] => ∃ n, va = .int n | _ => False
       post := fun _ v => ∃ m, v = .int m ∧ m ≥ 0 }
   else none
 
