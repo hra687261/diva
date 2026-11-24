@@ -36,3 +36,9 @@ open Diva Commands
 #guard Cert.hints [("y#0", AbsInt.Flat.ofInt (.range (.fin 3) .posInf))] =
   "[\n  (\"y#0\", { int := (.range (.fin 3) .posInf), tt := false, ff := false, unit := false, \
 list := false, fn := false, loc := false, exn := false })]"
+
+-- `prove`: a function with a contract must come before the values and the expressions
+#guard (prove "let y = 3\nlet f x = x + 1\n(*@ r = f x ensures r > x *)").err ==
+  ["`f` has a contract, but `y`, defined before it, isn't a function: not supported yet"]
+#guard (prove ";; 1\nlet f x = x + 1\n(*@ r = f x ensures r > x *)").err ==
+  ["`f` has a contract, but an expression `;; ...` comes before it: not supported yet"]

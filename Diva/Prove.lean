@@ -153,7 +153,9 @@ def item (proofs : List (String × String)) (st : State) : Item → Except Strin
       let st := { st with used := n :: st.used }
       match envTerm st.env, sp with
       | .error y, some _ =>
-        throw s!"`{f}` has a contract, but `{y}`, defined before it, isn't a function: not supported yet"
+        let before := if y == "_" then "an expression `;; ...` comes before it"
+          else s!"`{y}`, defined before it, isn't a function"
+        throw s!"`{f}` has a contract, but {before}: not supported yet"
       | .error _, none => return { st with env := (f, none) :: st.env }
       | .ok env, some sp =>
         let text ← withContract proofs st n f s x body env sp
