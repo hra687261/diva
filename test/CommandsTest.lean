@@ -7,8 +7,8 @@ open Diva Commands
 #guard run "let f x = x * 2 in f 21" == { out := ["42"] }
 #guard run "1 / 0" == { err := ["runtime error: division by zero"], code := 1 }
 #guard run "let rec f x = f x in f 0" == { err := ["out of fuel"], code := 1 }
-#guard run "1 +" == { err := ["parse error: Parse error at 1:2"], code := 1 }
-#guard run "let x = 1\n  in x +" == { err := ["parse error: Parse error at 2:7"], code := 1 }
+#guard run "1 +" == { err := ["1:2: parse error"], code := 1 }
+#guard run "let x = 1\n  in x +" == { err := ["2:7: parse error"], code := 1 }
 
 -- `check`: exit code 1 if the program may fail
 #guard check "let f y = 10 / y in f 3" == { out := ["no runtime error is possible"] }

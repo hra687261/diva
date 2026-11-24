@@ -16,6 +16,12 @@ def readSource (path : String) : IO String :=
 def log (p : Parsed) (msg : String) : IO Unit :=
   unless p.hasFlag "quiet" do IO.eprintln s!"[diva] {msg}"
 
+/-- The name of the program in messages: the file given as argument, or `<stdin>` for
+    `-`. -/
+def fileName (p : Parsed) : String :=
+  let path := p.positionalArg! "file" |>.as! String
+  if path == "-" then "<stdin>" else path
+
 /-- Runs `cmd`, which may do IO, on the file given as argument, and prints its
     result. -/
 def runWith' (cmd : String → IO Commands.Result) (p : Parsed) : IO UInt32 := do
@@ -30,7 +36,7 @@ def runWith' (cmd : String → IO Commands.Result) (p : Parsed) : IO UInt32 := d
 def runWith (cmd : String → Commands.Result) : Parsed → IO UInt32 :=
   runWith' fun src => pure (cmd src)
 
-def runRun := runWith Commands.run
+def runRun (p : Parsed) := runWith (Commands.run (file := some (fileName p))) p
 
 /-- The result of `reader`, or `none` if `seconds` seconds pass first (no limit if
     `seconds` is `none`). A second task, `timer`, sleeps for `seconds` seconds.
@@ -74,12 +80,6 @@ def oracleOf (p : Parsed) (cmd : String) : IO (String → IO String) := do
     log p s!"asking the oracle `{cmd}` (question {← asked.get})"
     askCommand cmd ((p.flag? "timeout").map (·.as! Nat)) question
 
-/-- The name of the program in messages: the file given as argument, or `<stdin>` for
-    `-`. -/
-def fileName (p : Parsed) : String :=
-  let path := p.positionalArg! "file" |>.as! String
-  if path == "-" then "<stdin>" else path
-
 /-- `diva check`. With `--oracle CMD`, the shell command `CMD` (an LLM, for example)
     is asked for hints when the check fails. `diva` checks them. -/
 def runCheck (p : Parsed) : IO UInt32 :=
@@ -89,7 +89,7 @@ def runCheck (p : Parsed) : IO UInt32 :=
     runWith' (Commands.checkOracle (← oracleOf p (cmd.as! String)) (rounds p)
       (file := some (fileName p))) p
 
-def runHints := runWith Commands.hints
+def runHints (p : Parsed) := runWith (Commands.hints (file := some (fileName p))) p
 
 /-- The folder of Diva's compiled modules (`.olean` files): `../lib/lean`, starting from
     the folder of the `diva` executable. `lake build` puts them there, in `.lake/build`.
@@ -156,23 +156,25 @@ def writeAndCheck (cmd : String → Commands.Result) (stdin ok : String) (p : Pa
 
 /-- `diva cert`: write the certificate, a Lean file stating that the program never
     fails. -/
-def runCert := writeAndCheck Commands.cert "cert.lean"
-  "certificate checked by Lean: the program never fails"
+def runCert (p : Parsed) := writeAndCheck (Commands.cert (file := some (fileName p))) "cert.lean"
+  "certificate checked by Lean: the program never fails" p
 
 /-- `diva opt`: print the optimised program. With `--cert`, write the certificate of the
     optimisation instead, a Lean file stating that the two programs are equivalent. -/
 def runOpt (p : Parsed) : IO UInt32 :=
   let infer := p.hasFlag "infer"
   if p.hasFlag "cert" then
-    writeAndCheck (Commands.optCert (infer := infer)) "opt.lean"
+    writeAndCheck (Commands.optCert (infer := infer) (file := some (fileName p))) "opt.lean"
       "certificate checked by Lean: the optimised program is equivalent to the program" p
-  else runWith (Commands.opt (infer := infer)) p
+  else runWith (Commands.opt (infer := infer) (file := some (fileName p))) p
 
 /-- `diva prove`: write a Lean file stating that the functions meet their contracts.
     With `--oracle CMD`, the command `CMD` completes the proofs that Lean doesn't accept. -/
 def runProve (p : Parsed) : IO UInt32 :=
   match p.flag? "oracle" with
-  | none => writeAndCheck (Commands.prove (infer := p.hasFlag "infer")) "prove.lean"
+  | none =>
+    writeAndCheck (Commands.prove (infer := p.hasFlag "infer") (file := some (fileName p)))
+      "prove.lean"
       "checked by Lean: the functions meet their contracts, and the top-level expressions don't fail" p
   | some cmd => do
     let path := p.positionalArg! "file" |>.as! String
@@ -181,7 +183,8 @@ def runProve (p : Parsed) : IO UInt32 :=
       IO.FS.writeFile output file
       runLean p output
     let check := ParseProof.check (← proofEnv)
-    runWith' (Commands.proveOracle (← oracleOf p (cmd.as! String)) lean check (rounds p)) p
+    runWith' (Commands.proveOracle (← oracleOf p (cmd.as! String)) lean check (rounds p)
+      (file := some (fileName p))) p
 
 /-- `diva spec --oracle CMD`: the command `CMD` writes the contracts of the functions
     that the functions with a contract call. Lean checks the file of `diva prove`, which
@@ -193,7 +196,8 @@ def runSpec (p : Parsed) : IO UInt32 := do
   let lean (file : String) : IO (Option String) := do
     IO.FS.writeFile output file
     runLean p output
-  runWith' (Commands.specOracle (← oracleOf p (cmd.as! String)) lean (rounds p)) p
+  runWith' (Commands.specOracle (← oracleOf p (cmd.as! String)) lean (rounds p)
+    (file := some (fileName p))) p
 
 /-- `diva synth --oracle CMD`: the command `CMD` writes the code of the functions whose
     body is `assert false`. Lean checks the file of `diva prove`, which is written to
@@ -205,7 +209,8 @@ def runSynth (p : Parsed) : IO UInt32 := do
   let lean (file : String) : IO (Option String) := do
     IO.FS.writeFile output file
     runLean p output
-  runWith' (Commands.synthOracle (← oracleOf p (cmd.as! String)) lean (rounds p)) p
+  runWith' (Commands.synthOracle (← oracleOf p (cmd.as! String)) lean (rounds p)
+    (file := some (fileName p))) p
 
 /-- `diva` without a command: print the help. -/
 def runDiva (p : Parsed) : IO UInt32 := do

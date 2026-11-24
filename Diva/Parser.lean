@@ -634,10 +634,10 @@ def resolve (sc : List (String × String)) : Expr → StateM Fresh Expr
   | .raise e => return .raise (← resolve sc e)
   | e => return e
 
-/-- Where the parser stopped in `s`, as `line:col`. -/
+/-- Where the parser stopped in `s`, as `line:col: parse error`. -/
 def errorAt (s : String) (off : Nat) : String :=
   let (l, c) := lineCol s off
-  s!"Parse error at {l}:{c}"
+  s!"{l}:{c}: parse error"
 
 /-- Parse a complete program, with its positions. `resolve` keeps the shape of the
     expression, so the positions stay valid. -/

@@ -50,16 +50,20 @@ def fuel : Nat := 100000
 -- TODO: should be determined through the cli, and the default value should be
 -- set there
 
+/-- A parse error of the program in `file` (`msg` gives the line and the column). -/
+def parseError (file : Option String) (msg : String) : Result :=
+  { err := [match file with | some f => s!"{f}:{msg}" | none => msg], code := 1 }
+
 /-- The result of `cmd` on the program `src` parses to, or a parse error. -/
-def withParse (src : String) (cmd : Expr → Result) : Result :=
+def withParse (file : Option String) (src : String) (cmd : Expr → Result) : Result :=
   match parse src with
   | .ok e => cmd e
-  | .error msg => { err := [s!"parse error: {msg}"], code := 1 }
+  | .error msg => parseError file msg
 
 /-- `diva run`: parse the program `src`, run it, and print the value it returns. If
     the run fails, or takes more than `fuel` steps, print why and exit with code 1. -/
-def run (src : String) : Result :=
-  withParse src fun e =>
+def run (src : String) (file : Option String := none) : Result :=
+  withParse file src fun e =>
     match eval fuel [] [] e with
     | .ok v _ => { out := [Report.clean (toString v)] }
     | .err k _ => { err := [s!"runtime error: {ppErr k}"], code := 1 }
@@ -76,7 +80,7 @@ def place (src : String) : Option String → Span → String
     and 0 if it can't. -/
 def check (src : String) (file : Option String := none) : Result :=
   match parseLoc src with
-  | .error msg => { err := [s!"parse error: {msg}"], code := 1 }
+  | .error msg => parseError file msg
   | .ok ⟨e, l⟩ =>
     let H := inferHints ([] : AEnv Itv) e
     let msgs := Report.report ([] : AEnv Itv) e (l := l) (place := place src file)
@@ -88,7 +92,7 @@ def check (src : String) (file : Option String := none) : Result :=
 def checkOracle [Monad m] (oracle : String → m String) (rounds : Nat) (src : String)
     (file : Option String := none) : m Result :=
   match parseLoc src with
-  | .error msg => return { err := [s!"parse error: {msg}"], code := 1 }
+  | .error msg => return parseError file msg
   | .ok ⟨e, l⟩ => do
     let rs ← Oracle.consult oracle ([] : AEnv Itv) e rounds
     let shown := rs.zipIdx.flatMap fun (r, i) =>
@@ -109,9 +113,9 @@ def checkOracle [Monad m] (oracle : String → m String) (rounds : Nat) (src : S
     (`SpecOfHints.inferContracts`). Its `requires` is then checked at the start of the
     function, as for the contracts in the source. In the body, after that check, the
     optimiser knows the precondition. -/
-def opt (src : String) (infer : Bool := false) : Result :=
+def opt (src : String) (infer : Bool := false) (file : Option String := none) : Result :=
   match parseItems src with
-  | .error msg => { err := [s!"parse error: {msg}"], code := 1 }
+  | .error msg => parseError file msg
   | .ok items =>
     let items := if infer then (SpecOfHints.inferContracts items).1 else items
     let e := (resolve [] (Item.toExpr items)).run' {}
@@ -120,9 +124,9 @@ def opt (src : String) (infer : Bool := false) : Result :=
 /-- `diva opt --cert`: like `opt`, but print the certificate of the optimisation
     (`Cert.optCertificate`): a Lean file stating that the program and its optimised
     version are equivalent. -/
-def optCert (src : String) (infer : Bool := false) : Result :=
+def optCert (src : String) (infer : Bool := false) (file : Option String := none) : Result :=
   match parseItems src with
-  | .error msg => { err := [s!"parse error: {msg}"], code := 1 }
+  | .error msg => parseError file msg
   | .ok items =>
     let items := if infer then (SpecOfHints.inferContracts items).1 else items
     let e := (resolve [] (Item.toExpr items)).run' {}
@@ -132,16 +136,16 @@ def optCert (src : String) (infer : Bool := false) : Result :=
     line, as `name : values`. A hint gives the values that a function parameter can
     take, or that a function can return: `$f` is the result of the function `f`.
     Names keep their `#n` suffix: it makes them unique, and hints are keyed by name. -/
-def hints (src : String) : Result :=
-  withParse src fun e =>
+def hints (src : String) (file : Option String := none) : Result :=
+  withParse file src fun e =>
     { out := (inferHints ([] : AEnv Itv) e).map fun (x, a) => s!"{x} : {a}" }
 
 /-- `diva cert`: parse the program `src`, and print its certificate
     (`Cert.certificate`): a Lean file stating that the program never fails, with the
     hints inferred for it. If the analysis says that the program may fail, there is
     no certificate: print why and exit with code 1. -/
-def cert (src : String) : Result :=
-  withParse src fun e =>
+def cert (src : String) (file : Option String := none) : Result :=
+  withParse file src fun e =>
     match Cert.certificate (inferHints ([] : AEnv Itv) e) e with
     | some c => { out := [c] }
     | none => { err := ["the program may fail, so there is no certificate (see `diva check`)"],
@@ -152,9 +156,9 @@ def cert (src : String) : Result :=
     parse, has no contract, or has a contract that isn't supported, print why and exit
     with code 1. With `infer`, each function without a contract gets the contract that
     the analysis infers (`SpecOfHints.inferContracts`). -/
-def prove (src : String) (infer : Bool := false) : Result :=
+def prove (src : String) (infer : Bool := false) (file : Option String := none) : Result :=
   match parseItems src with
-  | .error msg => { err := [s!"parse error: {msg}"], code := 1 }
+  | .error msg => parseError file msg
   | .ok items =>
     let (items, inferred) := if infer then SpecOfHints.inferContracts items else (items, [])
     match Prove.file items (inferred := inferred) with
@@ -167,9 +171,10 @@ def prove (src : String) (infer : Bool := false) : Result :=
     from `oracle` can't be used (see `ParseProof.check`).
     Exit with code 1 if Lean doesn't accept the last file. -/
 def proveOracle [Monad m] (oracle : String → m String) (lean : String → m (Option String))
-    (check : String → Option String) (rounds : Nat) (src : String) : m Result := do
+    (check : String → Option String) (rounds : Nat) (src : String)
+    (file : Option String := none) : m Result := do
   match parseItems src with
-  | .error msg => return { err := [s!"parse error: {msg}"], code := 1 }
+  | .error msg => return parseError file msg
   | .ok items =>
     match ← (ProveOracle.consult oracle lean check items rounds).run with
     | .error msg => return { err := [msg], code := 1 }
@@ -183,9 +188,10 @@ def proveOracle [Monad m] (oracle : String → m String) (lean : String → m (O
     contracts (`none`: accepted, or Lean's errors). Print each round, then the program
     with the new contracts. Exit with code 1 if no answer is accepted. -/
 def specOracle [Monad m] (oracle : String → m String) (lean : String → m (Option String))
-    (rounds : Nat) (src : String) : m Result := do
+    (rounds : Nat) (src : String)
+    (file : Option String := none) : m Result := do
   match parseItems src with
-  | .error msg => return { err := [s!"parse error: {msg}"], code := 1 }
+  | .error msg => return parseError file msg
   | .ok items =>
     if ContractOracle.toSpecify items |>.isEmpty then
       let msg := if ContractOracle.noContract items then "the program has no function"
@@ -206,9 +212,10 @@ def specOracle [Monad m] (oracle : String → m String) (lean : String → m (Op
     (`none`: accepted, or Lean's errors). Print each round, then the program. Exit with
     code 1 if no answer is accepted. -/
 def synthOracle [Monad m] (oracle : String → m String) (lean : String → m (Option String))
-    (rounds : Nat) (src : String) : m Result := do
+    (rounds : Nat) (src : String)
+    (file : Option String := none) : m Result := do
   match parseItems src with
-  | .error msg => return { err := [s!"parse error: {msg}"], code := 1 }
+  | .error msg => return parseError file msg
   | .ok items =>
     let fs := SynthOracle.stubs items
     if fs.isEmpty then

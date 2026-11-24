@@ -1,0 +1,24 @@
+$ diva run syntax_error.ml
+syntax_error.ml:2:4: parse error
+[exit 1]
+
+$ diva check syntax_error.ml
+syntax_error.ml:2:4: parse error
+[exit 1]
+
+$ diva opt syntax_error.ml
+syntax_error.ml:2:4: parse error
+[exit 1]
+
+$ diva hints syntax_error.ml
+syntax_error.ml:2:4: parse error
+[exit 1]
+
+$ diva cert --check syntax_error.ml
+syntax_error.ml:2:4: parse error
+[exit 1]
+
+$ diva prove --check -o prove.lean syntax_error.ml
+syntax_error.ml:2:4: parse error
+[exit 1]
+
