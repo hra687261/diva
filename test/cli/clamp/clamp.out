@@ -15,6 +15,7 @@ x#0 : 150
 [exit 0]
 
 $ diva cert --check clamp.ml
+[diva] running Lean on clamp.lean
 wrote clamp.lean
 certificate checked by Lean: the program never fails
 [exit 0]
@@ -24,6 +25,10 @@ no function has a contract: write one in a `(*@ ... *)` comment after a function
 [exit 1]
 
 $ diva spec --oracle ./llm.sh -o prove.lean clamp.ml
+[diva] asking the oracle `./llm.sh` (question 1)
+[diva] running Lean on prove.lean
+[diva] asking the oracle `./llm.sh` (question 2)
+[diva] running Lean on prove.lean
 round 1: the oracle proposes
   clamp: (*@ r = clamp x ensures ((r >= 0) && ((r <= 100) && (r >= x))) *)
 rejected by Lean

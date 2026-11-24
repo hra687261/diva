@@ -15,11 +15,13 @@ x#0 : 3
 [exit 0]
 
 $ diva cert --check sorry_ax.ml
+[diva] running Lean on sorry_ax.lean
 wrote sorry_ax.lean
 certificate checked by Lean: the program never fails
 [exit 0]
 
 $ diva prove --check -o prove.lean sorry_ax.ml
+[diva] running Lean on prove.lean
 wrote prove.lean
 prove.lean:30:12: error: omega could not prove the goal:
 a possible counterexample may satisfy the constraints
@@ -29,6 +31,9 @@ where
 [exit 1]
 
 $ diva prove --oracle ./llm.sh --rounds 1 -o prove.lean sorry_ax.ml
+[diva] running Lean on prove.lean
+[diva] asking the oracle `./llm.sh` (question 1)
+[diva] running Lean on prove.lean
 round 1: the oracle proposes a proof of `square_body`
   intro va μ ⟨x, hva, hpre⟩
   subst hva

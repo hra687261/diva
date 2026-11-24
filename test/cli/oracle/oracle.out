@@ -24,6 +24,9 @@ no function has a contract: write one in a `(*@ ... *)` comment after a function
 [exit 1]
 
 $ diva check --oracle ./llm.sh oracle.ml
+[diva] asking the oracle `./llm.sh` (question 1)
+[diva] asking the oracle `./llm.sh` (question 2)
+[diva] asking the oracle `./llm.sh` (question 3)
 round 1: the oracle proposes
   an answer that isn't in the format: the answer is not only JSON
 rejected
@@ -37,6 +40,7 @@ no runtime error is possible
 [exit 0]
 
 $ diva check --oracle ./slow.sh --timeout 1 oracle.ml
+[diva] asking the oracle `./slow.sh` (question 1)
 error: the oracle `./slow.sh` didn't answer within 1 seconds
 [exit 1]
 

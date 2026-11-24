@@ -18,6 +18,7 @@ x#3 : -5
 [exit 0]
 
 $ diva cert --check safe_div.ml
+[diva] running Lean on safe_div.lean
 wrote safe_div.lean
 certificate checked by Lean: the program never fails
 [exit 0]
@@ -25,4 +26,9 @@ certificate checked by Lean: the program never fails
 $ diva prove --check -o prove.lean safe_div.ml
 no function has a contract: write one in a `(*@ ... *)` comment after a function
 [exit 1]
+
+$ diva cert --check --quiet safe_div.ml
+wrote safe_div.lean
+certificate checked by Lean: the program never fails
+[exit 0]
 

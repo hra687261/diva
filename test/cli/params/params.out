@@ -24,11 +24,13 @@ h#9 : 3
 [exit 0]
 
 $ diva cert --check params.ml
+[diva] running Lean on params.lean
 wrote params.lean
 certificate checked by Lean: the program never fails
 [exit 0]
 
 $ diva prove --check -o prove.lean params.ml
+[diva] running Lean on prove.lean
 wrote prove.lean
 checked by Lean: the functions meet their contracts, and the top-level expressions don't fail
 [exit 0]

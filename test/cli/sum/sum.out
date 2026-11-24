@@ -16,11 +16,13 @@ $sum#0 : [0, +∞]
 [exit 0]
 
 $ diva cert --check sum.ml
+[diva] running Lean on sum.lean
 wrote sum.lean
 certificate checked by Lean: the program never fails
 [exit 0]
 
 $ diva prove --check -o prove.lean sum.ml
+[diva] running Lean on prove.lean
 wrote prove.lean
 checked by Lean: the functions meet their contracts, and the top-level expressions don't fail
 [exit 0]

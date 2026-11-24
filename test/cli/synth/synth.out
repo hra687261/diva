@@ -20,12 +20,18 @@ the program may fail, so there is no certificate (see `diva check`)
 [exit 1]
 
 $ diva prove --check -o prove.lean synth.ml
+[diva] running Lean on prove.lean
 wrote prove.lean
 prove.lean:30:12: error: omega could not prove the goal:
 No usable constraints found. You may need to unfold definitions so `omega` can see linear arithmetic facts about `Nat` and `Int`, which may also involve multiplication, division, and modular remainder by constants.
 [exit 1]
 
 $ diva synth --oracle ./llm.sh -o prove.lean synth.ml
+[diva] asking the oracle `./llm.sh` (question 1)
+[diva] asking the oracle `./llm.sh` (question 2)
+[diva] running Lean on prove.lean
+[diva] asking the oracle `./llm.sh` (question 3)
+[diva] running Lean on prove.lean
 round 1: the oracle proposes
 rejected: it changes the program outside the stubs, or a contract, or it leaves a stub
 round 2: the oracle proposes

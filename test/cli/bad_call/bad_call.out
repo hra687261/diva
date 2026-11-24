@@ -21,6 +21,7 @@ the program may fail, so there is no certificate (see `diva check`)
 [exit 1]
 
 $ diva prove --check -o prove.lean bad_call.ml
+[diva] running Lean on prove.lean
 wrote prove.lean
 prove.lean:42:12: error: omega could not prove the goal:
 No usable constraints found. You may need to unfold definitions so `omega` can see linear arithmetic facts about `Nat` and `Int`, which may also involve multiplication, division, and modular remainder by constants.

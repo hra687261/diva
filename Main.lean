@@ -10,6 +10,12 @@ def readSource (path : String) : IO String :=
   if path == "-" then do (← IO.getStdin).readToEnd
   else IO.FS.readFile path
 
+/-- Print `msg` on the standard error as `[diva] msg`, unless the flag `--quiet` is given.
+    These lines say what `diva` is doing, so that the standard output stays the
+    result alone. -/
+def log (p : Parsed) (msg : String) : IO Unit :=
+  unless p.hasFlag "quiet" do IO.eprintln s!"[diva] {msg}"
+
 /-- Runs `cmd`, which may do IO, on the file given as argument, and prints its
     result. -/
 def runWith' (cmd : String → IO Commands.Result) (p : Parsed) : IO UInt32 := do
@@ -59,17 +65,22 @@ def rounds (p : Parsed) : Nat :=
   (p.flag? "rounds").map (·.as! Nat) |>.getD 3
 
 /-- The oracle that runs the shell command `cmd` for each question, and returns its
-    answer. If the flag `--timeout N` is given, `cmd` is stopped after `N` seconds. -/
-def oracleOf (p : Parsed) (cmd : String) : String → IO String :=
-  askCommand cmd ((p.flag? "timeout").map (·.as! Nat))
+    answer. If the flag `--timeout N` is given, `cmd` is stopped after `N` seconds.
+    Each question is logged, with its number. -/
+def oracleOf (p : Parsed) (cmd : String) : IO (String → IO String) := do
+  let asked ← IO.mkRef 0
+  return fun question => do
+    asked.modify (· + 1)
+    log p s!"asking the oracle `{cmd}` (question {← asked.get})"
+    askCommand cmd ((p.flag? "timeout").map (·.as! Nat)) question
 
 /-- `diva check`. With `--oracle CMD`, the shell command `CMD` (an LLM, for example)
     is asked for hints when the check fails. `diva` checks them. -/
 def runCheck (p : Parsed) : IO UInt32 :=
   match p.flag? "oracle" with
   | none => runWith Commands.check p
-  | some cmd =>
-    runWith' (Commands.checkOracle (oracleOf p (cmd.as! String)) (rounds p)) p
+  | some cmd => do
+    runWith' (Commands.checkOracle (← oracleOf p (cmd.as! String)) (rounds p)) p
 
 def runHints := runWith Commands.hints
 
@@ -103,7 +114,8 @@ def initSearchPath : IO Unit := do
 /-- Check the file `output` with Lean, inside `diva` (`CheckFile.run`). If Lean accepts
     the file, and its theorems use only the standard axioms, the result is `none`.
     Otherwise it is `some errors`, where `errors` is what is wrong, in Lean's format. -/
-def runLean (output : String) : IO (Option String) := do
+def runLean (p : Parsed) (output : String) : IO (Option String) := do
+  log p s!"running Lean on {output}"
   initSearchPath
   CheckFile.run output (← IO.FS.readFile output)
 
@@ -127,7 +139,7 @@ def writeAndCheck (cmd : String → Commands.Result) (stdin ok : String) (p : Pa
   IO.FS.writeFile output ("\n".intercalate r.out)
   IO.println s!"wrote {output}"
   if !p.hasFlag "check" then return 0
-  match ← runLean output with
+  match ← runLean p output with
   | none =>
     IO.println ok
     return 0
@@ -160,9 +172,9 @@ def runProve (p : Parsed) : IO UInt32 :=
     let output := outFile p path "prove.lean"
     let lean (file : String) : IO (Option String) := do
       IO.FS.writeFile output file
-      runLean output
+      runLean p output
     let check := ParseProof.check (← proofEnv)
-    runWith' (Commands.proveOracle (oracleOf p (cmd.as! String)) lean check (rounds p)) p
+    runWith' (Commands.proveOracle (← oracleOf p (cmd.as! String)) lean check (rounds p)) p
 
 /-- `diva spec --oracle CMD`: the command `CMD` writes the contracts of the functions
     that the functions with a contract call. Lean checks the file of `diva prove`, which
@@ -173,8 +185,8 @@ def runSpec (p : Parsed) : IO UInt32 := do
   let output := outFile p path "prove.lean"
   let lean (file : String) : IO (Option String) := do
     IO.FS.writeFile output file
-    runLean output
-  runWith' (Commands.specOracle (oracleOf p (cmd.as! String)) lean (rounds p)) p
+    runLean p output
+  runWith' (Commands.specOracle (← oracleOf p (cmd.as! String)) lean (rounds p)) p
 
 /-- `diva synth --oracle CMD`: the command `CMD` writes the code of the functions whose
     body is `assert false`. Lean checks the file of `diva prove`, which is written to
@@ -185,8 +197,8 @@ def runSynth (p : Parsed) : IO UInt32 := do
   let output := outFile p path "prove.lean"
   let lean (file : String) : IO (Option String) := do
     IO.FS.writeFile output file
-    runLean output
-  runWith' (Commands.synthOracle (oracleOf p (cmd.as! String)) lean (rounds p)) p
+    runLean p output
+  runWith' (Commands.synthOracle (← oracleOf p (cmd.as! String)) lean (rounds p)) p
 
 /-- `diva` without a command: print the help. -/
 def runDiva (p : Parsed) : IO UInt32 := do
@@ -196,6 +208,8 @@ def runDiva (p : Parsed) : IO UInt32 := do
 def oracleDoc :=
   "A shell command, such as an LLM, that reads a question on its standard input and answers on its standard output."
 
+def quietDoc := "Don't print the lines `[diva] ...` that say what diva is doing."
+
 def roundsDoc := "How many times to ask the oracle (3 by default)."
 
 def timeoutDoc :=
@@ -204,6 +218,8 @@ def timeoutDoc :=
 def runCmd : Cmd := `[Cli|
   run VIA runRun;
   "Evaluate the program and print its return value."
+  FLAGS:
+    quiet; quietDoc
   ARGS:
     file : String; "The program (`-` reads the standard input)."
 ]
@@ -217,6 +233,7 @@ def checkCmd : Cmd := `[Cli|
     oracle : String; checkOracleDoc
     rounds : Nat; roundsDoc
     timeout : Nat; timeoutDoc
+    quiet; quietDoc
   ARGS:
     file : String; "The program (`-` reads the standard input)."
 ]
@@ -229,6 +246,7 @@ def optCmd : Cmd := `[Cli|
     cert; "Write a certificate instead: a Lean file stating that the optimized program is equivalent to the program."
     check; "With `--cert`, also run Lean on the certificate. Exits with 1 if Lean rejects it."
     o, output : String; "With `--cert`, the certificate file to write. By default `<name>.lean` for `<name>.ml`, `opt.lean` for `-`."
+    quiet; quietDoc
   ARGS:
     file : String; "The program (`-` reads the standard input)."
 ]
@@ -236,6 +254,8 @@ def optCmd : Cmd := `[Cli|
 def hintsCmd : Cmd := `[Cli|
   hints VIA runHints;
   "Print the hints inferred for the program."
+  FLAGS:
+    quiet; quietDoc
   ARGS:
     file : String; "The program (`-` reads the standard input)."
 ]
@@ -247,6 +267,7 @@ def certCmd : Cmd := `[Cli|
   FLAGS:
     check; "Also run Lean on the certificate. Exits with 1 if Lean rejects it."
     o, output : String; "The certificate file to write. By default `<name>.lean` for `<name>.ml`, `cert.lean` for `-`."
+    quiet; quietDoc
   ARGS:
     file : String; "The program (`-` reads the standard input)."
 ]
@@ -265,6 +286,7 @@ def proveCmd : Cmd := `[Cli|
     oracle : String; proveOracleDoc
     rounds : Nat; roundsDoc
     timeout : Nat; timeoutDoc
+    quiet; quietDoc
   ARGS:
     file : String; "The program (`-` reads the standard input)."
 ]
@@ -282,6 +304,7 @@ def specCmd : Cmd := `[Cli|
     rounds : Nat; roundsDoc
     timeout : Nat; timeoutDoc
     o, output : String; "The Lean file to write. By default `<name>.lean` for `<name>.ml`, `prove.lean` for `-`."
+    quiet; quietDoc
   ARGS:
     file : String; "The program (`-` reads the standard input)."
 ]
@@ -298,6 +321,7 @@ def synthCmd : Cmd := `[Cli|
     rounds : Nat; roundsDoc
     timeout : Nat; timeoutDoc
     o, output : String; "The Lean file to write. By default `<name>.lean` for `<name>.ml`, `prove.lean` for `-`."
+    quiet; quietDoc
   ARGS:
     file : String; "The program (`-` reads the standard input)."
 ]

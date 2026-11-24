@@ -16,11 +16,13 @@ x#1 : 3
 [exit 0]
 
 $ diva cert --check calls.ml
+[diva] running Lean on calls.lean
 wrote calls.lean
 certificate checked by Lean: the program never fails
 [exit 0]
 
 $ diva prove --check -o prove.lean calls.ml
+[diva] running Lean on prove.lean
 wrote prove.lean
 prove.lean:59:12: error: omega could not prove the goal:
 a possible counterexample may satisfy the constraints
@@ -32,6 +34,10 @@ where
 [exit 1]
 
 $ diva spec --oracle ./llm.sh -o prove.lean calls.ml
+[diva] asking the oracle `./llm.sh` (question 1)
+[diva] running Lean on prove.lean
+[diva] asking the oracle `./llm.sh` (question 2)
+[diva] running Lean on prove.lean
 round 1: the oracle proposes
   double: (*@ r = double x ensures (r >= 0) *)
 rejected by Lean

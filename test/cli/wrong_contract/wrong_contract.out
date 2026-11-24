@@ -16,11 +16,13 @@ $sum#0 : [0, +∞]
 [exit 0]
 
 $ diva cert --check wrong_contract.ml
+[diva] running Lean on wrong_contract.lean
 wrote wrong_contract.lean
 certificate checked by Lean: the program never fails
 [exit 0]
 
 $ diva prove --check -o prove.lean wrong_contract.ml
+[diva] running Lean on prove.lean
 wrote prove.lean
 prove.lean:30:12: error: omega could not prove the goal:
 No usable constraints found. You may need to unfold definitions so `omega` can see linear arithmetic facts about `Nat` and `Int`, which may also involve multiplication, division, and modular remainder by constants.
