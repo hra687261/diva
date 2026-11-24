@@ -19,7 +19,8 @@ def ppBinOp : BinOp → String
   | .gt  => ">"
   | .ge  => ">="
 
-/-- AST for the currently supported language:
+/-- AST for the currently supported language (`doc/grammar.md` has the whole grammar,
+    and says which commands support each rule):
 ```
 e ::= n                                      -- natural number literal
     | true | false                           -- boolean literals

@@ -73,7 +73,8 @@ Why:
 {reason}
 "
   s!"DIVA proves that functions in a small ML-like language meet their contracts.
-A contract is written after each function: `(*@ r = f x requires ... ensures ... *)`.
+
+{grammar}
 
 In this program, these functions have no code yet: their body is `assert false`.
 {", ".intercalate (fs.map (s!"`{·}`"))}. Write their code, so that each one meets its contract.
@@ -82,11 +83,8 @@ In this program, these functions have no code yet: their body is `assert false`.
 {src}
 ```
 {rejected}
-The code can use integers, `let`, `if`, `+`, `-`, `*`, comparisons and `&&`, and
-calls. A function has one integer parameter. A recursive function is `let rec f x =
-...`. You can add functions before the stubs. A function called by a function with
-a contract needs a contract too. Don't change the contracts or the rest of the
-program.
+The code can use only the rules marked `prove` in the grammar above. You can add
+functions before the stubs. Don't change the contracts or the rest of the program.
 
 Answer with JSON only, in this format, with the whole program, one line of the program
 per string:

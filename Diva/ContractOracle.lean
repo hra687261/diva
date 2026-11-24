@@ -1,4 +1,5 @@
 import Diva.Prove
+import Diva.Grammar
 import Diva.Answer
 
 /-!
@@ -122,9 +123,8 @@ Why:
 {reason}
 "
   s!"DIVA proves that functions in a small ML-like language meet their contracts.
-A contract is written after each function: `(*@ r = f x requires ... ensures ... *)`.
-It can use integers, the parameter, the result, `+`, `-`, `*`, comparisons and `&&`. The
-parameter and the result are integers.
+
+{grammar}
 
 {task}
 
