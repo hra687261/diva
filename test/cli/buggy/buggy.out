@@ -3,14 +3,14 @@ runtime error: division by zero
 [exit 1]
 
 $ diva check buggy.ml
-`(match l with [] -> 0 | _ :: t -> (1 + (count t)))`: may not match a list (⊤)
-`(match l with [] -> 0 | x :: xs -> (x + (sum xs)))`: may not match a list (⊤)
-`(x + (sum xs))`: the operands may not be integers (⊤ and [-∞, +∞])
-`(sum l)`: the function called may fail
-`(count l)`: the function called may fail
-`((sum l) / (count l))`: possible division by zero (divisor: [0, +∞])
-`(average (1 :: (2 :: (3 :: []))))`: the function called may fail
-`(average [])`: the function called may fail
+buggy.ml:3:18-62: `(match l with [] -> 0 | _ :: t -> (1 + (count t)))`: may not match a list (⊤)
+buggy.ml:5:16-60: `(match l with [] -> 0 | x :: xs -> (x + (sum xs)))`: may not match a list (⊤)
+buggy.ml:5:50-60: `(x + (sum xs))`: the operands may not be integers (⊤ and [-∞, +∞])
+buggy.ml:7:16-21: `(sum l)`: the function called may fail
+buggy.ml:7:24-31: `(count l)`: the function called may fail
+buggy.ml:7:16-31: `((sum l) / (count l))`: possible division by zero (divisor: [0, +∞])
+buggy.ml:9:8-25: `(average (1 :: (2 :: (3 :: []))))`: the function called may fail
+buggy.ml:10:8-18: `(average [])`: the function called may fail
 [exit 1]
 
 $ diva opt buggy.ml

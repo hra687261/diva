@@ -3,7 +3,7 @@ $ diva run oracle.ml
 [exit 0]
 
 $ diva check oracle.ml
-`(10 / (f 0))`: possible division by zero (divisor: [-5, +∞])
+oracle.ml:4:0-8: `(10 / (f 0))`: possible division by zero (divisor: [-5, +∞])
 [exit 1]
 
 $ diva opt oracle.ml

@@ -65,22 +65,31 @@ def run (src : String) : Result :=
     | .err k _ => { err := [s!"runtime error: {ppErr k}"], code := 1 }
     | .outOfFuel => { err := ["out of fuel"], code := 1 }
 
+/-- How the reports print a span of `src`: `file:line:col-col`, or nothing without
+    `file`. -/
+def place (src : String) : Option String → Span → String
+  | some file, sp => sp.format src file
+  | none, _ => ""
+
 /-- `diva check`: parse the program `src`, and print the places where the analysis
-    says it may fail. Exit with code 1 if it may fail, and 0 if it can't. -/
-def check (src : String) : Result :=
-  withParse src fun e =>
+    says it may fail, with their positions in `file`. Exit with code 1 if it may fail,
+    and 0 if it can't. -/
+def check (src : String) (file : Option String := none) : Result :=
+  match parseLoc src with
+  | .error msg => { err := [s!"parse error: {msg}"], code := 1 }
+  | .ok ⟨e, l⟩ =>
     let H := inferHints ([] : AEnv Itv) e
-    let msgs := Report.report ([] : AEnv Itv) e
+    let msgs := Report.report ([] : AEnv Itv) e (l := l) (place := place src file)
     { out := msgs, code := if mayFail H [] e then 1 else 0 }
 
 /-- `diva check --oracle`: parse the program `src`, and ask `oracle` for hints, at most
     `rounds` times, until the program is safe with them (`Oracle.consult`). Print each
-    round, then what `check` prints with the last hints. -/
-def checkOracle [Monad m] (oracle : String → m String) (rounds : Nat) (src : String) :
-    m Result :=
-  match parse src with
+    round, then what `check` prints with the last hints, with the positions in `file`. -/
+def checkOracle [Monad m] (oracle : String → m String) (rounds : Nat) (src : String)
+    (file : Option String := none) : m Result :=
+  match parseLoc src with
   | .error msg => return { err := [s!"parse error: {msg}"], code := 1 }
-  | .ok e => do
+  | .ok ⟨e, l⟩ => do
     let rs ← Oracle.consult oracle ([] : AEnv Itv) e rounds
     let shown := rs.zipIdx.flatMap fun (r, i) =>
       [s!"round {i + 1}: the oracle proposes"] ++
@@ -91,7 +100,7 @@ def checkOracle [Monad m] (oracle : String → m String) (rounds : Nat) (src : S
         [if r.accepted then "accepted" else "rejected"]
     let fixed := (rs.getLast?.map (·.hints)).getD []
     let H := inferHints ([] : AEnv Itv) e fixed
-    return { out := shown ++ Report.report ([] : AEnv Itv) e fixed,
+    return { out := shown ++ Report.report ([] : AEnv Itv) e fixed l (place src file),
              code := if mayFail H [] e then 1 else 0 }
 
 /-- `diva opt`: parse the program `src`, optimise it using what the analysis knows

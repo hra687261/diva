@@ -7,13 +7,25 @@ open Diva Commands
 #guard run "let f x = x * 2 in f 21" == { out := ["42"] }
 #guard run "1 / 0" == { err := ["runtime error: division by zero"], code := 1 }
 #guard run "let rec f x = f x in f 0" == { err := ["out of fuel"], code := 1 }
-#guard run "1 +" == { err := ["parse error: Parse error near byte 2"], code := 1 }
+#guard run "1 +" == { err := ["parse error: Parse error at 1:2"], code := 1 }
+#guard run "let x = 1\n  in x +" == { err := ["parse error: Parse error at 2:7"], code := 1 }
 
 -- `check`: exit code 1 if the program may fail
 #guard check "let f y = 10 / y in f 3" == { out := ["no runtime error is possible"] }
 #guard check "let f y = 10 / y in f 0" == {
   out := ["`(10 / y)`: possible division by zero (divisor: 0)",
           "`(f 0)`: the function called may fail"],
+  code := 1 }
+-- with a file name, each message starts with its position: `file:line:col-col`, with
+-- lines from 1 and columns from 0, as in Lean
+#guard check (file := some "f.ml") "let f y =\n  10 / y\n;; f 0" == {
+  out := ["f.ml:2:2-8: `(10 / y)`: possible division by zero (divisor: 0)",
+          "f.ml:3:3-6: `(f 0)`: the function called may fail"],
+  code := 1 }
+-- a comment after an expression isn't in its span
+#guard check (file := some "f.ml") "let f y = 10 / y (* y = 0 *)\n;; f 0" == {
+  out := ["f.ml:1:10-16: `(10 / y)`: possible division by zero (divisor: 0)",
+          "f.ml:2:3-6: `(f 0)`: the function called may fail"],
   code := 1 }
 
 -- `opt`: the optimised program, without the `#n` suffixes of names

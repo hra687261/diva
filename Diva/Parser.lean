@@ -96,60 +96,96 @@ where
     | (.tag c x, h) :: rest => .exnCase (.var "%exn") c x h (go rest)
     | (.any k, h) :: _ => .letin k (.var "%exn") h
 
-/-! ### Expression grammar -/
+/-- The positions of `try e with ...` (`tryWith`), whose span is `sp`. `el` and the
+    `Loc`s of `arms` are the positions of `e` and of the handlers. -/
+def tryWithLoc (sp : Span) (el : Loc) (arms : List (Handler × Loc)) : Loc :=
+  .node sp [el, go arms]
+where
+  go : List (Handler × Loc) → Loc
+    | [] => .node sp [.leaf sp]
+    | (.tag _ _, h) :: rest => .node sp [.leaf sp, h, go rest]
+    | (.any _, h) :: _ => .node sp [.leaf sp, h]
+
+/-- The positions of `lams xs b` (`fun x1 -> ... -> b`): one node per `fun`, with the
+    span `sp`, around the positions `bl` of `b`. -/
+def lamsLoc (sp : Span) : List String → Loc → Loc
+  | [], bl => bl
+  | _ :: xs, bl => .node sp [lamsLoc sp xs bl]
+
+/-- The current position, in bytes from the start of the source. -/
+def pos : P Nat := do return (← getPos).byteIdx
+
+/-- The span from the byte `s` to the current position. -/
+def spanFrom (s : Nat) : P Span := do return ⟨s, ← pos⟩
+
+/-! ### Expression grammar
+
+Each rule gives the expression and its positions (`LExpr`). The children of a `Loc`
+node follow the fields of the constructor (see `Loc.lean`). -/
 
 mutual
 
 /-- `e1; e2` is `let _ = e1 in e2`. -/
-partial def seqExpr : P Expr := do
+partial def seqExpr : P LExpr := do
+  let s ← pos
   let e ← expr
-  (do symbol ";"; let r ← seqExpr; return .letin "_" e r) <|> pure e
+  (do
+    symbol ";"
+    let r ← seqExpr
+    return ⟨.letin "_" e.expr r.expr, .node (← spanFrom s) [e.loc, r.loc]⟩) <|> pure e
 
 /-- A full expression, try to parse all constructors one after the other. -/
-partial def expr : P Expr :=
+partial def expr : P LExpr :=
   letinxpr <|> funExpr <|> itexpr <|> matchExpr <|> forExpr <|> whileExpr <|> tryExpr
     <|> assignExpr
 
-/-- `let [rec] f x y = e`, shared by `let ... in` and top-level declarations. -/
-partial def binding : P Binding := do
+/-- `let [rec] f x y = e`, shared by `let ... in` and top-level declarations. With the
+    positions of the expression bound to `f` (`fun x y -> e` for `let f x y = e`). -/
+partial def binding : P (Binding × Loc) := do
+  let s ← pos
   keyword "let"
   let isRec := (← option? (keyword "rec")).isSome
   let f ← binderTok
   let ps := (← takeMany binderTok).toList
   symbol "="
   let rhs ← seqExpr
-  match isRec, ps, rhs with
-  | false, _, _ => return .val f (lams ps rhs)
-  | true, x :: ps, _ => return .recFn f x (lams ps rhs)
-  | true, [], .lam x rhs' => return .recFn f x rhs'
+  let sp ← spanFrom s
+  match isRec, ps, rhs.expr with
+  | false, _, _ => return (.val f (lams ps rhs.expr), lamsLoc sp ps rhs.loc)
+  | true, x :: ps, _ => return (.recFn f x (lams ps rhs.expr), lamsLoc sp ps rhs.loc)
+  | true, [], .lam x rhs' => return (.recFn f x rhs', rhs.loc.kid 0)
   | true, [], _ => throwUnexpected -- `let rec` must define a function
 
 /-- `let x = e1 in e2` -/
-partial def letinxpr : P Expr := do
-  let b ← binding
+partial def letinxpr : P LExpr := do
+  let s ← pos
+  let (b, bl) ← binding
   keyword "in"
   let e2 ← seqExpr
-  return b.bind e2
+  return ⟨b.bind e2.expr, .node (← spanFrom s) [bl, e2.loc]⟩
 
 /-- `fun x y -> e` -/
-partial def funExpr : P Expr := do
+partial def funExpr : P LExpr := do
+  let s ← pos
   keyword "fun"
   let xs ← takeMany1 binderTok
   symbol "->"
   let body ← seqExpr
-  return lams xs.toList body
+  return ⟨lams xs.toList body.expr, lamsLoc (← spanFrom s) xs.toList body.loc⟩
 
 /-- `if c then t else e`. Without `else`, `e` is `()`. -/
-partial def itexpr : P Expr := do
+partial def itexpr : P LExpr := do
+  let s ← pos
   keyword "if"
   let c ← expr
   keyword "then"
   let t ← expr
-  let e ← (keyword "else" *> expr) <|> pure .unit
-  return .ite c t e
+  let e ← (keyword "else" *> expr) <|> (do return ⟨.unit, .leaf (← spanFrom s)⟩)
+  return ⟨.ite c.expr t.expr e.expr, .node (← spanFrom s) [c.loc, t.loc, e.loc]⟩
 
 /-- `match s with [] -> n | x :: xs -> c` -/
-partial def matchExpr : P Expr := do
+partial def matchExpr : P LExpr := do
+  let p ← pos
   keyword "match"
   let s ← seqExpr
   keyword "with"
@@ -161,19 +197,21 @@ partial def matchExpr : P Expr := do
   let xs ← binderTok
   symbol "->"
   let c ← seqExpr
-  return .matchList s n x xs c
+  return ⟨.matchList s.expr n.expr x xs c.expr, .node (← spanFrom p) [s.loc, n.loc, c.loc]⟩
 
 /-- `try e with p -> h | ...`, see `tryWith`. -/
-partial def tryExpr : P Expr := do
+partial def tryExpr : P LExpr := do
+  let s ← pos
   keyword "try"
   let e ← seqExpr
   keyword "with"
   let _ ← option? (symbol "|")
-  let arms ← sepBy1 (symbol "|") handler
-  return tryWith e arms.toList
+  let arms := (← sepBy1 (symbol "|") handler).toList
+  return ⟨tryWith e.expr (arms.map fun (p, h) => (p, h.expr)),
+    tryWithLoc (← spanFrom s) e.loc (arms.map fun (p, h) => (p, h.loc))⟩
 
 /-- One handler `p -> h` of a `try`. -/
-partial def handler : P (Handler × Expr) := do
+partial def handler : P (Handler × LExpr) := do
   let p ← (do let c ← ctorTok; let x ← binderTok <|> pure "_"; return Handler.tag c x)
     <|> (Handler.any <$> binderTok)
   symbol "->"
@@ -185,8 +223,10 @@ partial def handler : P (Handler × Expr) := do
 /-- `for i = a to b do e done` is
     `let %lo = a in let %hi = b in
      let rec %for i = if i <= %hi then (e; %for (i + 1)) else () in %for %lo`.
-    The bounds are evaluated once, before the loop, as in OCaml. -/
-partial def forExpr : P Expr := do
+    The bounds are evaluated once, before the loop, as in OCaml. The code that this
+    adds has the span of the whole loop. -/
+partial def forExpr : P LExpr := do
+  let s ← pos
   keyword "for"
   let i ← binderTok
   symbol "="
@@ -198,60 +238,91 @@ partial def forExpr : P Expr := do
   keyword "done"
   let next := Expr.app (.var "%for") (.binop .add (.var i) (.int 1))
   let loop := Expr.letrec "%for" i
-    (.ite (.binop .le (.var i) (.var "%hi")) (.letin "_" e next) .unit)
+    (.ite (.binop .le (.var i) (.var "%hi")) (.letin "_" e.expr next) .unit)
     (.app (.var "%for") (.var "%lo"))
-  return .letin "%lo" a (.letin "%hi" b loop)
+  let sp ← spanFrom s
+  let g := Loc.leaf sp
+  let loopLoc := Loc.node sp [.node sp [g, .node sp [e.loc, g], g], g]
+  return ⟨.letin "%lo" a.expr (.letin "%hi" b.expr loop),
+    .node sp [a.loc, .node sp [b.loc, loopLoc]]⟩
 
 /-- `while c do e done` is
     `let rec %while _ = if c then (e; %while ()) else () in %while ()`. -/
-partial def whileExpr : P Expr := do
+partial def whileExpr : P LExpr := do
+  let s ← pos
   keyword "while"
   let c ← expr
   keyword "do"
   let e ← seqExpr
   keyword "done"
   let next := Expr.app (.var "%while") .unit
-  return .letrec "%while" "_" (.ite c (.letin "_" e next) .unit) next
+  let sp ← spanFrom s
+  let g := Loc.leaf sp
+  return ⟨.letrec "%while" "_" (.ite c.expr (.letin "_" e.expr next) .unit) next,
+    .node sp [.node sp [c.loc, .node sp [e.loc, g], g], g]⟩
 
 /-- `a.(i) <- v`, `r := v`, or any other `orExpr`. -/
-partial def assignExpr : P Expr := do
+partial def assignExpr : P LExpr := do
+  let s ← pos
   let lhs ← orExpr
-  let assignRef := do symbol ":="; let v ← expr; return Expr.assign lhs v
-  match lhs with
-  | .get a i => (do symbol "<-"; let v ← expr; return .set a i v) <|> assignRef <|> pure lhs
+  let assignRef := do
+    symbol ":="
+    let v ← expr
+    return ⟨Expr.assign lhs.expr v.expr, .node (← spanFrom s) [lhs.loc, v.loc]⟩
+  match lhs.expr with
+  | .get a i =>
+    (do
+      symbol "<-"
+      let v ← expr
+      return ⟨.set a i v.expr, .node (← spanFrom s) [lhs.loc.kid 0, lhs.loc.kid 1, v.loc]⟩)
+    <|> assignRef <|> pure lhs
   | _ => assignRef <|> pure lhs
 
 /-- `a || b` is `if a then true else b`. -/
-partial def orExpr : P Expr := do
+partial def orExpr : P LExpr := do
+  let s ← pos
   let a ← andExpr
-  (do symbol "||"; let b ← orExpr; return .ite a (.bool true) b) <|> pure a
+  (do
+    symbol "||"
+    let b ← orExpr
+    let sp ← spanFrom s
+    return ⟨.ite a.expr (.bool true) b.expr, .node sp [a.loc, .leaf sp, b.loc]⟩) <|> pure a
 
 /-- `a && b` is `if a then b else false`. -/
-partial def andExpr : P Expr := do
+partial def andExpr : P LExpr := do
+  let s ← pos
   let a ← cmpExpr
-  (do symbol "&&"; let b ← andExpr; return .ite a b (.bool false)) <|> pure a
+  (do
+    symbol "&&"
+    let b ← andExpr
+    let sp ← spanFrom s
+    return ⟨.ite a.expr b.expr (.bool false), .node sp [a.loc, b.loc, .leaf sp]⟩) <|> pure a
 
-partial def cmpOp (sym: String) (op: BinOp) (e: Expr) : P Expr := do
+/-- `e sym r`, for the comparison `op`. `e` starts at the byte `s`. -/
+partial def cmpOp (s : Nat) (sym: String) (op: BinOp) (e: LExpr) : P LExpr := do
   symbol sym
   let r ← pratt 0
-  return .binop op e r
+  return ⟨.binop op e.expr r.expr, .node (← spanFrom s) [e.loc, r.loc]⟩
 
 /-- Comparisons (non-associative). -/
-partial def cmpExpr : P Expr := do
+partial def cmpExpr : P LExpr := do
+  let s ← pos
   let e ← pratt 0
-  (cmpOp "=" .eq e) <|>
-  (cmpOp "<>" .ne e) <|>
-  (cmpOp "<=" .le e) <|>
-  (notFollowedBy (symbol "<-") *> cmpOp "<" .lt e) <|>
-  (cmpOp ">=" .ge e) <|>
-  (cmpOp ">" .gt e) <|>
+  (cmpOp s "=" .eq e) <|>
+  (cmpOp s "<>" .ne e) <|>
+  (cmpOp s "<=" .le e) <|>
+  (notFollowedBy (symbol "<-") *> cmpOp s "<" .lt e) <|>
+  (cmpOp s ">=" .ge e) <|>
+  (cmpOp s ">" .gt e) <|>
   pure e
 
-partial def pratt (lastBp: Nat) : P Expr := do
+partial def pratt (lastBp: Nat) : P LExpr := do
+  let s ← pos
   let lhs ← unary
-  prattLoop lhs lastBp
+  prattLoop s lhs lastBp
 
-partial def prattLoop (lhs: Expr) (lastBp: Nat) : P Expr := (
+/-- The operators after `lhs`, which starts at the byte `s`. -/
+partial def prattLoop (s : Nat) (lhs: LExpr) (lastBp: Nat) : P LExpr := (
     do
       let (builder, lbp, rbp) ← opbp
       -- compare with the binding power of the last op (default 0) only bind
@@ -260,103 +331,127 @@ partial def prattLoop (lhs: Expr) (lastBp: Nat) : P Expr := (
         throwUnexpected
       else
         let rhs ← pratt rbp
-        prattLoop (builder lhs rhs) lastBp
+        let e : LExpr := ⟨builder lhs.expr rhs.expr, .node (← spanFrom s) [lhs.loc, rhs.loc]⟩
+        prattLoop s e lastBp
   ) <|> pure lhs
 
 /-- `-e` (`0 - e`), `not e`, `assert e`, `Array.make n v`, `Array.length a`, and
     `ref v`, `incr r` / `decr r` (`r := !r ± 1`), `E v` and `raise e`. -/
-partial def unary : P Expr :=
+partial def unary : P LExpr := do
+  let s ← pos
+  -- `e` with the positions `.node span ks`, where `span` ends here
+  let mk (e : Expr) (ks : Span → List Loc) : P LExpr := do
+    let sp ← spanFrom s
+    return ⟨e, .node sp (ks sp)⟩
   (do
     let c ← ctorTok
     let v ← postfixExpr
-    return .exn c v) <|>
+    mk (.exn c v.expr) fun _ => [v.loc]) <|>
   (do
     keyword "raise"
     let e ← unary
-    return .raise e) <|>
+    mk (.raise e.expr) fun _ => [e.loc]) <|>
   (do
     keyword "ref"
     let v ← postfixExpr
-    return .ref 0 v) <|>
+    mk (.ref 0 v.expr) fun _ => [v.loc]) <|>
   (do
     keyword "incr"
     let r ← postfixExpr
-    return .assign r (.binop .add (.deref r) (.int 1))) <|>
+    mk (.assign r.expr (.binop .add (.deref r.expr) (.int 1)))
+      fun sp => [r.loc, .node sp [.node sp [r.loc], .leaf sp]]) <|>
   (do
     keyword "decr"
     let r ← postfixExpr
-    return .assign r (.binop .sub (.deref r) (.int 1))) <|>
+    mk (.assign r.expr (.binop .sub (.deref r.expr) (.int 1)))
+      fun sp => [r.loc, .node sp [.node sp [r.loc], .leaf sp]]) <|>
   (do
     keyword "Array"; symbol "."; keyword "make"
     let n ← postfixExpr
     let v ← postfixExpr
-    return .alloc 0 n v) <|>
+    mk (.alloc 0 n.expr v.expr) fun _ => [n.loc, v.loc]) <|>
   (do
     keyword "Array"; symbol "."; keyword "length"
     let a ← postfixExpr
-    return .len a) <|>
+    mk (.len a.expr) fun _ => [a.loc]) <|>
   (do
     symbol "-"
     let e ← unary
-    return .binop .sub (.int 0) e) <|>
+    mk (.binop .sub (.int 0) e.expr) fun sp => [.leaf sp, e.loc]) <|>
   (do
     keyword "not"
     let e ← unary
-    return .ite e (.bool false) (.bool true)) <|>
+    mk (.ite e.expr (.bool false) (.bool true)) fun sp => [e.loc, .leaf sp, .leaf sp]) <|>
   (do
     keyword "assert"
     let e ← unary
-    return .assert e) <|>
+    mk (.assert e.expr) fun _ => [e.loc]) <|>
   appExpr
 
 /-- Left-associative application `e e e ...`. -/
-partial def appExpr : P Expr := do
+partial def appExpr : P LExpr := do
+  let s ← pos
   let f ← postfixExpr
-  appRest f
+  appRest s f
 
-partial def appRest (f : Expr) : P Expr :=
-  (do let a ← postfixExpr; appRest (.app f a)) <|>
+/-- The arguments after `f`, which starts at the byte `s`. -/
+partial def appRest (s : Nat) (f : LExpr) : P LExpr :=
+  (do
+    let a ← postfixExpr
+    appRest s ⟨.app f.expr a.expr, .node (← spanFrom s) [f.loc, a.loc]⟩) <|>
   pure f
 
 /-- An atom followed by array reads `a.(i).(j)`. -/
-partial def postfixExpr : P Expr := do
+partial def postfixExpr : P LExpr := do
+  let s ← pos
   let a ← atom
-  getRest a
+  getRest s a
 
-partial def getRest (a : Expr) : P Expr :=
-  (do symbol "."; symbol "("; let i ← seqExpr; symbol ")"; getRest (.get a i)) <|>
+/-- The array reads after `a`, which starts at the byte `s`. -/
+partial def getRest (s : Nat) (a : LExpr) : P LExpr :=
+  (do
+    symbol "."; symbol "("
+    let i ← seqExpr
+    symbol ")"
+    getRest s ⟨.get a.expr i.expr, .node (← spanFrom s) [a.loc, i.loc]⟩) <|>
   pure a
 
 /-- Atoms: parenthesised expr, `()`, list literal, integer, boolean literal,
     variable, `!r`, or an exception without argument `E` (carrying `()`). -/
-partial def atom : P Expr :=
+partial def atom : P LExpr := do
+  let s ← pos
+  let leaf (e : Expr) : P LExpr := do return ⟨e, .leaf (← spanFrom s)⟩
   parenExpr
-    <|> (do symbol "!"; let r ← atom; return .deref r)
-    <|> (symbol "(" *> symbol ")" *> pure Expr.unit)
+    <|> (do symbol "!"; let r ← atom; return ⟨.deref r.expr, .node (← spanFrom s) [r.loc]⟩)
+    <|> (do symbol "("; symbol ")"; leaf .unit)
     <|> listLit
-    <|> (Expr.int <$> intTok)
+    <|> (do leaf (.int (← intTok)))
     <|> boolLit
-    <|> (Expr.var <$> identTok)
-    <|> (do let c ← ctorTok; return .exn c .unit)
+    <|> (do leaf (.var (← identTok)))
+    <|> (do let c ← ctorTok; leaf (.exn c .unit))
 
-/-- `[a; b; c]` is `a :: b :: c :: []`. -/
-partial def listLit : P Expr := do
+/-- `[a; b; c]` is `a :: b :: c :: []`. Each `::` has the span of the whole list. -/
+partial def listLit : P LExpr := do
+  let s ← pos
   symbol "["
   let es ← sepEndBy (symbol ";") expr
   symbol "]"
-  return es.foldr .cons .nil
+  let sp ← spanFrom s
+  return es.foldr (fun a r => ⟨.cons a.expr r.expr, .node sp [a.loc, r.loc]⟩)
+    ⟨.nil, .leaf sp⟩
 
 /-- `( e )` -/
-partial def parenExpr : P Expr := do
+partial def parenExpr : P LExpr := do
   symbol "("
   let e ← seqExpr
   symbol ")"
   return e
 
 /-- `true` / `false` -/
-partial def boolLit : P Expr :=
-  (keyword "true" *> pure (Expr.bool true))
-    <|> (keyword "false" *> pure (Expr.bool false))
+partial def boolLit : P LExpr := do
+  let s ← pos
+  let b ← (keyword "true" *> pure true) <|> (keyword "false" *> pure false)
+  return ⟨.bool b, .leaf (← spanFrom s)⟩
 
 end
 
@@ -447,28 +542,36 @@ def specComment : P Spec := do
            requires := clauses.filterMap fun (r, t) => if r then some t else none,
            ensures := clauses.filterMap fun (r, t) => if r then none else some t }
 
-def declItem : P Item := do
-  let b ← binding
+/-- A declaration, with the contract after it, and the positions of the expression
+    that it binds. -/
+def declItem : P (Item × Loc) := do
+  let (b, l) ← binding
   let s ← option? specComment
-  return .decl b s
+  return (.decl b s, l)
 
-def item : P Item :=
-  (Item.expr <$> letinxpr) <|>
+/-- A top-level item, with its positions. -/
+def item : P (Item × Loc) :=
+  (do let e ← letinxpr; return (Item.expr e.expr, e.loc)) <|>
   declItem <|>
-  (Item.expr <$> seqExpr)
+  (do let e ← seqExpr; return (Item.expr e.expr, e.loc))
 
 /-- The top-level items of a program.
     As in OCaml, `;;` is optional between declarations but required before an
     expression that isn't first. -/
-def items : P (List Item) := do
+def itemsLoc : P (List (Item × Loc)) := do
   let _ ← dropMany (symbol ";;")
   let first ← option? item
   let rest ← takeMany (declItem <|> (takeMany1 (symbol ";;") *> item))
   let _ ← dropMany (symbol ";;")
   return first.toList ++ rest.toList
 
-/-- A program: its top-level items, as one expression. -/
-def program : P Expr := Item.toExpr <$> items
+/-- The top-level items of a program, without their positions. -/
+def items : P (List Item) := (·.map (·.1)) <$> itemsLoc
+
+/-- A program: its top-level items, as one expression, with its positions. -/
+def program : P LExpr := do
+  let is ← itemsLoc
+  return ⟨Item.toExpr (is.map (·.1)), Item.toLoc is⟩
 
 /-- The state of `resolve`: the next site number and the next name number. -/
 structure Fresh where
@@ -531,23 +634,33 @@ def resolve (sc : List (String × String)) : Expr → StateM Fresh Expr
   | .raise e => return .raise (← resolve sc e)
   | e => return e
 
+/-- Where the parser stopped in `s`, as `line:col`. -/
+def errorAt (s : String) (off : Nat) : String :=
+  let (l, c) := lineCol s off
+  s!"Parse error at {l}:{c}"
+
+/-- Parse a complete program, with its positions. `resolve` keeps the shape of the
+    expression, so the positions stay valid. -/
+def parseLoc (s : String) : Except String LExpr :=
+  match (whitespace *> program <* endOfInput).parseString s with
+  | .ok e => .ok ⟨(resolve [] e.expr).run' {}, e.loc⟩
+  | .error err => .error (errorAt s err.pos.byteIdx)
+
 /-- Parse a complete program. -/
 def parse (s : String) : Except String Expr :=
-  match (whitespace *> program <* endOfInput).parseString s with
-  | .ok e => .ok ((resolve [] e).run' {})
-  | .error err => .error s!"Parse error near byte {err.pos.byteIdx}"
+  (parseLoc s).map (·.expr)
 
 /-- Parse a formula of the contract language, such as `0 <= v && v < 10`. -/
 def parseTerm (s : String) : Except String Term :=
   match (whitespace *> term <* endOfInput).parseString s with
   | .ok t => .ok t
-  | .error err => .error s!"Parse error near byte {err.pos.byteIdx}"
+  | .error err => .error (errorAt s err.pos.byteIdx)
 
 /-- Parse a complete program into its top-level items, with their contracts. The
     names are the ones of the source: there is no `resolve`. -/
 def parseItems (s : String) : Except String (List Item) :=
   match (whitespace *> items <* endOfInput).parseString s with
   | .ok is => .ok is
-  | .error err => .error s!"Parse error near byte {err.pos.byteIdx}"
+  | .error err => .error (errorAt s err.pos.byteIdx)
 
 end Diva

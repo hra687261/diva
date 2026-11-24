@@ -1,4 +1,4 @@
-import Diva.Ast
+import Diva.Loc
 
 /-!
 # From the parsed items to one expression
@@ -52,5 +52,29 @@ def Item.toExpr : List Item → Expr
   | .expr e :: r => .letin "_" e (Item.toExpr r)
   | [.decl b sp] => (b.withRequires sp).bind (.var b.name)
   | .decl b sp :: r => (b.withRequires sp).bind (Item.toExpr r)
+
+/-- The positions of `insideLams k e`, from the positions `l` of `e`. `kl` gives the
+    positions of `k b` from those of `b`. -/
+def insideLamsLoc (kl : Loc → Loc) : Expr → Loc → Loc
+  | .lam _ b, l => .node l.span [insideLamsLoc kl b (l.kid 0)]
+  | _, l => kl l
+
+/-- The positions of `b.withRequires sp`, from the positions `l` of the expression
+    bound by `b`. The checks get the span of the body. -/
+def Binding.withRequiresLoc (b : Binding) (l : Loc) : Option Spec → Loc
+  | none => l
+  | some sp =>
+    let check (bl : Loc) : Loc :=
+      sp.requires.foldr (fun _ r => .node bl.span [.node bl.span [.leaf bl.span], r]) bl
+    match b with
+    | .val _ e | .recFn _ _ e => insideLamsLoc check e l
+
+/-- The positions of `Item.toExpr`, from the items and their positions. -/
+def Item.toLoc : List (Item × Loc) → Loc
+  | [] => default
+  | [(.expr _, l)] => l
+  | (.expr _, l) :: r => .node l.span [l, Item.toLoc r]
+  | [(.decl b sp, l)] => .node l.span [b.withRequiresLoc l sp, .leaf l.span]
+  | (.decl b sp, l) :: r => .node l.span [b.withRequiresLoc l sp, Item.toLoc r]
 
 end Diva

@@ -74,13 +74,20 @@ def oracleOf (p : Parsed) (cmd : String) : IO (String → IO String) := do
     log p s!"asking the oracle `{cmd}` (question {← asked.get})"
     askCommand cmd ((p.flag? "timeout").map (·.as! Nat)) question
 
+/-- The name of the program in messages: the file given as argument, or `<stdin>` for
+    `-`. -/
+def fileName (p : Parsed) : String :=
+  let path := p.positionalArg! "file" |>.as! String
+  if path == "-" then "<stdin>" else path
+
 /-- `diva check`. With `--oracle CMD`, the shell command `CMD` (an LLM, for example)
     is asked for hints when the check fails. `diva` checks them. -/
 def runCheck (p : Parsed) : IO UInt32 :=
   match p.flag? "oracle" with
-  | none => runWith Commands.check p
+  | none => runWith (Commands.check (file := some (fileName p))) p
   | some cmd => do
-    runWith' (Commands.checkOracle (← oracleOf p (cmd.as! String)) (rounds p)) p
+    runWith' (Commands.checkOracle (← oracleOf p (cmd.as! String)) (rounds p)
+      (file := some (fileName p))) p
 
 def runHints := runWith Commands.hints
 

@@ -3,16 +3,16 @@ $ diva run basics.ml
 [exit 0]
 
 $ diva check basics.ml
-`(match l with [] -> 0 | _ :: t -> (1 + (length t)))`: may not match a list (⊤)
-`(match l with [] -> [] | x :: xs -> ((f x) :: ((map f) xs)))`: may not match a list (⊤)
-`(f x)`: calls a function the analysis knows nothing about
-`(match l with [] -> 0 | x :: xs -> (x + (sum xs)))`: may not match a list (⊤)
-`(x + (sum xs))`: the operands may not be integers (⊤ and [-∞, +∞])
-`(x * x)`: the operands may not be integers (⊤ and ⊤)
-`((map (fun x -> (x * x))) ((range 1) 5))`: the function called may fail
-`(sum squares)`: the function called may fail
-`(length squares)`: the function called may fail
-`(assert ok)` may fail
+basics.ml:7:19-64: `(match l with [] -> 0 | _ :: t -> (1 + (length t)))`: may not match a list (⊤)
+basics.ml:9:18-68: `(match l with [] -> [] | x :: xs -> ((f x) :: ((map f) xs)))`: may not match a list (⊤)
+basics.ml:9:53-56: `(f x)`: calls a function the analysis knows nothing about
+basics.ml:11:16-60: `(match l with [] -> 0 | x :: xs -> (x + (sum xs)))`: may not match a list (⊤)
+basics.ml:11:50-60: `(x + (sum xs))`: the operands may not be integers (⊤ and [-∞, +∞])
+basics.ml:15:28-33: `(x * x)`: the operands may not be integers (⊤ and ⊤)
+basics.ml:15:14-46: `((map (fun x -> (x * x))) ((range 1) 5))`: the function called may fail
+basics.ml:16:12-23: `(sum squares)`: the function called may fail
+basics.ml:17:8-22: `(length squares)`: the function called may fail
+basics.ml:21:0-9: `(assert ok)` may fail
 [exit 1]
 
 $ diva opt basics.ml
