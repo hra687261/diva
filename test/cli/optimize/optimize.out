@@ -24,3 +24,8 @@ $ diva prove --check -o prove.lean optimize.ml
 no function has a contract: write one in a `(*@ ... *)` comment after a function
 [exit 1]
 
+$ diva opt --cert --check -o opt.lean optimize.ml
+wrote opt.lean
+certificate checked by Lean: the optimised program is equivalent to the program
+[exit 0]
+

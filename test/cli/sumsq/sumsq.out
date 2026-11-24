@@ -34,3 +34,8 @@ $ diva opt --infer sumsq.ml
 (let rec sumsq n = (fun acc -> (let _ = (assert (n <= 10)) in (let _ = (assert (acc >= 0)) in (if (n = 0) then acc else (let acc = (acc + (n * n)) in ((sumsq (n - 1)) acc)))))) in ((sumsq 10) 0))
 [exit 0]
 
+$ diva opt --infer --cert --check -o opt.lean sumsq.ml
+wrote opt.lean
+certificate checked by Lean: the optimised program is equivalent to the program
+[exit 0]
+

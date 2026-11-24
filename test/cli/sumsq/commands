@@ -1,2 +1,3 @@
 prove --infer --check -o prove.lean
 opt --infer
+opt --infer --cert --check -o opt.lean

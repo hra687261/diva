@@ -71,7 +71,6 @@ def runCheck (p : Parsed) : IO UInt32 :=
   | some cmd =>
     runWith' (Commands.checkOracle (oracleOf p (cmd.as! String)) (rounds p)) p
 
-def runOpt (p : Parsed) : IO UInt32 := runWith (Commands.opt (infer := p.hasFlag "infer")) p
 def runHints := runWith Commands.hints
 
 /-- The folder of Diva's compiled modules (`.olean` files): `../lib/lean`, starting from
@@ -82,7 +81,7 @@ def libDir : IO System.FilePath := do
   let pre := app.parent.bind (·.parent) |>.getD "."
   return pre / "lib" / "lean"
 
-/-- The name of the Lean file that `diva cert` and `diva prove` write:
+/-- The name of the Lean file that `diva cert`, `diva opt --cert` and `diva prove` write:
     - the name given with `-o`, if there is one
     - otherwise `<name>.lean` for the program `<name>.ml`
     - for a program read from the standard input (`path` is `-`), the argument `stdin`:
@@ -140,6 +139,15 @@ def writeAndCheck (cmd : String → Commands.Result) (stdin ok : String) (p : Pa
     fails. -/
 def runCert := writeAndCheck Commands.cert "cert.lean"
   "certificate checked by Lean: the program never fails"
+
+/-- `diva opt`: print the optimised program. With `--cert`, write the certificate of the
+    optimisation instead, a Lean file stating that the two programs are equivalent. -/
+def runOpt (p : Parsed) : IO UInt32 :=
+  let infer := p.hasFlag "infer"
+  if p.hasFlag "cert" then
+    writeAndCheck (Commands.optCert (infer := infer)) "opt.lean"
+      "certificate checked by Lean: the optimised program is equivalent to the program" p
+  else runWith (Commands.opt (infer := infer)) p
 
 /-- `diva prove`: write a Lean file stating that the functions meet their contracts.
     With `--oracle CMD`, the command `CMD` completes the proofs that Lean doesn't accept. -/
@@ -218,6 +226,9 @@ def optCmd : Cmd := `[Cli|
   "Optimize the program and print it."
   FLAGS:
     infer; "Give each function without a contract the contract that the analysis infers (see `diva hints`). Its `requires` is checked at run time, and the optimizer uses it."
+    cert; "Write a certificate instead: a Lean file stating that the optimized program is equivalent to the program."
+    check; "With `--cert`, also run Lean on the certificate. Exits with 1 if Lean rejects it."
+    o, output : String; "With `--cert`, the certificate file to write. By default `<name>.lean` for `<name>.ml`, `opt.lean` for `-`."
   ARGS:
     file : String; "The program (`-` reads the standard input)."
 ]

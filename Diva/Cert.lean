@@ -1,5 +1,6 @@
 import Diva.AbsInt.ItvDomain
 import Diva.AbsInt.MayFail
+import Diva.Opt
 
 /-!
 # Certificates (untrusted)
@@ -98,6 +99,39 @@ def hints : Diva.AbsInt.Hints Diva.AbsInt.Itv := {hints H}
 theorem program_safe \{μ μ' : Diva.Store} \{k : Diva.Err} :
     ¬ Diva.Eval [] μ program (.err k) μ' :=
   Diva.AbsInt.safe (H := hints) (by decide +kernel)
+"
+
+/-- The certificate of the optimisation of `e`, with the hints `H`: a Lean file stating
+    that `e` and its optimised version `opt H [] e` are equivalent. The kernel runs
+    `opt` with `H` to check that the printed program is that version. It doesn't run
+    the inference that gave `H`. -/
+def optCertificate (H : Hints Itv) (e : Expr) : String :=
+  s!"import Diva.AbsInt.ItvDomain
+import Diva.OptSound
+
+/-! Certificate written by `diva opt --cert`. The theorem `optimized_correct` states
+that `optimized` is equivalent to `source`. -/
+
+/-- The program. -/
+def source : Diva.Expr :=
+  {expr e}
+
+/-- The hints of the analysis. `opt` uses them to choose what to rewrite. -/
+def hints : Diva.AbsInt.Hints Diva.AbsInt.Itv := {hints H}
+
+/-- The optimised program. -/
+def optimized : Diva.Expr :=
+  {expr (Opt.opt H ([] : AEnv Itv) e)}
+
+/-- `opt`, run by the kernel with the hints, gives `optimized`. -/
+theorem opt_source : Diva.Opt.opt hints ([] : Diva.AbsInt.AEnv Diva.AbsInt.Itv) source = optimized := by
+  decide +kernel
+
+/-- `optimized` is equivalent to `source`: if one of them gives an outcome, the other
+    gives a related outcome, with related stores. Related values are equal, except
+    closures, whose bodies may be optimised. -/
+theorem optimized_correct : Diva.Opt.Equiv hints source optimized :=
+  opt_source ▸ Diva.Opt.opt_correct hints source
 "
 
 end Diva.Cert

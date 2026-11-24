@@ -77,7 +77,7 @@ inductive Expr where
     -- `try e with k -> h`: catch any exception as `k`
   | exnCase : Expr → String → String → Expr → Expr → Expr
     -- `match e1 with E x -> e2 | _ -> e3`: test the tag of the exception `e1`
-  deriving Inhabited, BEq
+  deriving Inhabited, BEq, DecidableEq
 
 /-- `e` contains no call and doesn't have side effects on the store (no `Array.make`,
     `<-`, `ref` or `:=`). Such expressions can be optimized and replaced by their

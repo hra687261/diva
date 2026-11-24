@@ -2347,14 +2347,19 @@ theorem sim_bwd {H : Hints A} {ρ' : Env} {μ' μ₁' : Store} {e' : Expr} {r' :
 
 /-! ## The theorem -/
 
-/-- **The optimiser preserves the meaning of programs.** -/
-theorem optimize_correct (e : Expr) :
-    Equiv (inferHints ([] : AEnv A) e) e (optimize ([] : AEnv A) e) := by
-  have ho := optimizes_opt (inferHints ([] : AEnv A) e) e []
+/-- **The optimiser preserves the meaning of programs**, whatever the hints `H`. The
+    hints only decide what `opt` rewrites: `opt` checks each fact that it uses. -/
+theorem opt_correct (H : Hints A) (e : Expr) : Equiv H e (opt H ([] : AEnv A) e) := by
+  have ho := optimizes_opt H e []
   constructor
   · intro r μ h
     exact sim_fwd h AEnv.Describes.nil AEnv.Bound.nil ho EnvRel.nil StoreRel.nil
   · intro r' μ' h'
     exact sim_bwd h' AEnv.Describes.nil AEnv.Bound.nil ho EnvRel.nil StoreRel.nil
+
+/-- **The optimiser preserves the meaning of programs**, with the inferred hints. -/
+theorem optimize_correct (e : Expr) :
+    Equiv (inferHints ([] : AEnv A) e) e (optimize ([] : AEnv A) e) :=
+  opt_correct _ e
 
 end Diva.Opt

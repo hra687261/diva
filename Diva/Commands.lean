@@ -21,7 +21,8 @@ the file and prints.
 - `run`: evaluate the program and print its value.
 - `check`: say where the program may fail, or that it can't fail. With an oracle
   (`checkOracle`), if the check fails, an LLM is told where, and proposes hints.
-- `opt`: print the optimised program.
+- `opt`: print the optimised program. With `--cert` (`optCert`), print a Lean file
+  stating that the optimised program is equivalent to the program.
 - `hints`: print the hints inferred for the program, one per line.
 - `cert`: print a certificate, a Lean file stating that the program can't fail.
 - `prove`: print a Lean file stating that the functions meet their contracts. With an
@@ -106,6 +107,17 @@ def opt (src : String) (infer : Bool := false) : Result :=
     let items := if infer then (SpecOfHints.inferContracts items).1 else items
     let e := (resolve [] (Item.toExpr items)).run' {}
     { out := [Report.clean (toString (Opt.optimize ([] : AEnv Itv) e))] }
+
+/-- `diva opt --cert`: like `opt`, but print the certificate of the optimisation
+    (`Cert.optCertificate`): a Lean file stating that the program and its optimised
+    version are equivalent. -/
+def optCert (src : String) (infer : Bool := false) : Result :=
+  match parseItems src with
+  | .error msg => { err := [s!"parse error: {msg}"], code := 1 }
+  | .ok items =>
+    let items := if infer then (SpecOfHints.inferContracts items).1 else items
+    let e := (resolve [] (Item.toExpr items)).run' {}
+    { out := [Cert.optCertificate (inferHints ([] : AEnv Itv) e) e] }
 
 /-- `diva hints`: parse the program `src`, infer its hints, and print them, one per
     line, as `name : values`. A hint gives the values that a function parameter can
