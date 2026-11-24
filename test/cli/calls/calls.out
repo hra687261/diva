@@ -7,7 +7,7 @@ no runtime error is possible
 [exit 0]
 
 $ diva opt calls.ml
-(let double = (fun x -> (x + x)) in (let quad = (fun x -> (double (double x))) in (quad 3)))
+(let double = (fun x -> (x + x)) in (let quad = (fun x -> (let _ = (assert (x >= 0)) in (double (double x)))) in (quad 3)))
 [exit 0]
 
 $ diva hints calls.ml

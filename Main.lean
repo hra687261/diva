@@ -71,7 +71,7 @@ def runCheck (p : Parsed) : IO UInt32 :=
   | some cmd =>
     runWith' (Commands.checkOracle (oracleOf p (cmd.as! String)) (rounds p)) p
 
-def runOpt := runWith Commands.opt
+def runOpt (p : Parsed) : IO UInt32 := runWith (Commands.opt (infer := p.hasFlag "infer")) p
 def runHints := runWith Commands.hints
 
 /-- The folder of Diva's compiled modules (`.olean` files): `../lib/lean`, starting from
@@ -216,6 +216,8 @@ def checkCmd : Cmd := `[Cli|
 def optCmd : Cmd := `[Cli|
   opt VIA runOpt;
   "Optimize the program and print it."
+  FLAGS:
+    infer; "Give each function without a contract the contract that the analysis infers (see `diva hints`). Its `requires` is checked at run time, and the optimizer uses it."
   ARGS:
     file : String; "The program (`-` reads the standard input)."
 ]

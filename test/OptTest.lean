@@ -85,3 +85,13 @@ private def sameResult (s : String) : Bool :=
 #guard sameResult "let f x = if x < 3 then (assert (x < 5); x) else 0 in f 1"
 #guard sameResult "let f x = if x < 3 then 0 + (1 * x) / 1 else 0 in f 2"
 #guard sameResult "let f x = x + 0 in f true"
+
+-- after the two tests, `x` is in `[-3, 3]`, so `x * x` is in `[0, 9]`, and
+-- `x * x < 0` is `false`. Without the rule for squares (`sqInt`), `mul` would give
+-- `[-9, 9]`, as for `-3 * 3`, and the branch with `1` would stay.
+#guard optimized "fun x -> if x < 0 - 3 then 0 else if x > 3 then 0 else if x * x < 0 then 1 else 2" ==
+  some "(fun x -> (if (x < -3) then 0 else (if (x > 3) then 0 else 2)))"
+
+-- after `assert c;`, `c` holds: the `assert` stays, but `x < 0` is `false` after it
+#guard optimized "fun x -> assert (x >= 0); if x < 0 then 1 else 2" ==
+  some "(fun x -> (let _ = (assert (x >= 0)) in 2))"

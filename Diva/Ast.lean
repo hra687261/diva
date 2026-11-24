@@ -160,4 +160,29 @@ structure Spec where
   ensures : List Term := []
   deriving Inhabited, Repr, BEq
 
+/-- A declaration `let f ... = e` or `let rec f x ... = e`, without what follows
+    it. -/
+inductive Binding where
+  /-- `let f = e`. For `let f x y = e`, `e` is `fun x y -> e`. -/
+  | val : String → Expr → Binding
+  /-- `let rec f x = e`. For `let rec f x y = e`, `e` is `fun y -> e`. -/
+  | recFn : String → String → Expr → Binding
+  deriving BEq
+
+/-- The name the declaration defines. -/
+def Binding.name : Binding → String
+  | .val f _ | .recFn f _ _ => f
+
+/-- The declaration, followed by `e`. -/
+def Binding.bind : Binding → Expr → Expr
+  | .val f a, e => .letin f a e
+  | .recFn f x a, e => .letrec f x a e
+
+/-- A top-level item: a declaration `let f x = e` (without `in`), with the contract
+    that follows it if there is one, or an expression. -/
+inductive Item where
+  | decl : Binding → Option Spec → Item
+  | expr : Expr → Item
+  deriving BEq
+
 end Diva

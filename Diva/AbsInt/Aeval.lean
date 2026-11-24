@@ -122,6 +122,18 @@ def abinop [NumDomain A] : BinOp → AVal A → AVal A → AVal A
   | .eq, a, b => ofCmp (eqCmp a b)
   | .ne, a, b => ofCmp (eqCmp a b).swap
 
+/-- The square of an integer that `a` describes. It is `≥ 0`, which `mul a a` alone
+    doesn't say: for `a = [-1, 2]`, `mul a a` is `[-2, 4]`. `[0, +∞]` is what
+    `assumeLe` keeps of `top` above `0`. -/
+def sqInt [NumDomain A] (a : A) : A := meet (mul a a) (assumeLe (const 0) (top : A)).2
+
+/-- A binary operator on the expressions `ea` and `eb`, whose values `a` and `b`
+    describe. `x * x`, with the same name on both sides, is a square (`sqInt`). -/
+def abinopE [NumDomain A] (op : BinOp) (ea eb : Expr) (a b : AVal A) : AVal A :=
+  match op, ea, eb with
+  | .mul, .var x, .var y => if x = y then AVal.ofInt (sqInt a.int) else abinop op a b
+  | _, _, _ => abinop op a b
+
 /-- Join the results of the branches that can be taken (`none`: dead branch). -/
 def joinOpt [NumDomain A] : Option (AVal A) → Option (AVal A) → AVal A
   | some a, some b => a.join b
@@ -229,7 +241,7 @@ def aevalM [NumDomain A] (opt : Bool) (H : Hints A) (σ : AEnv A) : Expr → AVa
   | .nil => AVal.listOf Flat.bot
   | .cons a b => (aevalM opt H σ a).cons (aevalM opt H σ b)
   | .var x => σ.get x
-  | .binop op a b => abinop op (aevalM opt H σ a) (aevalM opt H σ b)
+  | .binop op a b => abinopE op a b (aevalM opt H σ a) (aevalM opt H σ b)
   | .letin x e1 e2 => aevalM opt H ((x, aevalM opt H σ e1) :: σ) e2
   | .lam x b =>
     -- the body, analysed with `x` in its precondition
@@ -928,6 +940,47 @@ theorem abinop_sound [NumDomain A] {op : BinOp} {a b : AVal A} {va vb v : Value}
   case gt => cases h; exact AVal.mem_bools (cmpLt_sound hb ha)
   case ge => cases h; exact AVal.mem_bools (cmpLe_sound hb ha)
 
+/-- A square is `≥ 0`. -/
+theorem mul_self_nonneg (n : Int) : 0 ≤ n * n := by
+  cases Int.le_total 0 n with
+  | inl h => exact Int.mul_nonneg h h
+  | inr h => exact Int.mul_nonneg_of_nonpos_of_nonpos h h
+
+theorem sqInt_sound [NumDomain A] {a : A} {n : Int} (h : γ a n) : γ (sqInt a) (n * n) := by
+  have hmul := mul_sound h h
+  -- `n * n ≥ 0`, so `n * n` is in what `assumeLe` keeps of `top`
+  have hpos := (assumeLe_sound (const_sound (A := A) 0) (top_sound (A := A) (n * n))
+    (mul_self_nonneg n)).2
+  exact meet_sound hmul hpos
+
+/-- `abinopE` is sound. `hea` and `heb` are the runs of `ea` and `eb`. For `x * x`, they
+    give the same value, because they look up the same name. -/
+theorem abinopE_sound [NumDomain A] {op : BinOp} {ea eb : Expr} {a b : AVal A}
+    {ρ : Env} {μ μ₁ μ₂ : Store} {va vb v : Value}
+    (hea : Eval ρ μ ea (.ok va) μ₁) (heb : Eval ρ μ₁ eb (.ok vb) μ₂)
+    (ha : a.mem va) (hb : b.mem vb) (h : op.denote va vb = .ok v) :
+    (abinopE op ea eb a b).mem v := by
+  unfold abinopE
+  split
+  next x y =>
+    split
+    next hxy =>
+      subst hxy
+      -- both sides look up `x`, so they have the same value
+      cases hea with
+      | var hx =>
+        cases heb with
+        | var hy =>
+          rw [hx] at hy
+          cases hy
+          obtain ⟨n, m, rfl, hm⟩ := denote_ints (by simp) h
+          cases hm
+          simp only [BinOp.denote] at h
+          cases h
+          exact .flat (sqInt_sound (AVal.mem_int ha))
+    next => exact abinop_sound ha hb h
+  next => exact abinop_sound ha hb h
+
 /-- If `c` evaluates to `b`, `σ.assume c b` is possible and still describes `ρ`. -/
 theorem AEnv.assume_sound [NumDomain A] {σ : AEnv A} {ρ : Env} {μ μ' : Store} {c : Expr}
     {b : Bool} (hσ : σ.Describes ρ) (h : Eval ρ μ c (.ok (.bool b)) μ') :
@@ -1184,9 +1237,9 @@ theorem aeval_sound_aux [NumDomain A] {ρ : Env} {μ μ' : Store} {e : Expr} {r 
     intro H σ v hσ hB hr
     cases hr
     exact apply_sound (ihf hσ hB rfl) (iha hσ hB rfl) hbody (fun _ _ hd hb => ihb hd hb rfl)
-  | binop _ _ iha ihb =>
+  | binop hea heb iha ihb =>
     intro H σ v hσ hB hr
-    exact abinop_sound (iha hσ hB rfl) (ihb hσ hB rfl) hr
+    exact abinopE_sound hea heb (iha hσ hB rfl) (ihb hσ hB rfl) hr
   | letin _ _ ih1 ih2 =>
     intro H σ v hσ hB hr
     exact ih2 (hσ.cons (ih1 hσ hB rfl)) hB.cons hr

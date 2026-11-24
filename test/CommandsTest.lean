@@ -49,3 +49,11 @@ list := false, fn := false, loc := false, exn := false })]"
   ["count"]
 #guard (SpecOfHints.inferContracts ((parseItems "let f x = x\n;; f true").toOption.getD [])).2 ==
   []
+
+-- `requires` is checked when the function is called: a call that breaks it fails. The
+-- header `r = f y` names the parameter `y`, which is `x` in the code.
+#guard run "let f x = x\n(*@ requires x >= 0 *)\n;; f (0 - 1)" ==
+  { err := ["runtime error: assertion failed"], code := 1 }
+#guard run "let f x = x\n(*@ r = f y\n    requires y >= 0 *)\n;; f (0 - 1)" ==
+  { err := ["runtime error: assertion failed"], code := 1 }
+#guard run "let f x = x\n(*@ requires x >= 0 *)\n;; f 2" == { out := ["2"] }

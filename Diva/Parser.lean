@@ -1,5 +1,5 @@
 import ParseIt
-import Diva.Ast
+import Diva.Desugar
 
 open Std
 open ParseIt ParseIt.Char
@@ -95,24 +95,6 @@ where
     | [] => .raise (.var "%exn")
     | (.tag c x, h) :: rest => .exnCase (.var "%exn") c x h (go rest)
     | (.any k, h) :: _ => .letin k (.var "%exn") h
-
-/-- A declaration `let f ... = e` or `let rec f x ... = e`, without what follows
-    it. -/
-inductive Binding where
-  /-- `let f = e`. For `let f x y = e`, `e` is `fun x y -> e`. -/
-  | val : String → Expr → Binding
-  /-- `let rec f x = e`. For `let rec f x y = e`, `e` is `fun y -> e`. -/
-  | recFn : String → String → Expr → Binding
-  deriving BEq
-
-/-- The name the declaration defines. -/
-def Binding.name : Binding → String
-  | .val f _ | .recFn f _ _ => f
-
-/-- The declaration, followed by `e`. -/
-def Binding.bind : Binding → Expr → Expr
-  | .val f a, e => .letin f a e
-  | .recFn f x a, e => .letrec f x a e
 
 /-! ### Expression grammar -/
 
@@ -465,13 +447,6 @@ def specComment : P Spec := do
            requires := clauses.filterMap fun (r, t) => if r then some t else none,
            ensures := clauses.filterMap fun (r, t) => if r then none else some t }
 
-/-- A top-level item: a declaration `let f x = e` (without `in`), with the contract
-    that follows it if there is one, or an expression. -/
-inductive Item where
-  | decl : Binding → Option Spec → Item
-  | expr : Expr → Item
-  deriving BEq
-
 def declItem : P Item := do
   let b ← binding
   let s ← option? specComment
@@ -481,14 +456,6 @@ def item : P Item :=
   (Item.expr <$> letinxpr) <|>
   declItem <|>
   (Item.expr <$> seqExpr)
-
-/-- A program is nested `let`s ending in the value of its last item. -/
-def Item.toExpr : List Item → Expr
-  | [] => .unit
-  | [.expr e] => e
-  | .expr e :: r => .letin "_" e (Item.toExpr r)
-  | [.decl b _] => b.bind (.var b.name)
-  | .decl b _ :: r => b.bind (Item.toExpr r)
 
 /-- The top-level items of a program.
     As in OCaml, `;;` is optional between declarations but required before an

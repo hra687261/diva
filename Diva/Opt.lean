@@ -89,6 +89,13 @@ def bodyEnv (H : Hints A) (σ : AEnv A) (s : Option String) (x : String) (b : Ex
   | none => (x, AVal.top) :: σ
   | some f => (x, AVal.top) :: (f, letrecVal H σ f x b) :: σ
 
+/-- The abstract environment after `e1` in `let x = e1 in e2`. After `assert c`, the
+    condition `c` holds: otherwise the run has already failed. So `c` narrows `σ`, as
+    in the `then` branch of an `if`. `assert c; e2` is `let _ = assert c in e2`. -/
+def afterAssert (σ : AEnv A) : Expr → AEnv A
+  | .assert c => (σ.assume c true).getD σ
+  | _ => σ
+
 /-- `e` optimised. The environments are those of `aeval`, except for function
     bodies (`bodyEnv`). -/
 def opt (H : Hints A) (σ : AEnv A) (e : Expr) : Expr :=
@@ -101,7 +108,8 @@ def opt (H : Hints A) (σ : AEnv A) (e : Expr) : Expr :=
       .letrec f x (opt H (bodyEnv H σ (some f) x b) b)
         (opt H ((f, letrecVal H σ f x b) :: σ) e2)
     | .app f a => .app (opt H σ f) (opt H σ a)
-    | .letin x e1 e2 => .letin x (opt H σ e1) (opt H ((x, aeval H σ e1) :: σ) e2)
+    | .letin x e1 e2 =>
+      .letin x (opt H σ e1) (opt H ((x, aeval H σ e1) :: afterAssert σ e1) e2)
     | .binop op a b =>
       -- `a + 0`, `a - 0`, `a * 1`, `a / 1` become `a`, and `0 + b`, `1 * b` become `b`
       if rightIdentity H σ op a b then opt H σ a

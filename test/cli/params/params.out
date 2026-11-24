@@ -7,7 +7,7 @@ no runtime error is possible
 [exit 0]
 
 $ diva opt params.ml
-(let rec mul a = (fun b -> (if (b <= 0) then 0 else (a + ((mul a) (b - 1))))) in (let max = (fun a -> (fun b -> (if (a < b) then b else a))) in (let max3 = (fun a -> (fun b -> (fun c -> ((max ((max a) b)) c)))) in (let area = (fun w -> (fun h -> ((mul ((max w) 0)) h))) in ((area (((max3 1) 5) 2)) 3)))))
+(let rec mul a = (fun b -> (let _ = (assert (a >= 0)) in (if (b <= 0) then 0 else (a + ((mul a) (b - 1)))))) in (let max = (fun a -> (fun b -> (if (a < b) then b else a))) in (let max3 = (fun a -> (fun b -> (fun c -> ((max ((max a) b)) c)))) in (let area = (fun w -> (fun h -> ((mul ((max w) 0)) h))) in ((area (((max3 1) 5) 2)) 3)))))
 [exit 0]
 
 $ diva hints params.ml

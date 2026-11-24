@@ -74,6 +74,8 @@ t ::= n | x | y | r                  -- an integer, a parameter, the result
 - `requires` can use only the parameters. `ensures` can use the parameters and the
   result `r`.
 - There can be several `requires` and several `ensures`, or none.
+- `requires` is checked at run time, once the function has all its arguments: a call
+  that breaks it fails, as an `assert` does. `ensures` isn't checked at run time.
 - Without the header `r = f x y`, the parameters have the names of the code, and the
   result is `result`.
 - In `diva prove`, the parameters and the result are integers.

@@ -30,6 +30,20 @@ open AbsInt AbsDomain NumDomain
 
 variable {A : Type} [NumDomain A]
 
+/-- After `assert c`, when `c` is `true`, narrowing `σ` by `c` still gives the real
+    values of `ρ`. -/
+theorem afterAssert_sound {σ : AEnv A} {ρ : Env} {μ μ' : Store} {e1 : Expr} {v : Value}
+    (hσ : σ.Describes ρ) (hB : σ.Bound ρ) (h : Eval ρ μ e1 (.ok v) μ') :
+    (afterAssert σ e1).Describes ρ ∧ (afterAssert σ e1).Bound ρ := by
+  cases e1
+  case assert c =>
+    cases h with
+    | assert hc =>
+      obtain ⟨σ', hs, hd⟩ := σ.assume_sound hσ hc
+      simp only [afterAssert, hs, Option.getD_some]
+      exact ⟨hd, AEnv.assume_bound hB hs⟩
+  all_goals exact ⟨hσ, hB⟩
+
 /-! ## The optimiser as a relation -/
 
 mutual
@@ -73,7 +87,7 @@ inductive OptStep (H : Hints A) : AEnv A → Expr → Expr → Prop where
   | app {σ f f' a a'} :
       Optimizes H σ f f' → Optimizes H σ a a' → OptStep H σ (.app f a) (.app f' a')
   | letin {σ x e1 e1' e2 e2'} :
-      Optimizes H σ e1 e1' → Optimizes H ((x, aeval H σ e1) :: σ) e2 e2' →
+      Optimizes H σ e1 e1' → Optimizes H ((x, aeval H σ e1) :: afterAssert σ e1) e2 e2' →
       OptStep H σ (.letin x e1 e2) (.letin x e1' e2')
   | binop {σ op a a' b b'} :
       Optimizes H σ a a' → Optimizes H σ b b' →
@@ -1312,8 +1326,10 @@ theorem sim_fwd_step {H : Hints A} {ρ : Env} {μ μ₁ : Store} {e : Expr} {r :
       obtain ⟨r1', μ₁', h1', hr1, hμ₁⟩ := lift_fwd h1 ih1 hσ hB ho1 hρ hμ
       cases hr1 with
       | ok hv1 =>
+        -- after `assert c`, `σ` is narrowed by `c` (`afterAssert`)
+        obtain ⟨hd, hb⟩ := afterAssert_sound hσ hB h1
         obtain ⟨r', μ₂', h2', hr, hμ₂⟩ :=
-          lift_fwd h2 ih2 (hσ.cons (aeval_sound hσ hB h1)) hB.cons ho2 (hρ.cons hv1) hμ₁
+          lift_fwd h2 ih2 (hd.cons (aeval_sound hσ hB h1)) hb.cons ho2 (hρ.cons hv1) hμ₁
         exact ⟨_, _, .letin h1' h2', hr, hμ₂⟩
   | letinErr h1 ih1 =>
     cases ho with
@@ -1901,8 +1917,9 @@ theorem sim_bwd_step {H : Hints A} {ρ' : Env} {μ' μ₁' : Store} {e' : Expr} 
       obtain ⟨r1', μ₁', h1', hr1, hμ₁⟩ := lift_bwd h1 ih1 hσ hB ho1 hρ hμ
       cases hr1 with
       | ok hv1 =>
+        obtain ⟨hd, hb⟩ := afterAssert_sound hσ hB h1'
         obtain ⟨r', μ₂', h2', hr, hμ₂⟩ :=
-          lift_bwd h2 ih2 (hσ.cons (aeval_sound hσ hB h1')) hB.cons ho2 (hρ.cons hv1) hμ₁
+          lift_bwd h2 ih2 (hd.cons (aeval_sound hσ hB h1')) hb.cons ho2 (hρ.cons hv1) hμ₁
         exact ⟨_, _, .letin h1' h2', hr, hμ₂⟩
   | letinErr h1 ih1 =>
     cases ho with

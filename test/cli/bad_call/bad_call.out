@@ -1,14 +1,15 @@
 $ diva run bad_call.ml
-runtime error: division by zero
+runtime error: assertion failed
 [exit 1]
 
 $ diva check bad_call.ml
+`(assert (x <> 0))` may fail
 `(100 / x)`: possible division by zero (divisor: 0)
 `(inv 0)`: the function called may fail
 [exit 1]
 
 $ diva opt bad_call.ml
-(let inv = (fun x -> (100 / x)) in (inv 0))
+(let inv = (fun x -> (let _ = (assert (x <> 0)) in (100 / x))) in (inv 0))
 [exit 0]
 
 $ diva hints bad_call.ml

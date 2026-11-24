@@ -94,9 +94,18 @@ def checkOracle [Monad m] (oracle : String → m String) (rounds : Nat) (src : S
              code := if mayFail H [] e then 1 else 0 }
 
 /-- `diva opt`: parse the program `src`, optimise it using what the analysis knows
-    about its values, and print the optimised program. -/
-def opt (src : String) : Result :=
-  withParse src fun e => { out := [Report.clean (toString (Opt.optimize ([] : AEnv Itv) e))] }
+    about its values, and print the optimised program. With `infer`, each function
+    without a contract first gets the contract that the analysis infers
+    (`SpecOfHints.inferContracts`). Its `requires` is then checked at the start of the
+    function, as for the contracts in the source. In the body, after that check, the
+    optimiser knows the precondition. -/
+def opt (src : String) (infer : Bool := false) : Result :=
+  match parseItems src with
+  | .error msg => { err := [s!"parse error: {msg}"], code := 1 }
+  | .ok items =>
+    let items := if infer then (SpecOfHints.inferContracts items).1 else items
+    let e := (resolve [] (Item.toExpr items)).run' {}
+    { out := [Report.clean (toString (Opt.optimize ([] : AEnv Itv) e))] }
 
 /-- `diva hints`: parse the program `src`, infer its hints, and print them, one per
     line, as `name : values`. A hint gives the values that a function parameter can

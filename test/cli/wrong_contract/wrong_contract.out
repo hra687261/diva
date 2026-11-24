@@ -7,7 +7,7 @@ no runtime error is possible
 [exit 0]
 
 $ diva opt wrong_contract.ml
-(let rec sum n = (if (n <= 0) then 0 else (n + (sum (n - 1)))) in (sum 10))
+(let rec sum n = (let _ = (assert (n >= 0)) in (if (n <= 0) then 0 else (n + (sum (n - 1))))) in (sum 10))
 [exit 0]
 
 $ diva hints wrong_contract.ml

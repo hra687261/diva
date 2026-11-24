@@ -1,1 +1,2 @@
 prove --infer --check -o prove.lean
+opt --infer
