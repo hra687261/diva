@@ -94,7 +94,7 @@ def checkOracle [Monad m] (oracle : String → m String) (rounds : Nat) (src : S
   match parseLoc src with
   | .error msg => return parseError file msg
   | .ok ⟨e, l⟩ => do
-    let rs ← Oracle.consult oracle ([] : AEnv Itv) e rounds
+    let rs ← Oracle.consult oracle ([] : AEnv Itv) e rounds (file.map fun f => ⟨f, src, l⟩)
     let shown := rs.zipIdx.flatMap fun (r, i) =>
       [s!"round {i + 1}: the oracle proposes"] ++
         (match r.error with

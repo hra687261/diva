@@ -44,6 +44,13 @@ structure LExpr where
   loc : Loc
   deriving Inhabited
 
+/-- A user-provided program: the name of its file, its text, and the positions of
+    its expression. -/
+structure Source where
+  file : String
+  text : String
+  loc : Loc
+
 /-- The line (from 1) and the column (from 0) of the byte `off` of `src`. -/
 def lineCol (src : String) (off : Nat) : Nat × Nat := Id.run do
   let mut line := 1

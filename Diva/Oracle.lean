@@ -60,23 +60,38 @@ def render (H : Hints A) : String :=
 def verifies (σ : AEnv A) (e : Expr) (fixed : Hints A) : Bool :=
   !mayFail (inferHints σ e fixed) σ e
 
+/-- `s` with two spaces at the start of each line. -/
+private def indent (s : String) : String :=
+  "\n".intercalate ((s.trimAsciiEnd.toString.splitOn "\n").map ("  " ++ ·))
+
 /-- The question to the oracle about the program `e`. `fixed` are the hints of the
     previous answer, and `rejected` says why it was rejected (`none` in the first
-    round). -/
-def prompt (σ : AEnv A) (e : Expr) (fixed : Hints A) (rejected : Option String) : String :=
+    round). With `src`, the question also shows the source, and the places where the
+    program may fail have their positions in it. -/
+def prompt (σ : AEnv A) (e : Expr) (fixed : Hints A) (rejected : Option String)
+    (src : Option Source := none) : String :=
   let rejected := match rejected with
     | none => ""
     | some why => s!"\nYour previous answer was rejected: {why}\n"
+  let source := match src with
+    | none => ""
+    | some s => s!"The source, in `{s.file}`:\n\n{indent s.text}\n\n"
+  let place (sp : Span) : String := match src with
+    | none => ""
+    | some s => sp.format s.text s.file
+  let loc := (src.map (·.loc)).getD default
+  let positions := if src.isSome then " (`file:line:col-col`, lines from 1, columns from 0)" else ""
   s!"DIVA, a verifier for a small ML-like language, can't prove that this program never
 fails (division by zero, failed `assert`, type error).
 
-The program (each parameter and each recursive function has a unique name):
+{source}The program as DIVA reads it (each parameter and each recursive function has a
+unique name):
 
   {ppExpr e}
 
-Where it may fail:
+Where it may fail{positions}:
 
-{"\n".intercalate ((Report.report σ e fixed).map ("  " ++ ·))}
+{"\n".intercalate ((Report.report σ e fixed loc place).map ("  " ++ ·))}
 
 What DIVA knows about the values (`x` is the parameter `x`, `$f` is the result of the
 function `f`):
@@ -101,16 +116,17 @@ structure Round (A : Type) where
   accepted : Bool
 
 /-- Ask `oracle` for hints, at most `rounds` times, until the program `e` is safe with
-    them. `σ` describes the free variables of `e`. Returns the rounds. If `e` is safe
+    them. `σ` describes the free variables of `e`. `src` is the source of `e`, for the
+    positions in the questions. Returns the rounds. If `e` is safe
     without hints, the oracle isn't asked. -/
 def consult [Monad m] (oracle : String → m String) (σ : AEnv A) (e : Expr)
-    (rounds : Nat := 3) : m (List (Round A)) :=
+    (rounds : Nat := 3) (src : Option Source := none) : m (List (Round A)) :=
   if verifies σ e [] then return [] else go rounds [] none
 where
   go : Nat → Hints A → Option String → m (List (Round A))
     | 0, _, _ => return []
     | k + 1, fixed, rejected => do
-      let answer ← oracle (prompt σ e fixed rejected)
+      let answer ← oracle (prompt σ e fixed rejected src)
       match parseFacts (hintKeys e).eraseDups answer with
       | .error msg =>
         return { hints := [], error := some msg, accepted := false } ::

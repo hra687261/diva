@@ -48,3 +48,14 @@ def always (answer : String) : String → Id String := fun _ => answer
    "`(10 / (f 0))`: possible division by zero (divisor: [-5, +∞])"]
 -- a safe program: the oracle isn't asked
 #guard (Commands.checkOracle (always "") 3 "10 / 2").out == ["no runtime error is possible"]
+
+-- with the source, the question shows it, and the places where the program may fail
+-- have their positions in it
+#guard
+  let src := "let rec f n = if n >= 100 then n - 105 else f (n + 2)\n;; 10 / f 0"
+  match parseLoc src with
+  | .ok ⟨e, l⟩ =>
+    let lines := (prompt ([] : AEnv Itv) e [] none (some ⟨"f.ml", src, l⟩)).splitOn "\n"
+    lines.contains "  ;; 10 / f 0" &&
+      lines.contains "  f.ml:2:3-11: `(10 / (f 0))`: possible division by zero (divisor: [-5, +∞])"
+  | .error _ => false
