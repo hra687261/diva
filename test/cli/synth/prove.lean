@@ -33,3 +33,14 @@ theorem abs_body : abs_fn.BodyOk .none [] := by
     `requires` gives a result that satisfies `ensures`. -/
 theorem abs_correct : abs_fn.Meets :=
   RecFun.meets_of_verified (S := .none) (Γ := []) ⟨trivial, abs_body⟩
+
+/-- The obligation of the top-level expression `(abs (0 - 7))`. Each call in it must
+    get arguments that satisfy `requires`. If the proof fails, write one by hand. -/
+theorem top1_wp (μ : Store) :
+    wp .none [abs_fn] (.app (.var "abs") (.binop .sub (.int 0) (.int 7))) (fun _ _ => True) [("abs", abs_fn.clos)] μ := by
+  simp [abs_fn, wp, BinOp.denote, Value.isBool, List.lookup, callEnv, RecFun.clos]
+  all_goals split_omega
+
+/-- The top-level expression `(abs (0 - 7))` runs without error. -/
+theorem top1_safe (μ : Store) : Holds (.app (.var "abs") (.binop .sub (.int 0) (.int 7))) (fun _ _ => True) [("abs", abs_fn.clos)] μ :=
+  Holds.of_wp (S := .none) (Γ := [abs_fn]) ⟨trivial, abs_body⟩ (top1_wp μ)

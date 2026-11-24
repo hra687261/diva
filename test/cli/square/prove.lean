@@ -35,3 +35,14 @@ theorem square_body : square_fn.BodyOk .none [] := by
     `requires` gives a result that satisfies `ensures`. -/
 theorem square_correct : square_fn.Meets :=
   RecFun.meets_of_verified (S := .none) (Γ := []) ⟨trivial, square_body⟩
+
+/-- The obligation of the top-level expression `(square 3)`. Each call in it must
+    get arguments that satisfy `requires`. If the proof fails, write one by hand. -/
+theorem top1_wp (μ : Store) :
+    wp .none [square_fn] (.app (.var "square") (.int 3)) (fun _ _ => True) [("square", square_fn.clos)] μ := by
+  simp [square_fn, wp, BinOp.denote, Value.isBool, List.lookup, callEnv, RecFun.clos]
+  all_goals split_omega
+
+/-- The top-level expression `(square 3)` runs without error. -/
+theorem top1_safe (μ : Store) : Holds (.app (.var "square") (.int 3)) (fun _ _ => True) [("square", square_fn.clos)] μ :=
+  Holds.of_wp (S := .none) (Γ := [square_fn]) ⟨trivial, square_body⟩ (top1_wp μ)

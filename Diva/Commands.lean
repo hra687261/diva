@@ -143,7 +143,7 @@ def proveOracle [Monad m] (oracle : String → m String) (lean : String → m (O
   | .ok items =>
     match ← (ProveOracle.consult oracle lean check items rounds).run with
     | .error msg => return { err := [msg], code := 1 }
-    | .ok ⟨log, none⟩ => return { out := log ++ ["checked by Lean: the functions meet their contracts"] }
+    | .ok ⟨log, none⟩ => return { out := log ++ ["checked by Lean: the functions meet their contracts, and the top-level expressions don't fail"] }
     | .ok ⟨log, some errors⟩ => return { out := log, err := [errors], code := 1 }
 
 /-- `diva spec --oracle`: parse the program `src`, and ask `oracle` for the contracts of

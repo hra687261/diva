@@ -146,7 +146,7 @@ def runCert := writeAndCheck Commands.cert "cert.lean"
 def runProve (p : Parsed) : IO UInt32 :=
   match p.flag? "oracle" with
   | none => writeAndCheck (Commands.prove (infer := p.hasFlag "infer")) "prove.lean"
-      "checked by Lean: the functions meet their contracts" p
+      "checked by Lean: the functions meet their contracts, and the top-level expressions don't fail" p
   | some cmd => do
     let path := p.positionalArg! "file" |>.as! String
     let output := outFile p path "prove.lean"

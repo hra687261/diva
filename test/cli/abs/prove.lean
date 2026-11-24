@@ -61,3 +61,14 @@ theorem dist_body : dist_fn.BodyOk .none [abs_fn] := by
     `requires` gives a result that satisfies `ensures`. -/
 theorem dist_correct : dist_fn.Meets :=
   RecFun.meets_of_verified (S := .none) (Γ := [abs_fn]) ⟨⟨trivial, abs_body⟩, dist_body⟩
+
+/-- The obligation of the top-level expression `(dist 3)`. Each call in it must
+    get arguments that satisfy `requires`. If the proof fails, write one by hand. -/
+theorem top1_wp (μ : Store) :
+    wp .none [dist_fn, abs_fn] (.app (.var "dist") (.int 3)) (fun _ _ => True) [("dist", dist_fn.clos), ("abs", abs_fn.clos)] μ := by
+  simp [dist_fn, abs_fn, wp, BinOp.denote, Value.isBool, List.lookup, callEnv, RecFun.clos]
+  all_goals split_omega
+
+/-- The top-level expression `(dist 3)` runs without error. -/
+theorem top1_safe (μ : Store) : Holds (.app (.var "dist") (.int 3)) (fun _ _ => True) [("dist", dist_fn.clos), ("abs", abs_fn.clos)] μ :=
+  Holds.of_wp (S := .none) (Γ := [dist_fn, abs_fn]) ⟨⟨trivial, abs_body⟩, dist_body⟩ (top1_wp μ)

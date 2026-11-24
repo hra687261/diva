@@ -30,6 +30,6 @@ certificate checked by Lean: the program never fails
 
 $ diva prove --check -o prove.lean params.ml
 wrote prove.lean
-checked by Lean: the functions meet their contracts
+checked by Lean: the functions meet their contracts, and the top-level expressions don't fail
 [exit 0]
 

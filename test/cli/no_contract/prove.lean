@@ -94,3 +94,14 @@ theorem f_body : f_fn.BodyOk .none [inv_fn, half_fn] := by
     `requires` gives a result that satisfies `ensures`. -/
 theorem f_correct : f_fn.Meets :=
   RecFun.meets_of_verified (S := .none) (Γ := [inv_fn, half_fn]) ⟨⟨⟨trivial, half_body⟩, inv_body⟩, f_body⟩
+
+/-- The obligation of the top-level expression `(f 3)`. Each call in it must
+    get arguments that satisfy `requires`. If the proof fails, write one by hand. -/
+theorem top1_wp (μ : Store) :
+    wp .none [f_fn, inv_fn, half_fn] (.app (.var "f") (.int 3)) (fun _ _ => True) [("f", f_fn.clos), ("unused", unused_val), ("inv", inv_fn.clos), ("half", half_fn.clos)] μ := by
+  simp [f_fn, unused_val, inv_fn, half_fn, wp, BinOp.denote, Value.isBool, List.lookup, callEnv, RecFun.clos]
+  all_goals split_omega
+
+/-- The top-level expression `(f 3)` runs without error. -/
+theorem top1_safe (μ : Store) : Holds (.app (.var "f") (.int 3)) (fun _ _ => True) [("f", f_fn.clos), ("unused", unused_val), ("inv", inv_fn.clos), ("half", half_fn.clos)] μ :=
+  Holds.of_wp (S := .none) (Γ := [f_fn, inv_fn, half_fn]) ⟨⟨⟨trivial, half_body⟩, inv_body⟩, f_body⟩ (top1_wp μ)

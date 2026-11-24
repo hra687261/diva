@@ -372,6 +372,21 @@ theorem wp_sound {S : Contracts} {ρ : Env} {μ : Store} {e : Expr} {r : Outcome
   case pos => simp [hc]
   case neg => simp [hc]
 
+/-- `∃ v, (P ∧ a = v) ∧ Q v` is `P ∧ Q a`. A division gives this shape after `simp`:
+    `P` says that the divisor isn't `0` (`ite_err_eq_ok`), and `a` is the quotient.
+    `simp` can't remove `v` by itself, because `a = v` is inside a conjunction. -/
+@[simp] theorem exists_and_eq_and {α : Type} {P : Prop} {a : α} {Q : α → Prop} :
+    (∃ v, (P ∧ a = v) ∧ Q v) ↔ P ∧ Q a := by
+  constructor
+  case mp =>
+    intro h
+    obtain ⟨v, ⟨hp, hv⟩, hq⟩ := h
+    subst hv
+    exact ⟨hp, hq⟩
+  case mpr =>
+    intro h
+    exact ⟨a, ⟨h.1, rfl⟩, h.2⟩
+
 /-- `∀ v m, v = .int m → p v m` is `∀ m, p (.int m) m`. A postcondition "the result is
     an integer `m` such that ..." gives this goal shape at calls. `simp` can't
     substitute `v` there by itself, because `m` comes after `v`. -/
@@ -397,6 +412,17 @@ theorem triple_of_wp (S : Contracts) {P : Pre} {e : Expr} {Q : Post}
     (h : ∀ ρ μ, P ρ μ → wp S [] e (fun c μ => Q c.value μ) ρ μ) : Triple P e Q := by
   intro ρ μ hp r μ' he
   obtain ⟨c, rc, _, hq⟩ := wp_sound he [] _ trivial (h ρ μ hp)
+  exact ⟨c.value, rc, hq⟩
+
+/-- If the functions `Γ` meet their contracts and `wp` holds for `e` from `ρ` and `μ`,
+    every run of `e` gives a value that satisfies `Q`. In particular, `e` doesn't
+    fail. To prove `wp` for `e`, each call in `e` must get arguments that satisfy the
+    precondition of the function that it calls. -/
+theorem Holds.of_wp {S : Contracts} {Γ : List RecFun} {e : Expr} {Q : Post} {ρ : Env}
+    {μ : Store} (hv : Verified S Γ) (h : wp S Γ e (fun c μ => Q c.value μ) ρ μ) :
+    Holds e Q ρ μ := by
+  intro r μ' he
+  obtain ⟨c, rc, _, hq⟩ := wp_sound he Γ _ hv h
   exact ⟨c.value, rc, hq⟩
 
 /-- `g` meets its contract, after the arguments `vs`, in the environment `E`. `ps` are

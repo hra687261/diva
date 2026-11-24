@@ -33,3 +33,14 @@ theorem clamp_body : clamp_fn.BodyOk .none [] := by
     `requires` gives a result that satisfies `ensures`. -/
 theorem clamp_correct : clamp_fn.Meets :=
   RecFun.meets_of_verified (S := .none) (Γ := []) ⟨trivial, clamp_body⟩
+
+/-- The obligation of the top-level expression `(clamp 150)`. Each call in it must
+    get arguments that satisfy `requires`. If the proof fails, write one by hand. -/
+theorem top1_wp (μ : Store) :
+    wp .none [clamp_fn] (.app (.var "clamp") (.int 150)) (fun _ _ => True) [("clamp", clamp_fn.clos)] μ := by
+  simp [clamp_fn, wp, BinOp.denote, Value.isBool, List.lookup, callEnv, RecFun.clos]
+  all_goals split_omega
+
+/-- The top-level expression `(clamp 150)` runs without error. -/
+theorem top1_safe (μ : Store) : Holds (.app (.var "clamp") (.int 150)) (fun _ _ => True) [("clamp", clamp_fn.clos)] μ :=
+  Holds.of_wp (S := .none) (Γ := [clamp_fn]) ⟨trivial, clamp_body⟩ (top1_wp μ)

@@ -11,6 +11,11 @@ the file has:
   `split_omega`. If that proof fails, the user writes one by hand in the file;
 - `f_correct`: `f` meets its contract (`RecFun.Meets`), from the obligations.
 
+For the `i`-th top-level expression `;; e` after these functions, the file has:
+- `topi_wp`: the obligation of `e`, `wp` with the postcondition `True`. Each call
+  in `e` must get arguments that satisfy `requires`;
+- `topi_safe`: `e` runs without error (`Holds.of_wp`).
+
 The parameters and the result of a function with a contract are integers. A function
 without a contract that a function with a contract calls gets the empty contract: no
 `requires` and no `ensures`. Its proof says that it doesn't fail. The other functions
@@ -94,6 +99,8 @@ structure State where
   defs : List String := []
   /-- The Lean names used so far for functions. -/
   used : List String := []
+  /-- How many top-level expressions `;; e` there were so far. -/
+  exprs : Nat := 0
 
 /-- A Lean name for the function `f` that isn't used yet: `f`, `f'`, `f''`, ... -/
 partial def fresh (used : List String) (f : String) : String :=
@@ -182,6 +189,24 @@ theorem {n}_correct : {n}_fn.Meets :=
   RecFun.meets_of_verified (S := .none) (Γ := {gamma st.fns}) ⟨{verified st.fns}, {n}_body⟩
 "
 
+/-- The text for the top-level expression `e`, the `i`-th one: `topi_wp` and
+    `topi_safe`. `e` runs in the environment `env`, and can call the functions with a
+    contract defined so far. -/
+def topExpr (st : State) (i : Nat) (e : Expr) (env : String) : String :=
+  let simps := ", ".intercalate (st.defs ++
+    ["wp", "BinOp.denote", "Value.isBool", "List.lookup", "callEnv", "RecFun.clos"])
+  s!"/-- The obligation of the top-level expression `{ppExpr e}`. Each call in it must
+    get arguments that satisfy `requires`. If the proof fails, write one by hand. -/
+theorem top{i}_wp (μ : Store) :
+    wp .none {gamma st.fns} {Cert.expr e} (fun _ _ => True) {env} μ := by
+  simp [{simps}]
+  all_goals split_omega
+
+/-- The top-level expression `{ppExpr e}` runs without error. -/
+theorem top{i}_safe (μ : Store) : Holds {Cert.expr e} (fun _ _ => True) {env} μ :=
+  Holds.of_wp (S := .none) (Γ := {gamma st.fns}) {verified st.fns} (top{i}_wp μ)
+"
+
 /-- The free names of `e`: the names that `e` uses, minus the names in `bound` and the
     names that `e` binds. A name is bound by `fun`, `let`, `let rec`,
     `match ... with x :: xs`, `try ... with k` and `E x`. `bound` are the names
@@ -229,7 +254,14 @@ def calledWithoutContract (items : List Item) : List String :=
     the functions whose contract the analysis inferred (`SpecOfHints`). -/
 def item (proofs : List (String × String)) (called inferred : List String) (st : State) :
     Item → Except String State
-  | .expr _ => return { st with env := ("_", none) :: st.env }
+  | .expr e =>
+    let i := st.exprs + 1
+    let st' := { st with env := ("_", none) :: st.env, exprs := i }
+    -- an expression before the functions with a contract, or after a name that isn't
+    -- a function, gets no obligation
+    match st.fns, envTerm st.env with
+    | _ :: _, .ok env => return { st' with out := st'.out.push (topExpr st i e env) }
+    | _, _ => return st'
   | .decl b sp => do
     let f := b.name
     -- the function: its name if it can call itself, its parameter, and its body

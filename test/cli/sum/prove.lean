@@ -33,3 +33,14 @@ theorem sum_body : sum_fn.BodyOk .none [] := by
     `requires` gives a result that satisfies `ensures`. -/
 theorem sum_correct : sum_fn.Meets :=
   RecFun.meets_of_verified (S := .none) (Γ := []) ⟨trivial, sum_body⟩
+
+/-- The obligation of the top-level expression `(sum 10)`. Each call in it must
+    get arguments that satisfy `requires`. If the proof fails, write one by hand. -/
+theorem top1_wp (μ : Store) :
+    wp .none [sum_fn] (.app (.var "sum") (.int 10)) (fun _ _ => True) [("sum", sum_fn.clos)] μ := by
+  simp [sum_fn, wp, BinOp.denote, Value.isBool, List.lookup, callEnv, RecFun.clos]
+  all_goals split_omega
+
+/-- The top-level expression `(sum 10)` runs without error. -/
+theorem top1_safe (μ : Store) : Holds (.app (.var "sum") (.int 10)) (fun _ _ => True) [("sum", sum_fn.clos)] μ :=
+  Holds.of_wp (S := .none) (Γ := [sum_fn]) ⟨trivial, sum_body⟩ (top1_wp μ)

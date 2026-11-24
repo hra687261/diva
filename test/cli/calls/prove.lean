@@ -61,3 +61,14 @@ theorem quad_body : quad_fn.BodyOk .none [double_fn] := by
     `requires` gives a result that satisfies `ensures`. -/
 theorem quad_correct : quad_fn.Meets :=
   RecFun.meets_of_verified (S := .none) (Γ := [double_fn]) ⟨⟨trivial, double_body⟩, quad_body⟩
+
+/-- The obligation of the top-level expression `(quad 3)`. Each call in it must
+    get arguments that satisfy `requires`. If the proof fails, write one by hand. -/
+theorem top1_wp (μ : Store) :
+    wp .none [quad_fn, double_fn] (.app (.var "quad") (.int 3)) (fun _ _ => True) [("quad", quad_fn.clos), ("double", double_fn.clos)] μ := by
+  simp [quad_fn, double_fn, wp, BinOp.denote, Value.isBool, List.lookup, callEnv, RecFun.clos]
+  all_goals split_omega
+
+/-- The top-level expression `(quad 3)` runs without error. -/
+theorem top1_safe (μ : Store) : Holds (.app (.var "quad") (.int 3)) (fun _ _ => True) [("quad", quad_fn.clos), ("double", double_fn.clos)] μ :=
+  Holds.of_wp (S := .none) (Γ := [quad_fn, double_fn]) ⟨⟨trivial, double_body⟩, quad_body⟩ (top1_wp μ)

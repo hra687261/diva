@@ -36,6 +36,7 @@ round 1: the oracle proposes a proof of `square_body`
   exact sorryAx _ false
 prove.lean:26:0: error: `square_body` uses the axioms [sorryAx], so it isn't proved
 prove.lean:34:0: error: `square_correct` uses the axioms [sorryAx], so it isn't proved
+prove.lean:45:0: error: `top1_safe` uses the axioms [sorryAx], so it isn't proved
 
 [exit 1]
 

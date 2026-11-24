@@ -42,6 +42,6 @@ round 3: the oracle proposes a proof of `square_body`
   rcases Int.le_total 0 x with h | h
   · exact Int.mul_nonneg h h
   · exact Int.mul_nonneg_of_nonpos_of_nonpos h h
-checked by Lean: the functions meet their contracts
+checked by Lean: the functions meet their contracts, and the top-level expressions don't fail
 [exit 0]
 

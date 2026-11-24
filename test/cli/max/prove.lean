@@ -34,3 +34,14 @@ theorem max_body : max_fn.BodyOk .none [] := by
     `requires` gives a result that satisfies `ensures`. -/
 theorem max_correct : max_fn.Meets :=
   RecFun.meets_of_verified (S := .none) (Γ := []) ⟨trivial, max_body⟩
+
+/-- The obligation of the top-level expression `((max 1) 2)`. Each call in it must
+    get arguments that satisfy `requires`. If the proof fails, write one by hand. -/
+theorem top1_wp (μ : Store) :
+    wp .none [max_fn] (.app (.app (.var "max") (.int 1)) (.int 2)) (fun _ _ => True) [("max", max_fn.clos)] μ := by
+  simp [max_fn, wp, BinOp.denote, Value.isBool, List.lookup, callEnv, RecFun.clos]
+  all_goals split_omega
+
+/-- The top-level expression `((max 1) 2)` runs without error. -/
+theorem top1_safe (μ : Store) : Holds (.app (.app (.var "max") (.int 1)) (.int 2)) (fun _ _ => True) [("max", max_fn.clos)] μ :=
+  Holds.of_wp (S := .none) (Γ := [max_fn]) ⟨trivial, max_body⟩ (top1_wp μ)

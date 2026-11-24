@@ -121,3 +121,14 @@ theorem area_body : area_fn.BodyOk .none [max3_fn, max_fn, mul_fn] := by
     `requires` gives a result that satisfies `ensures`. -/
 theorem area_correct : area_fn.Meets :=
   RecFun.meets_of_verified (S := .none) (Γ := [max3_fn, max_fn, mul_fn]) ⟨⟨⟨⟨trivial, mul_body⟩, max_body⟩, max3_body⟩, area_body⟩
+
+/-- The obligation of the top-level expression `((area (((max3 1) 5) 2)) 3)`. Each call in it must
+    get arguments that satisfy `requires`. If the proof fails, write one by hand. -/
+theorem top1_wp (μ : Store) :
+    wp .none [area_fn, max3_fn, max_fn, mul_fn] (.app (.app (.var "area") (.app (.app (.app (.var "max3") (.int 1)) (.int 5)) (.int 2))) (.int 3)) (fun _ _ => True) [("area", area_fn.clos), ("max3", max3_fn.clos), ("max", max_fn.clos), ("mul", mul_fn.clos)] μ := by
+  simp [area_fn, max3_fn, max_fn, mul_fn, wp, BinOp.denote, Value.isBool, List.lookup, callEnv, RecFun.clos]
+  all_goals split_omega
+
+/-- The top-level expression `((area (((max3 1) 5) 2)) 3)` runs without error. -/
+theorem top1_safe (μ : Store) : Holds (.app (.app (.var "area") (.app (.app (.app (.var "max3") (.int 1)) (.int 5)) (.int 2))) (.int 3)) (fun _ _ => True) [("area", area_fn.clos), ("max3", max3_fn.clos), ("max", max_fn.clos), ("mul", mul_fn.clos)] μ :=
+  Holds.of_wp (S := .none) (Γ := [area_fn, max3_fn, max_fn, mul_fn]) ⟨⟨⟨⟨trivial, mul_body⟩, max_body⟩, max3_body⟩, area_body⟩ (top1_wp μ)

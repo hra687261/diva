@@ -27,6 +27,6 @@ no function has a contract: write one in a `(*@ ... *)` comment after a function
 
 $ diva prove --infer --check -o prove.lean sumsq.ml
 wrote prove.lean
-checked by Lean: the functions meet their contracts
+checked by Lean: the functions meet their contracts, and the top-level expressions don't fail
 [exit 0]
 

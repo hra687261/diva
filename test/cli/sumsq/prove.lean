@@ -34,3 +34,14 @@ theorem sumsq_body : sumsq_fn.BodyOk .none [] := by
     `requires` gives a result that satisfies `ensures`. -/
 theorem sumsq_correct : sumsq_fn.Meets :=
   RecFun.meets_of_verified (S := .none) (Γ := []) ⟨trivial, sumsq_body⟩
+
+/-- The obligation of the top-level expression `((sumsq 10) 0)`. Each call in it must
+    get arguments that satisfy `requires`. If the proof fails, write one by hand. -/
+theorem top1_wp (μ : Store) :
+    wp .none [sumsq_fn] (.app (.app (.var "sumsq") (.int 10)) (.int 0)) (fun _ _ => True) [("sumsq", sumsq_fn.clos)] μ := by
+  simp [sumsq_fn, wp, BinOp.denote, Value.isBool, List.lookup, callEnv, RecFun.clos]
+  all_goals split_omega
+
+/-- The top-level expression `((sumsq 10) 0)` runs without error. -/
+theorem top1_safe (μ : Store) : Holds (.app (.app (.var "sumsq") (.int 10)) (.int 0)) (fun _ _ => True) [("sumsq", sumsq_fn.clos)] μ :=
+  Holds.of_wp (S := .none) (Γ := [sumsq_fn]) ⟨trivial, sumsq_body⟩ (top1_wp μ)
