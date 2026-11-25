@@ -102,10 +102,28 @@ theorem program_safe \{μ μ' : Diva.Store} \{k : Diva.Err} :
 "
 
 /-- The certificate of the optimisation of `e`, with the hints `H`: a Lean file stating
-    that `e` and its optimised version `opt H [] e` are equivalent. The kernel runs
-    `opt` with `H` to check that the printed program is that version. It doesn't run
-    the inference that gave `H`. -/
+    that `e` and its optimised version are equivalent. The kernel runs `opt` with `H` to
+    check that the printed program is that version. It doesn't run the inference that
+    gave `H`. If `mayFail` says that `e` never fails, `opt` also erases the checks
+    (`E`), and the kernel runs `mayFail` too. -/
 def optCertificate (H : Hints Itv) (e : Expr) : String :=
+  let E := !mayFail H [] e
+  let correct := if E then
+      "/-- The analysis proves that `source` never fails: the kernel runs `mayFail`. -/
+theorem source_safe : Diva.AbsInt.mayFail hints ([] : Diva.AbsInt.AEnv Diva.AbsInt.Itv) source = false := by
+  decide +kernel
+
+/-- `optimized` is equivalent to `source`: if one of them gives an outcome, the other
+    gives a related outcome, with related stores. Related values are equal, except
+    closures, whose bodies may be optimised. The checks are erased: `source` never fails. -/
+theorem optimized_correct : Diva.Opt.Equiv hints true source optimized :=
+  opt_source ▸ Diva.Opt.opt_erase_correct_of_mayFail hints source source_safe"
+    else
+      "/-- `optimized` is equivalent to `source`: if one of them gives an outcome, the other
+    gives a related outcome, with related stores. Related values are equal, except
+    closures, whose bodies may be optimised. -/
+theorem optimized_correct : Diva.Opt.Equiv hints false source optimized :=
+  opt_source ▸ Diva.Opt.opt_correct hints source"
   s!"import Diva.AbsInt.ItvDomain
 import Diva.OptSound
 
@@ -121,17 +139,13 @@ def hints : Diva.AbsInt.Hints Diva.AbsInt.Itv := {hints H}
 
 /-- The optimised program. -/
 def optimized : Diva.Expr :=
-  {expr (Opt.opt H ([] : AEnv Itv) e)}
+  {expr (Opt.opt H E ([] : AEnv Itv) e)}
 
 /-- `opt`, run by the kernel with the hints, gives `optimized`. -/
-theorem opt_source : Diva.Opt.opt hints ([] : Diva.AbsInt.AEnv Diva.AbsInt.Itv) source = optimized := by
+theorem opt_source : Diva.Opt.opt hints {E} ([] : Diva.AbsInt.AEnv Diva.AbsInt.Itv) source = optimized := by
   decide +kernel
 
-/-- `optimized` is equivalent to `source`: if one of them gives an outcome, the other
-    gives a related outcome, with related stores. Related values are equal, except
-    closures, whose bodies may be optimised. -/
-theorem optimized_correct : Diva.Opt.Equiv hints source optimized :=
-  opt_source ▸ Diva.Opt.opt_correct hints source
+{correct}
 "
 
 end Diva.Cert

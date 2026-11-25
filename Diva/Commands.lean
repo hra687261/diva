@@ -112,14 +112,16 @@ def checkOracle [Monad m] (oracle : String → m String) (rounds : Nat) (src : S
     without a contract first gets the contract that the analysis infers
     (`SpecOfHints.inferContracts`). Its `requires` is then checked at the start of the
     function, as for the contracts in the source. In the body, after that check, the
-    optimiser knows the precondition. -/
+    optimiser knows the precondition. If the analysis proves that the program never
+    fails, the checks (`assert`) are erased: they always hold. -/
 def opt (src : String) (infer : Bool := false) (file : Option String := none) : Result :=
   match parseItems src with
   | .error msg => parseError file msg
   | .ok items =>
     let items := if infer then (SpecOfHints.inferContracts items).1 else items
     let e := (resolve [] (Item.toExpr items)).run' {}
-    { out := [Report.clean (toString (Opt.optimize ([] : AEnv Itv) e))] }
+    let H := inferHints ([] : AEnv Itv) e
+    { out := [Report.clean (toString (Opt.opt H (!mayFail H [] e) [] e))] }
 
 /-- `diva opt --cert`: like `opt`, but print the certificate of the optimisation
     (`Cert.optCertificate`): a Lean file stating that the program and its optimised

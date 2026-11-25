@@ -32,6 +32,12 @@ open Diva Commands
 #guard opt "let x = 2 in if x < 3 then x * 1 else 0" == { out := ["2"] }
 #guard opt "fun y -> let x = 2 in if x < 3 then y + 1 else y" ==
   { out := ["(fun y -> (y + 1))"] }
+-- the program never fails, so the check of `requires` is erased
+#guard opt "let f x = x + 1\n(*@ r = f x\n    requires x >= 0 *)\n;; f 3" ==
+  { out := ["(let f = (fun x -> (x + 1)) in (f 3))"] }
+-- `f (0 - 1)` fails the check, so the check is kept
+#guard opt "let f x = x + 1\n(*@ r = f x\n    requires x >= 0 *)\n;; f (0 - 1)" ==
+  { out := ["(let f = (fun x -> (let _ = (assert (x >= 0)) in (x + 1))) in (f -1))"] }
 
 -- `hints`: one line per hint, names with their `#n` suffix, `$f` for results
 #guard hints "let f y = 10 / y in f 3 + f 7" == { out := ["y#0 : [3, 7]"] }

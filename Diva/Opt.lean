@@ -3,7 +3,7 @@ import Diva.AbsInt.Infer
 /-!
 # The optimiser
 
-`opt H σ e` rewrites `e` using the facts of the analysis, in an abstract environment
+`opt H E σ e` rewrites `e` using the facts of the analysis, in an abstract environment
 `σ` describing the values of the free variables of `e`.
 
 Constant folding: an expression that is pure (`Expr.pure`: it terminates and
@@ -17,8 +17,12 @@ Proved assertions: `assert c`, where `c` is pure, can't fail and is certainly
 `true`, becomes `()`.
 
 Unused names: `let x = e1 in e2` becomes `e2` when `e1` is pure, can't fail, and the
-optimised `e2` doesn't use `x`. For example, `let _ = () in e2`, which is
-left by a proved `assert`, becomes `e2`.
+optimised `e2` doesn't use `x`. For example, `assert c; e2` becomes `e2` when `c` is
+certainly `true`.
+
+Erased checks: with `E`, when `c` is a check (`Expr.isCheck`), `assert c` becomes `()`,
+and `assert c; e2` becomes `e2`. This is correct only for a program that never fails:
+then `c` gives `true` whenever it is run.
 
 Identities: `a + 0`, `a - 0`, `a * 1` and `a / 1` become `a`, and `0 + b` and `1 * b`
 become `b`. The dropped side must be pure, can't fail and be certainly that integer.
@@ -93,6 +97,19 @@ def bodyEnv (H : Hints A) (σ : AEnv A) (s : Option String) (x : String) (b : Ex
   | none => (x, AVal.top) :: σ
   | some f => (x, AVal.top) :: (f, letrecVal H σ f x b) :: σ
 
+/-- `e` is a check: made of literals, names, operators and `if`. A check finishes,
+    doesn't change the store, and its errors are not exceptions. -/
+def _root_.Diva.Expr.isCheck : Expr → Bool
+  | .int _ | .bool _ | .unit | .var _ | .nil => true
+  | .binop _ a b => a.isCheck && b.isCheck
+  | .ite c t e => c.isCheck && t.isCheck && e.isCheck
+  | _ => false
+
+/-- The errors of `e` are fatal: `e` is a check, or `assert c` where `c` is a check. -/
+def _root_.Diva.Expr.onlyFatal : Expr → Bool
+  | .assert c => c.isCheck
+  | e => e.isCheck
+
 /-- The abstract environment after `e1` in `let x = e1 in e2`. After `assert c`, the
     condition `c` holds: otherwise the run has already failed. So `c` narrows `σ`, as
     in the `then` branch of an `if`. `assert c; e2` is `let _ = assert c in e2`. -/
@@ -101,62 +118,69 @@ def afterAssert (σ : AEnv A) : Expr → AEnv A
   | _ => σ
 
 /-- `e` optimised. The environments are those of `aeval`, except for function
-    bodies (`bodyEnv`). -/
-def opt (H : Hints A) (σ : AEnv A) (e : Expr) : Expr :=
+    bodies (`bodyEnv`). With `E` (erase), every `assert c` where `c` is a check
+    (`Expr.isCheck`) becomes `()`. This is correct only for a program that never fails
+    (`opt_erase_correct`). -/
+def opt (H : Hints A) (E : Bool) (σ : AEnv A) (e : Expr) : Expr :=
   match constOf H σ e with
   | some c => c
   | none =>
     match e with
-    | .lam x b => .lam x (opt H (bodyEnv H σ none x b) b)
+    | .lam x b => .lam x (opt H E (bodyEnv H σ none x b) b)
     | .letrec f x b e2 =>
-      .letrec f x (opt H (bodyEnv H σ (some f) x b) b)
-        (opt H ((f, letrecVal H σ f x b) :: σ) e2)
-    | .app f a => .app (opt H σ f) (opt H σ a)
+      .letrec f x (opt H E (bodyEnv H σ (some f) x b) b)
+        (opt H E ((f, letrecVal H σ f x b) :: σ) e2)
+    | .app f a => .app (opt H E σ f) (opt H E σ a)
     | .letin x e1 e2 =>
-      let e1' := opt H σ e1
-      let e2' := opt H ((x, aeval H σ e1) :: afterAssert σ e1) e2
-      -- `e1` finishes, can't fail and doesn't change the store, and `e2'` doesn't use `x`
-      if e1.pure && !mayFail H σ e1 && !(freeNames [] e2').contains x then e2'
+      let e1' := opt H E σ e1
+      let e2' := opt H E ((x, aeval H σ e1) :: afterAssert σ e1) e2
+      -- `e1` finishes, doesn't change the store and can't fail, and `e2'` doesn't use `x`.
+      -- With `E`, the program never fails, so an `e1` whose errors are fatal can't fail.
+      if e1.pure && (!mayFail H σ e1 || E && e1.onlyFatal) &&
+          !(freeNames [] e2').contains x then e2'
       else .letin x e1' e2'
     | .binop op a b =>
       -- `a + 0`, `a - 0`, `a * 1`, `a / 1` become `a`, and `0 + b`, `1 * b` become `b`
-      if rightIdentity H σ op a b then opt H σ a
-      else if leftIdentity H σ op a b then opt H σ b
-      else .binop op (opt H σ a) (opt H σ b)
-    | .cons a b => .cons (opt H σ a) (opt H σ b)
+      if rightIdentity H σ op a b then opt H E σ a
+      else if leftIdentity H σ op a b then opt H E σ b
+      else .binop op (opt H E σ a) (opt H E σ b)
+    | .cons a b => .cons (opt H E σ a) (opt H E σ b)
     | .ite c t e =>
       match constOf H σ c with
       -- if the condition is certainly `true` only the `then` branch remains
-      | some (.bool true) => opt H ((σ.assume c true).getD σ) t
-      | some (.bool false) => opt H ((σ.assume c false).getD σ) e
+      | some (.bool true) => opt H E ((σ.assume c true).getD σ) t
+      | some (.bool false) => opt H E ((σ.assume c false).getD σ) e
       | _ =>
         -- each branch, knowing the condition (`σ` if the branch can't be taken)
-        .ite (opt H σ c) (opt H ((σ.assume c true).getD σ) t)
-          (opt H ((σ.assume c false).getD σ) e)
+        .ite (opt H E σ c) (opt H E ((σ.assume c true).getD σ) t)
+          (opt H E ((σ.assume c false).getD σ) e)
     | .matchList s n x xs c =>
       let vs := aeval H σ s
-      .matchList (opt H σ s) (opt H σ n) x xs
-        (opt H ((xs, vs.tails) :: (x, AVal.ofFlat vs.heads) :: σ) c)
+      .matchList (opt H E σ s) (opt H E σ n) x xs
+        (opt H E ((xs, vs.tails) :: (x, AVal.ofFlat vs.heads) :: σ) c)
     | .assert c =>
+      -- with `E`, the program never fails, so a check that it runs gives `true`
+      if E && c.isCheck then .unit
+      else
       match constOf H σ c with
       -- the assertion certainly holds
       | some (.bool true) => .unit
-      | _ => .assert (opt H σ c)
-    | .alloc site n v => .alloc site (opt H σ n) (opt H σ v)
-    | .get a i => .get (opt H σ a) (opt H σ i)
-    | .set a i v => .set (opt H σ a) (opt H σ i) (opt H σ v)
-    | .len a => .len (opt H σ a)
-    | .ref site v => .ref site (opt H σ v)
-    | .deref r => .deref (opt H σ r)
-    | .assign r v => .assign (opt H σ r) (opt H σ v)
-    | .exn t v => .exn t (opt H σ v)
-    | .raise v => .raise (opt H σ v)
-    | .tryw a k h => .tryw (opt H σ a) k (opt H ((k, AVal.top) :: σ) h)
-    | .exnCase s t x h m => .exnCase (opt H σ s) t x (opt H ((x, AVal.top) :: σ) h) (opt H σ m)
+      | _ => .assert (opt H E σ c)
+    | .alloc site n v => .alloc site (opt H E σ n) (opt H E σ v)
+    | .get a i => .get (opt H E σ a) (opt H E σ i)
+    | .set a i v => .set (opt H E σ a) (opt H E σ i) (opt H E σ v)
+    | .len a => .len (opt H E σ a)
+    | .ref site v => .ref site (opt H E σ v)
+    | .deref r => .deref (opt H E σ r)
+    | .assign r v => .assign (opt H E σ r) (opt H E σ v)
+    | .exn t v => .exn t (opt H E σ v)
+    | .raise v => .raise (opt H E σ v)
+    | .tryw a k h => .tryw (opt H E σ a) k (opt H E ((k, AVal.top) :: σ) h)
+    | .exnCase s t x h m => .exnCase (opt H E σ s) t x (opt H E ((x, AVal.top) :: σ) h) (opt H E σ m)
     | e => e
 
 /-- A program optimised, with the hints inferred for it. `σ` describes its free
     variables. -/
-def optimize (σ : AEnv A) (e : Expr) : Expr := opt (inferHints σ e) σ e
+def optimize (σ : AEnv A) (e : Expr) (E : Bool := false) : Expr := opt (inferHints σ e) E σ e
 
 end Diva.Opt

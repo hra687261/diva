@@ -28,7 +28,7 @@ namespace Diva.Opt
 
 open AbsInt AbsDomain NumDomain
 
-variable {A : Type} [NumDomain A]
+variable {A : Type} [NumDomain A] {E : Bool}
 
 /-- After `assert c`, when `c` is `true`, narrowing `σ` by `c` still gives the real
     values of `ρ`. -/
@@ -47,90 +47,94 @@ theorem afterAssert_sound {σ : AEnv A} {ρ : Env} {μ μ' : Store} {e1 : Expr} 
 /-! ## The optimiser as a relation -/
 
 mutual
-/-- `e'` is an optimised version of `e`, in the abstract environment `σ`. `opt H σ e`
+/-- `e'` is an optimised version of `e`, in the abstract environment `σ`. `opt H E σ e`
     is one (`optimizes_opt`). Stating it as a relation lets the proofs use `cases` on
     the optimised expression. Either `e` is replaced by its value `c` (`fold`), or
     `if` is replaced by the branch that its condition selects (`iteT`, `iteF`), or
     an assertion that certainly holds is replaced by `()` (`assertT`), or
-    `let x = e1 in e2` is replaced by `e2`, when `e1` is pure, can't fail, and `x` isn't
-    used in the optimised `e2` (`letDrop`), or
+    with `E`, an assertion whose condition is a check is replaced by `()`
+    (`assertErase`), or
+    `let x = e1 in e2` is replaced by `e2`, when `e1` is pure, can't fail (or, with `E`,
+    fails only fatally), and `x` isn't used in the optimised `e2` (`letDrop`), or
     `a op b` is replaced by one side, the other being a unit of `op` (`identR`,
     `identL`), or
     `e` keeps its shape and its sub-expressions are optimised (`step`). -/
-inductive Optimizes (H : Hints A) : AEnv A → Expr → Expr → Prop where
-  | fold {σ e c} : constOf H σ e = some c → Optimizes H σ e c
+inductive Optimizes (H : Hints A) (E : Bool) : AEnv A → Expr → Expr → Prop where
+  | fold {σ e c} : constOf H σ e = some c → Optimizes H E σ e c
   | iteT {σ c t t' e} : constOf H σ c = some (.bool true) →
-      Optimizes H ((σ.assume c true).getD σ) t t' → Optimizes H σ (.ite c t e) t'
+      Optimizes H E ((σ.assume c true).getD σ) t t' → Optimizes H E σ (.ite c t e) t'
   | iteF {σ c t e e'} : constOf H σ c = some (.bool false) →
-      Optimizes H ((σ.assume c false).getD σ) e e' → Optimizes H σ (.ite c t e) e'
+      Optimizes H E ((σ.assume c false).getD σ) e e' → Optimizes H E σ (.ite c t e) e'
   | identR {σ op a a' b n} : op.rightUnit = some n → constOf H σ b = some (.int n) →
-      mayFail H σ (.binop op a b) = false → Optimizes H σ a a' →
-      Optimizes H σ (.binop op a b) a'
+      mayFail H σ (.binop op a b) = false → Optimizes H E σ a a' →
+      Optimizes H E σ (.binop op a b) a'
   | identL {σ op a b b' n} : op.leftUnit = some n → constOf H σ a = some (.int n) →
-      mayFail H σ (.binop op a b) = false → Optimizes H σ b b' →
-      Optimizes H σ (.binop op a b) b'
-  | assertT {σ c} : constOf H σ c = some (.bool true) → Optimizes H σ (.assert c) .unit
+      mayFail H σ (.binop op a b) = false → Optimizes H E σ b b' →
+      Optimizes H E σ (.binop op a b) b'
+  | assertT {σ c} : constOf H σ c = some (.bool true) → Optimizes H E σ (.assert c) .unit
+  | assertErase {σ c} : E = true → c.isCheck = true → Optimizes H E σ (.assert c) .unit
   | letDrop {σ x e1 e2 e2'} :
-      e1.pure = true → mayFail H σ e1 = false → (freeNames [] e2').contains x = false →
-      Optimizes H ((x, aeval H σ e1) :: afterAssert σ e1) e2 e2' →
-      Optimizes H σ (.letin x e1 e2) e2'
-  | step {σ e e'} : OptStep H σ e e' → Optimizes H σ e e'
+      e1.pure = true → (mayFail H σ e1 = false ∨ E = true ∧ e1.onlyFatal = true) →
+      (freeNames [] e2').contains x = false →
+      Optimizes H E ((x, aeval H σ e1) :: afterAssert σ e1) e2 e2' →
+      Optimizes H E σ (.letin x e1 e2) e2'
+  | step {σ e e'} : OptStep H E σ e e' → Optimizes H E σ e e'
 
 /-- `e'` has the shape of `e`, and each sub-expression of `e'` is an optimised version
     of the matching sub-expression of `e`. -/
-inductive OptStep (H : Hints A) : AEnv A → Expr → Expr → Prop where
-  | int {σ n} : OptStep H σ (.int n) (.int n)
-  | bool {σ b} : OptStep H σ (.bool b) (.bool b)
-  | unit {σ} : OptStep H σ .unit .unit
-  | nil {σ} : OptStep H σ .nil .nil
-  | var {σ x} : OptStep H σ (.var x) (.var x)
+inductive OptStep (H : Hints A) (E : Bool) : AEnv A → Expr → Expr → Prop where
+  | int {σ n} : OptStep H E σ (.int n) (.int n)
+  | bool {σ b} : OptStep H E σ (.bool b) (.bool b)
+  | unit {σ} : OptStep H E σ .unit .unit
+  | nil {σ} : OptStep H E σ .nil .nil
+  | var {σ x} : OptStep H E σ (.var x) (.var x)
   | lam {σ x b b'} :
-      Optimizes H (bodyEnv H σ none x b) b b' → OptStep H σ (.lam x b) (.lam x b')
+      Optimizes H E (bodyEnv H σ none x b) b b' → OptStep H E σ (.lam x b) (.lam x b')
   | letrec {σ f x b b' e e'} :
-      Optimizes H (bodyEnv H σ (some f) x b) b b' →
-      Optimizes H ((f, letrecVal H σ f x b) :: σ) e e' →
-      OptStep H σ (.letrec f x b e) (.letrec f x b' e')
+      Optimizes H E (bodyEnv H σ (some f) x b) b b' →
+      Optimizes H E ((f, letrecVal H σ f x b) :: σ) e e' →
+      OptStep H E σ (.letrec f x b e) (.letrec f x b' e')
   | app {σ f f' a a'} :
-      Optimizes H σ f f' → Optimizes H σ a a' → OptStep H σ (.app f a) (.app f' a')
+      Optimizes H E σ f f' → Optimizes H E σ a a' → OptStep H E σ (.app f a) (.app f' a')
   | letin {σ x e1 e1' e2 e2'} :
-      Optimizes H σ e1 e1' → Optimizes H ((x, aeval H σ e1) :: afterAssert σ e1) e2 e2' →
-      OptStep H σ (.letin x e1 e2) (.letin x e1' e2')
+      Optimizes H E σ e1 e1' → Optimizes H E ((x, aeval H σ e1) :: afterAssert σ e1) e2 e2' →
+      OptStep H E σ (.letin x e1 e2) (.letin x e1' e2')
   | binop {σ op a a' b b'} :
-      Optimizes H σ a a' → Optimizes H σ b b' →
-      OptStep H σ (.binop op a b) (.binop op a' b')
+      Optimizes H E σ a a' → Optimizes H E σ b b' →
+      OptStep H E σ (.binop op a b) (.binop op a' b')
   | cons {σ a a' b b'} :
-      Optimizes H σ a a' → Optimizes H σ b b' → OptStep H σ (.cons a b) (.cons a' b')
+      Optimizes H E σ a a' → Optimizes H E σ b b' → OptStep H E σ (.cons a b) (.cons a' b')
   | ite {σ c c' t t' e e'} :
-      Optimizes H σ c c' → Optimizes H ((σ.assume c true).getD σ) t t' →
-      Optimizes H ((σ.assume c false).getD σ) e e' →
-      OptStep H σ (.ite c t e) (.ite c' t' e')
+      Optimizes H E σ c c' → Optimizes H E ((σ.assume c true).getD σ) t t' →
+      Optimizes H E ((σ.assume c false).getD σ) e e' →
+      OptStep H E σ (.ite c t e) (.ite c' t' e')
   | matchList {σ s s' n n' x xs c c'} :
-      Optimizes H σ s s' → Optimizes H σ n n' →
-      Optimizes H ((xs, (aeval H σ s).tails) :: (x, AVal.ofFlat (aeval H σ s).heads) :: σ)
+      Optimizes H E σ s s' → Optimizes H E σ n n' →
+      Optimizes H E ((xs, (aeval H σ s).tails) :: (x, AVal.ofFlat (aeval H σ s).heads) :: σ)
         c c' →
-      OptStep H σ (.matchList s n x xs c) (.matchList s' n' x xs c')
-  | assert {σ c c'} : Optimizes H σ c c' → OptStep H σ (.assert c) (.assert c')
+      OptStep H E σ (.matchList s n x xs c) (.matchList s' n' x xs c')
+  | assert {σ c c'} : Optimizes H E σ c c' → OptStep H E σ (.assert c) (.assert c')
   | alloc {σ site n n' v v'} :
-      Optimizes H σ n n' → Optimizes H σ v v' →
-      OptStep H σ (.alloc site n v) (.alloc site n' v')
+      Optimizes H E σ n n' → Optimizes H E σ v v' →
+      OptStep H E σ (.alloc site n v) (.alloc site n' v')
   | get {σ a a' i i'} :
-      Optimizes H σ a a' → Optimizes H σ i i' → OptStep H σ (.get a i) (.get a' i')
+      Optimizes H E σ a a' → Optimizes H E σ i i' → OptStep H E σ (.get a i) (.get a' i')
   | set {σ a a' i i' v v'} :
-      Optimizes H σ a a' → Optimizes H σ i i' → Optimizes H σ v v' →
-      OptStep H σ (.set a i v) (.set a' i' v')
-  | len {σ a a'} : Optimizes H σ a a' → OptStep H σ (.len a) (.len a')
-  | ref {σ site v v'} : Optimizes H σ v v' → OptStep H σ (.ref site v) (.ref site v')
-  | deref {σ r r'} : Optimizes H σ r r' → OptStep H σ (.deref r) (.deref r')
+      Optimizes H E σ a a' → Optimizes H E σ i i' → Optimizes H E σ v v' →
+      OptStep H E σ (.set a i v) (.set a' i' v')
+  | len {σ a a'} : Optimizes H E σ a a' → OptStep H E σ (.len a) (.len a')
+  | ref {σ site v v'} : Optimizes H E σ v v' → OptStep H E σ (.ref site v) (.ref site v')
+  | deref {σ r r'} : Optimizes H E σ r r' → OptStep H E σ (.deref r) (.deref r')
   | assign {σ r r' v v'} :
-      Optimizes H σ r r' → Optimizes H σ v v' → OptStep H σ (.assign r v) (.assign r' v')
-  | exn {σ t v v'} : Optimizes H σ v v' → OptStep H σ (.exn t v) (.exn t v')
-  | raise {σ v v'} : Optimizes H σ v v' → OptStep H σ (.raise v) (.raise v')
+      Optimizes H E σ r r' → Optimizes H E σ v v' → OptStep H E σ (.assign r v) (.assign r' v')
+  | exn {σ t v v'} : Optimizes H E σ v v' → OptStep H E σ (.exn t v) (.exn t v')
+  | raise {σ v v'} : Optimizes H E σ v v' → OptStep H E σ (.raise v) (.raise v')
   | tryw {σ a a' k h h'} :
-      Optimizes H σ a a' → Optimizes H ((k, AVal.top) :: σ) h h' →
-      OptStep H σ (.tryw a k h) (.tryw a' k h')
+      Optimizes H E σ a a' → Optimizes H E ((k, AVal.top) :: σ) h h' →
+      OptStep H E σ (.tryw a k h) (.tryw a' k h')
   | exnCase {σ s s' t x h h' m m'} :
-      Optimizes H σ s s' → Optimizes H ((x, AVal.top) :: σ) h h' → Optimizes H σ m m' →
-      OptStep H σ (.exnCase s t x h m) (.exnCase s' t x h' m')
+      Optimizes H E σ s s' → Optimizes H E ((x, AVal.top) :: σ) h h' → Optimizes H E σ m m' →
+      OptStep H E σ (.exnCase s t x h m) (.exnCase s' t x h' m')
 end
 
 theorem isInt_true {H : Hints A} {σ : AEnv A} {e : Expr} {n : Int}
@@ -164,18 +168,18 @@ theorem leftIdentity_true {H : Hints A} {σ : AEnv A} {op : BinOp} {a b : Expr}
     exact ⟨n, hu, isInt_true h.2, h.1⟩
   next => cases h
 
-/-- `opt H σ e` is an optimised version of `e`, when `constOf` gives `none` too. -/
+/-- `opt H E σ e` is an optimised version of `e`, when `constOf` gives `none` too. -/
 theorem optimizes_of_none {H : Hints A} {σ : AEnv A} {e : Expr}
-    (h : constOf H σ e = none → OptStep H σ e (opt H σ e)) :
-    Optimizes H σ e (opt H σ e) := by
+    (h : constOf H σ e = none → OptStep H E σ e (opt H E σ e)) :
+    Optimizes H E σ e (opt H E σ e) := by
   cases hc : constOf H σ e
   case none => exact .step (h hc)
   case some c =>
     rw [opt.eq_def, hc]
     exact .fold hc
 
-/-- `opt H σ e` is an optimised version of `e`. -/
-theorem optimizes_opt (H : Hints A) (e : Expr) : ∀ σ, Optimizes H σ e (opt H σ e) := by
+/-- `opt H E σ e` is an optimised version of `e`. -/
+theorem optimizes_opt (H : Hints A) (e : Expr) : ∀ σ, Optimizes H E σ e (opt H E σ e) := by
   induction e with
   | int n => intro σ; exact optimizes_of_none fun hc => by rw [opt.eq_def, hc]; exact .int
   | bool b => intro σ; exact optimizes_of_none fun hc => by rw [opt.eq_def, hc]; exact .bool
@@ -202,7 +206,7 @@ theorem optimizes_opt (H : Hints A) (e : Expr) : ∀ σ, Optimizes H σ e (opt H
       simp only
       split
       next hd =>
-        simp only [Bool.and_eq_true, Bool.not_eq_true'] at hd
+        simp only [Bool.and_eq_true, Bool.or_eq_true, Bool.not_eq_true'] at hd
         exact .letDrop hd.1.1 hd.1.2 hd.2 (ih2 _)
       next => exact .step (.letin (ih1 _) (ih2 _))
   | ite c t e ihc iht ihe =>
@@ -255,8 +259,13 @@ theorem optimizes_opt (H : Hints A) (e : Expr) : ∀ σ, Optimizes H σ e (opt H
       rw [opt.eq_def, hc]
       simp only
       split
-      next hct => exact .assertT hct
-      next => exact .step (.assert (ih _))
+      next he =>
+        simp only [Bool.and_eq_true] at he
+        exact .assertErase he.1 he.2
+      next =>
+        split
+        next hct => exact .assertT hct
+        next => exact .step (.assert (ih _))
   | alloc site n v ihn ihv =>
     intro σ
     exact optimizes_of_none fun hc => by rw [opt.eq_def, hc]; exact .alloc (ihn _) (ihv _)
@@ -303,59 +312,59 @@ when the values they hold are related.
 -/
 
 /-- A source value and an optimised value that agree. -/
-inductive VR (H : Hints A) : Value → Value → Prop where
-  | int {n : Int} : VR H (.int n) (.int n)
-  | bool {b : Bool} : VR H (.bool b) (.bool b)
-  | unit : VR H .unit .unit
-  | nil : VR H .nil .nil
-  | cons {a a' b b' : Value} : VR H a a' → VR H b b' → VR H (.cons a b) (.cons a' b')
-  | arr {l : Nat} : VR H (.arr l) (.arr l)
-  | ref {l : Nat} : VR H (.ref l) (.ref l)
-  | exn {t : String} {a a' : Value} : VR H a a' → VR H (.exn t a) (.exn t a')
+inductive VR (H : Hints A) (E : Bool) : Value → Value → Prop where
+  | int {n : Int} : VR H E (.int n) (.int n)
+  | bool {b : Bool} : VR H E (.bool b) (.bool b)
+  | unit : VR H E .unit .unit
+  | nil : VR H E .nil .nil
+  | cons {a a' b b' : Value} : VR H E a a' → VR H E b b' → VR H E (.cons a b) (.cons a' b')
+  | arr {l : Nat} : VR H E (.arr l) (.arr l)
+  | ref {l : Nat} : VR H E (.ref l) (.ref l)
+  | exn {t : String} {a a' : Value} : VR H E a a' → VR H E (.exn t a) (.exn t a')
   -- the optimised closure has an optimised body, and an environment related on the
   -- names `N`. The free names of the optimised body are in `N`, or are its parameter
   -- `x`, or the name `f` of the function in `let rec f x = ...`. `σ` describes the
   -- source closure's environment.
   | clos {s : Option String} {x : String} {b b' : Expr} {ρ ρ' : Env} (σ : AEnv A)
       (N : List String) :
-      (∀ y ∈ N, ∀ w w', ρ.lookup y = some w → ρ'.lookup y = some w' → VR H w w') →
+      (∀ y ∈ N, ∀ w w', ρ.lookup y = some w → ρ'.lookup y = some w' → VR H E w w') →
       (∀ y ∈ N, (ρ.lookup y).isSome = (ρ'.lookup y).isSome) →
       (∀ y ∈ freeNames [] b', y ∈ x :: (s.toList ++ N)) →
       σ.Describes ρ → σ.Bound ρ →
-      Optimizes H (bodyEnv H σ s x b) b b' →
-      VR H (.clos s x b ρ) (.clos s x b' ρ')
+      Optimizes H E (bodyEnv H σ s x b) b b' →
+      VR H E (.clos s x b ρ) (.clos s x b' ρ')
 
 /-- Environments related on the names `N`: each name of `N` is bound in both or in
     neither, to related values. The other names don't matter. After `letDrop`, the
     source environment binds `x` and the optimised one doesn't, so `x` isn't in `N`. -/
-def EnvRel (H : Hints A) (N : List String) (ρ ρ' : Env) : Prop :=
-  (∀ y ∈ N, ∀ w w', ρ.lookup y = some w → ρ'.lookup y = some w' → VR H w w') ∧
+def EnvRel (H : Hints A) (E : Bool) (N : List String) (ρ ρ' : Env) : Prop :=
+  (∀ y ∈ N, ∀ w w', ρ.lookup y = some w → ρ'.lookup y = some w' → VR H E w w') ∧
   (∀ y ∈ N, (ρ.lookup y).isSome = (ρ'.lookup y).isSome)
 
 /-- Related errors: related raised exceptions, or the same runtime error. -/
-inductive ErrRel (H : Hints A) : Err → Err → Prop where
-  | exn {v v' : Value} : VR H v v' → ErrRel H (.exn v) (.exn v')
-  | same {k : Err} : k.isExn = false → ErrRel H k k
+inductive ErrRel (H : Hints A) (E : Bool) : Err → Err → Prop where
+  | exn {v v' : Value} : VR H E v v' → ErrRel H E (.exn v) (.exn v')
+  | same {k : Err} : k.isExn = false → ErrRel H E k k
 
 /-- Related outcomes: related values, or related errors. -/
-inductive OutRel (H : Hints A) : Outcome → Outcome → Prop where
-  | ok {v v' : Value} : VR H v v' → OutRel H (.ok v) (.ok v')
-  | err {k k' : Err} : ErrRel H k k' → OutRel H (.err k) (.err k')
+inductive OutRel (H : Hints A) (E : Bool) : Outcome → Outcome → Prop where
+  | ok {v v' : Value} : VR H E v v' → OutRel H E (.ok v) (.ok v')
+  | err {k k' : Err} : ErrRel H E k k' → OutRel H E (.err k) (.err k')
 
 /-- Related contents of one address: the same length, and related values. -/
-def CellRel (H : Hints A) (c c' : List Value) : Prop :=
-  c.length = c'.length ∧ ∀ (i : Nat) v v', c[i]? = some v → c'[i]? = some v' → VR H v v'
+def CellRel (H : Hints A) (E : Bool) (c c' : List Value) : Prop :=
+  c.length = c'.length ∧ ∀ (i : Nat) v v', c[i]? = some v → c'[i]? = some v' → VR H E v v'
 
 /-- Related stores: the same addresses, with related contents. -/
-def StoreRel (H : Hints A) (μ μ' : Store) : Prop :=
+def StoreRel (H : Hints A) (E : Bool) (μ μ' : Store) : Prop :=
   μ.length = μ'.length ∧
-  ∀ (l : Nat) (c c' : List Value), μ[l]? = some c → μ'[l]? = some c' → CellRel H c c'
+  ∀ (l : Nat) (c c' : List Value), μ[l]? = some c → μ'[l]? = some c' → CellRel H E c c'
 
 /-- Two programs without free variables are equivalent: each gives an outcome iff
     the other does, and the outcomes and final stores are related. -/
-def Equiv (H : Hints A) (e e' : Expr) : Prop :=
-  (∀ r μ, Eval [] [] e r μ → ∃ r' μ', Eval [] [] e' r' μ' ∧ OutRel H r r' ∧ StoreRel H μ μ') ∧
-  (∀ r' μ', Eval [] [] e' r' μ' → ∃ r μ, Eval [] [] e r μ ∧ OutRel H r r' ∧ StoreRel H μ μ')
+def Equiv (H : Hints A) (E : Bool) (e e' : Expr) : Prop :=
+  (∀ r μ, Eval [] [] e r μ → ∃ r' μ', Eval [] [] e' r' μ' ∧ OutRel H E r r' ∧ StoreRel H E μ μ') ∧
+  (∀ r' μ', Eval [] [] e' r' μ' → ∃ r μ, Eval [] [] e r μ ∧ OutRel H E r r' ∧ StoreRel H E μ μ')
 
 /-! ## Related values -/
 
@@ -364,25 +373,25 @@ namespace VR
 variable {H : Hints A} {v v' : Value}
 
 /-- On integers, related means equal. -/
-theorem int_eq {n : Int} (h : VR H (.int n) v) : v = .int n := by
+theorem int_eq {n : Int} (h : VR H E (.int n) v) : v = .int n := by
   cases h
   rfl
 
-theorem isClos (h : VR H v v') : v'.isClos = v.isClos := by
+theorem isClos (h : VR H E v v') : v'.isClos = v.isClos := by
   cases h <;> rfl
 
-theorem isBool (h : VR H v v') : v'.isBool = v.isBool := by
+theorem isBool (h : VR H E v v') : v'.isBool = v.isBool := by
   cases h <;> rfl
 
-theorem isList (h : VR H v v') : v'.isList = v.isList := by
+theorem isList (h : VR H E v v') : v'.isList = v.isList := by
   cases h <;> rfl
 
-theorem isExn (h : VR H v v') : v'.isExn = v.isExn := by
+theorem isExn (h : VR H E v v') : v'.isExn = v.isExn := by
   cases h <;> rfl
 
 end VR
 
-theorem ErrRel.isExn {H : Hints A} {k k' : Err} (h : ErrRel H k k') : k'.isExn = k.isExn := by
+theorem ErrRel.isExn {H : Hints A} {k k' : Err} (h : ErrRel H E k k') : k'.isExn = k.isExn := by
   cases h
   case exn => rfl
   case same => rfl
@@ -393,7 +402,7 @@ namespace EnvRel
 
 variable {H : Hints A} {N : List String} {ρ ρ' : Env}
 
-theorem nil : EnvRel H N [] [] := by
+theorem nil : EnvRel H E N [] [] := by
   constructor
   · intro y _ w w' hw
     simp [List.lookup] at hw
@@ -401,8 +410,8 @@ theorem nil : EnvRel H N [] [] := by
     rfl
 
 /-- On fewer names. -/
-theorem mono {N' : List String} (hρ : EnvRel H N ρ ρ') (h : ∀ y ∈ N', y ∈ N) :
-    EnvRel H N' ρ ρ' := by
+theorem mono {N' : List String} (hρ : EnvRel H E N ρ ρ') (h : ∀ y ∈ N', y ∈ N) :
+    EnvRel H E N' ρ ρ' := by
   constructor
   · intro y hy
     exact hρ.1 y (h y hy)
@@ -417,8 +426,8 @@ theorem beq_false {x y : String} (hx : x ∉ N) (hy : y ∈ N) : (y == x) = fals
   exact hx hy
 
 /-- A name bound in the source environment only, and not in `N`. -/
-theorem drop {x : String} {v : Value} (hρ : EnvRel H N ρ ρ') (hx : x ∉ N) :
-    EnvRel H N ((x, v) :: ρ) ρ' := by
+theorem drop {x : String} {v : Value} (hρ : EnvRel H E N ρ ρ') (hx : x ∉ N) :
+    EnvRel H E N ((x, v) :: ρ) ρ' := by
   constructor
   · intro y hy
     simp only [List.lookup, beq_false hx hy]
@@ -433,8 +442,8 @@ theorem mem_of_ne {x y : String} (hy : y ∈ x :: N) (hxy : ¬y = x) : y ∈ N :
   | head => exact absurd rfl hxy
   | tail _ h => exact h
 
-theorem cons {x : String} {v v' : Value} (hρ : EnvRel H N ρ ρ') (hv : VR H v v') :
-    EnvRel H (x :: N) ((x, v) :: ρ) ((x, v') :: ρ') := by
+theorem cons {x : String} {v v' : Value} (hρ : EnvRel H E N ρ ρ') (hv : VR H E v v') :
+    EnvRel H E (x :: N) ((x, v) :: ρ) ((x, v') :: ρ') := by
   constructor
   · intro y hy w w' hw hw'
     by_cases hxy : y = x
@@ -456,8 +465,8 @@ theorem cons {x : String} {v v' : Value} (hρ : EnvRel H N ρ ρ') (hv : VR H v 
 
 /-- A name of `N` bound in the source environment is bound in the optimised one, to a
     related value. -/
-theorem lookup_some {y : String} {w : Value} (hρ : EnvRel H N ρ ρ') (hy : y ∈ N)
-    (hw : ρ.lookup y = some w) : ∃ w', ρ'.lookup y = some w' ∧ VR H w w' := by
+theorem lookup_some {y : String} {w : Value} (hρ : EnvRel H E N ρ ρ') (hy : y ∈ N)
+    (hw : ρ.lookup y = some w) : ∃ w', ρ'.lookup y = some w' ∧ VR H E w w' := by
   cases hw' : ρ'.lookup y
   case none =>
     have hs := hρ.2 y hy
@@ -466,15 +475,15 @@ theorem lookup_some {y : String} {w : Value} (hρ : EnvRel H N ρ ρ') (hy : y �
 
 /-- A name of `N` bound in the optimised environment is bound in the source one, to a
     related value. -/
-theorem lookup_some' {y : String} {w' : Value} (hρ : EnvRel H N ρ ρ') (hy : y ∈ N)
-    (hw' : ρ'.lookup y = some w') : ∃ w, ρ.lookup y = some w ∧ VR H w w' := by
+theorem lookup_some' {y : String} {w' : Value} (hρ : EnvRel H E N ρ ρ') (hy : y ∈ N)
+    (hw' : ρ'.lookup y = some w') : ∃ w, ρ.lookup y = some w ∧ VR H E w w' := by
   cases hw : ρ.lookup y
   case none =>
     have hs := hρ.2 y hy
     simp [hw, hw'] at hs
   case some w => exact ⟨w, rfl, hρ.1 y hy w w' hw hw'⟩
 
-theorem lookup_none {y : String} (hρ : EnvRel H N ρ ρ') (hy : y ∈ N)
+theorem lookup_none {y : String} (hρ : EnvRel H E N ρ ρ') (hy : y ∈ N)
     (h : ρ.lookup y = none) : ρ'.lookup y = none := by
   have hs := hρ.2 y hy
   rw [h] at hs
@@ -482,7 +491,7 @@ theorem lookup_none {y : String} (hρ : EnvRel H N ρ ρ') (hy : y ∈ N)
   case none => rfl
   case some w' => simp [hw'] at hs
 
-theorem lookup_none' {y : String} (hρ : EnvRel H N ρ ρ') (hy : y ∈ N)
+theorem lookup_none' {y : String} (hρ : EnvRel H E N ρ ρ') (hy : y ∈ N)
     (h : ρ'.lookup y = none) : ρ.lookup y = none := by
   have hs := hρ.2 y hy
   rw [h] at hs
@@ -493,10 +502,10 @@ theorem lookup_none' {y : String} (hρ : EnvRel H N ρ ρ') (hy : y ∈ N)
 /-- Related closures called on related arguments run their bodies in environments
     related on the parameter `x`, the name of the function (for `let rec`), and `N`. -/
 theorem call {s : Option String} {x : String} {b b' : Expr} {σ : AEnv A} {va va' : Value}
-    (hρ : EnvRel H N ρ ρ') (hNb : ∀ y ∈ freeNames [] b', y ∈ x :: (s.toList ++ N))
+    (hρ : EnvRel H E N ρ ρ') (hNb : ∀ y ∈ freeNames [] b', y ∈ x :: (s.toList ++ N))
     (hσ : σ.Describes ρ) (hB : σ.Bound ρ)
-    (hb : Optimizes H (bodyEnv H σ s x b) b b') (hv : VR H va va') :
-    EnvRel H (x :: (s.toList ++ N)) (callEnv s x b ρ va) (callEnv s x b' ρ' va') := by
+    (hb : Optimizes H E (bodyEnv H σ s x b) b b') (hv : VR H E va va') :
+    EnvRel H E (x :: (s.toList ++ N)) (callEnv s x b ρ va) (callEnv s x b' ρ' va') := by
   cases s
   case none => exact hρ.cons hv
   case some f => exact (hρ.cons (.clos σ N hρ.1 hρ.2 hNb hσ hB hb)).cons hv
@@ -525,13 +534,13 @@ namespace CellRel
 
 variable {H : Hints A} {c c' : List Value}
 
-theorem get! {n : Nat} (hc : CellRel H c c') (hn : n < c.length) : VR H c[n]! c'[n]! := by
+theorem get! {n : Nat} (hc : CellRel H E c c') (hn : n < c.length) : VR H E c[n]! c'[n]! := by
   have hn' : n < c'.length := hc.1 ▸ hn
   rw [getElem!_pos c n hn, getElem!_pos c' n hn']
   exact hc.2 n _ _ (List.getElem?_eq_getElem hn) (List.getElem?_eq_getElem hn')
 
-theorem replicate {v v' : Value} (n : Nat) (hv : VR H v v') :
-    CellRel H (List.replicate n v) (List.replicate n v') := by
+theorem replicate {v v' : Value} (n : Nat) (hv : VR H E v v') :
+    CellRel H E (List.replicate n v) (List.replicate n v') := by
   constructor
   · simp
   · intro i w w' hw hw'
@@ -539,11 +548,11 @@ theorem replicate {v v' : Value} (n : Nat) (hv : VR H v v') :
     rw [← hw.2, ← hw'.2]
     exact hv
 
-theorem single {v v' : Value} (hv : VR H v v') : CellRel H [v] [v'] :=
+theorem single {v v' : Value} (hv : VR H E v v') : CellRel H E [v] [v'] :=
   CellRel.replicate 1 hv
 
-theorem set {v v' : Value} (hc : CellRel H c c') (i : Nat) (hv : VR H v v') :
-    CellRel H (c.set i v) (c'.set i v') := by
+theorem set {v v' : Value} (hc : CellRel H E c c') (i : Nat) (hv : VR H E v v') :
+    CellRel H E (c.set i v) (c'.set i v') := by
   constructor
   · simp [hc.1]
   · intro j w w' hw hw'
@@ -566,7 +575,7 @@ namespace StoreRel
 
 variable {H : Hints A} {μ μ' : Store}
 
-theorem nil : StoreRel H [] [] := by
+theorem nil : StoreRel H E [] [] := by
   constructor
   · rfl
   · intro l c c' hc
@@ -574,9 +583,9 @@ theorem nil : StoreRel H [] [] := by
 
 /-- An address holds contents in both stores, or in neither. The contents are
     related. -/
-theorem get (hμ : StoreRel H μ μ') (l : Nat) :
+theorem get (hμ : StoreRel H E μ μ') (l : Nat) :
     (μ[l]? = none ∧ μ'[l]? = none) ∨
-    ∃ c c', μ[l]? = some c ∧ μ'[l]? = some c' ∧ CellRel H c c' := by
+    ∃ c c', μ[l]? = some c ∧ μ'[l]? = some c' ∧ CellRel H E c c' := by
   have hlen := hμ.1
   by_cases hl : l < μ.length
   · right
@@ -590,8 +599,8 @@ theorem get (hμ : StoreRel H μ μ') (l : Nat) :
     · simp only [List.getElem?_eq_none_iff]
       omega
 
-theorem append {c c' : List Value} (hμ : StoreRel H μ μ') (hc : CellRel H c c') :
-    StoreRel H (μ ++ [c]) (μ' ++ [c']) := by
+theorem append {c c' : List Value} (hμ : StoreRel H E μ μ') (hc : CellRel H E c c') :
+    StoreRel H E (μ ++ [c]) (μ' ++ [c']) := by
   have hlen := hμ.1
   constructor
   · simp [hlen]
@@ -605,8 +614,8 @@ theorem append {c c' : List Value} (hμ : StoreRel H μ μ') (hc : CellRel H c c
       rw [← eq_of_singleton hd, ← eq_of_singleton hd']
       exact hc
 
-theorem set {c c' : List Value} (hμ : StoreRel H μ μ') (l : Nat) (hc : CellRel H c c') :
-    StoreRel H (μ.set l c) (μ'.set l c') := by
+theorem set {c c' : List Value} (hμ : StoreRel H E μ μ') (l : Nat) (hc : CellRel H E c c') :
+    StoreRel H E (μ.set l c) (μ'.set l c') := by
   constructor
   · simp [hμ.1]
   · intro m d d' hd hd'
@@ -626,10 +635,10 @@ section Ops
 
 variable {H : Hints A} {μ μ' : Store}
 
-theorem allocV_rel {vn vn' vv vv' : Value} (hμ : StoreRel H μ μ') (hn : VR H vn vn')
-    (hv : VR H vv vv') :
-    OutRel H (allocV μ vn vv).1 (allocV μ' vn' vv').1 ∧
-    StoreRel H (allocV μ vn vv).2 (allocV μ' vn' vv').2 := by
+theorem allocV_rel {vn vn' vv vv' : Value} (hμ : StoreRel H E μ μ') (hn : VR H E vn vn')
+    (hv : VR H E vv vv') :
+    OutRel H E (allocV μ vn vv).1 (allocV μ' vn' vv').1 ∧
+    StoreRel H E (allocV μ vn vv).2 (allocV μ' vn' vv').2 := by
   cases hn
   case int n =>
     by_cases hneg : n < 0
@@ -641,8 +650,8 @@ theorem allocV_rel {vn vn' vv vv' : Value} (hμ : StoreRel H μ μ') (hn : VR H 
   -- not an integer: a type error, and the store doesn't change
   all_goals exact ⟨.err (.same rfl), hμ⟩
 
-theorem getV_rel {va va' vi vi' : Value} (hμ : StoreRel H μ μ') (ha : VR H va va')
-    (hi : VR H vi vi') : OutRel H (getV μ va vi) (getV μ' va' vi') := by
+theorem getV_rel {va va' vi vi' : Value} (hμ : StoreRel H E μ μ') (ha : VR H E va va')
+    (hi : VR H E vi vi') : OutRel H E (getV μ va vi) (getV μ' va' vi') := by
   cases ha
   case arr l =>
     cases hi
@@ -659,10 +668,10 @@ theorem getV_rel {va va' vi vi' : Value} (hμ : StoreRel H μ μ') (ha : VR H va
     all_goals exact .err (.same rfl)
   all_goals exact .err (.same rfl)
 
-theorem setV_rel {va va' vi vi' vv vv' : Value} (hμ : StoreRel H μ μ') (ha : VR H va va')
-    (hi : VR H vi vi') (hv : VR H vv vv') :
-    OutRel H (setV μ va vi vv).1 (setV μ' va' vi' vv').1 ∧
-    StoreRel H (setV μ va vi vv).2 (setV μ' va' vi' vv').2 := by
+theorem setV_rel {va va' vi vi' vv vv' : Value} (hμ : StoreRel H E μ μ') (ha : VR H E va va')
+    (hi : VR H E vi vi') (hv : VR H E vv vv') :
+    OutRel H E (setV μ va vi vv).1 (setV μ' va' vi' vv').1 ∧
+    StoreRel H E (setV μ va vi vv).2 (setV μ' va' vi' vv').2 := by
   cases ha
   case arr l =>
     cases hi
@@ -679,8 +688,8 @@ theorem setV_rel {va va' vi vi' vv vv' : Value} (hμ : StoreRel H μ μ') (ha : 
     all_goals exact ⟨.err (.same rfl), hμ⟩
   all_goals exact ⟨.err (.same rfl), hμ⟩
 
-theorem lenV_rel {va va' : Value} (hμ : StoreRel H μ μ') (ha : VR H va va') :
-    OutRel H (lenV μ va) (lenV μ' va') := by
+theorem lenV_rel {va va' : Value} (hμ : StoreRel H E μ μ') (ha : VR H E va va') :
+    OutRel H E (lenV μ va) (lenV μ' va') := by
   cases ha
   case arr l =>
     rcases hμ.get l with ⟨h1, h2⟩ | ⟨c, c', h1, h2, hc⟩
@@ -690,14 +699,14 @@ theorem lenV_rel {va va' : Value} (hμ : StoreRel H μ μ') (ha : VR H va va') :
       exact .ok .int
   all_goals exact .err (.same rfl)
 
-theorem refV_rel {v v' : Value} (hμ : StoreRel H μ μ') (hv : VR H v v') :
-    OutRel H (refV μ v).1 (refV μ' v').1 ∧ StoreRel H (refV μ v).2 (refV μ' v').2 := by
+theorem refV_rel {v v' : Value} (hμ : StoreRel H E μ μ') (hv : VR H E v v') :
+    OutRel H E (refV μ v).1 (refV μ' v').1 ∧ StoreRel H E (refV μ v).2 (refV μ' v').2 := by
   simp only [refV]
   rw [hμ.1]
   exact ⟨.ok .ref, hμ.append (CellRel.single hv)⟩
 
-theorem derefV_rel {vr vr' : Value} (hμ : StoreRel H μ μ') (hr : VR H vr vr') :
-    OutRel H (derefV μ vr) (derefV μ' vr') := by
+theorem derefV_rel {vr vr' : Value} (hμ : StoreRel H E μ μ') (hr : VR H E vr vr') :
+    OutRel H E (derefV μ vr) (derefV μ' vr') := by
   cases hr
   case ref l =>
     rcases hμ.get l with ⟨h1, h2⟩ | ⟨c, c', h1, h2, hc⟩
@@ -719,10 +728,10 @@ theorem derefV_rel {vr vr' : Value} (hμ : StoreRel H μ μ') (hr : VR H vr vr')
           exact .ok (hc.2 0 w w' rfl rfl)
   all_goals exact .err (.same rfl)
 
-theorem assignV_rel {vr vr' v v' : Value} (hμ : StoreRel H μ μ') (hr : VR H vr vr')
-    (hv : VR H v v') :
-    OutRel H (assignV μ vr v).1 (assignV μ' vr' v').1 ∧
-    StoreRel H (assignV μ vr v).2 (assignV μ' vr' v').2 := by
+theorem assignV_rel {vr vr' v v' : Value} (hμ : StoreRel H E μ μ') (hr : VR H E vr vr')
+    (hv : VR H E v v') :
+    OutRel H E (assignV μ vr v).1 (assignV μ' vr' v').1 ∧
+    StoreRel H E (assignV μ vr v).2 (assignV μ' vr' v').2 := by
   cases hr
   case ref l =>
     rcases hμ.get l with ⟨h1, h2⟩ | ⟨c, c', h1, h2, hc⟩
@@ -753,7 +762,7 @@ theorem denote_err_plain {op : BinOp} {va vb : Value} {k : Err} (h : op.denote v
 
 /-- The outcome of a binary operator is related to itself: it has no closure. -/
 theorem denote_self (H : Hints A) (op : BinOp) (va vb : Value) :
-    OutRel H (op.denote va vb) (op.denote va vb) := by
+    OutRel H E (op.denote va vb) (op.denote va vb) := by
   cases h : op.denote va vb with
   | ok v =>
     rcases denote_ok_plain h with ⟨n, rfl⟩ | ⟨b, rfl⟩
@@ -763,12 +772,12 @@ theorem denote_self (H : Hints A) (op : BinOp) (va vb : Value) :
 
 /-- A binary operator looks only at integers, booleans and `()`, on which related
     values are equal. -/
-theorem denote_eq {op : BinOp} {va va' vb vb' : Value} (ha : VR H va va') (hb : VR H vb vb') :
+theorem denote_eq {op : BinOp} {va va' vb vb' : Value} (ha : VR H E va va') (hb : VR H E vb vb') :
     op.denote va' vb' = op.denote va vb := by
   cases ha <;> cases hb <;> cases op <;> rfl
 
-theorem denote_rel {op : BinOp} {va va' vb vb' : Value} (ha : VR H va va') (hb : VR H vb vb') :
-    OutRel H (op.denote va vb) (op.denote va' vb') := by
+theorem denote_rel {op : BinOp} {va va' vb vb' : Value} (ha : VR H E va va') (hb : VR H E vb vb') :
+    OutRel H E (op.denote va vb) (op.denote va' vb') := by
   rw [denote_eq ha hb]
   exact denote_self H op va vb
 
@@ -1097,8 +1106,8 @@ theorem constOf_some {H : Hints A} {σ : AEnv A} {e c : Expr} (h : constOf H σ 
     `c`, and doesn't change the store. -/
 theorem fold_fwd {H : Hints A} {σ : AEnv A} {e c : Expr} {ρ ρ' : Env} {μ μ₁ μ' : Store}
     {r : Outcome} (hc : constOf H σ e = some c) (hσ : σ.Describes ρ) (hB : σ.Bound ρ)
-    (h : Eval ρ μ e r μ₁) (hμ : StoreRel H μ μ') :
-    ∃ r' μ₁', Eval ρ' μ' c r' μ₁' ∧ OutRel H r r' ∧ StoreRel H μ₁ μ₁' := by
+    (h : Eval ρ μ e r μ₁) (hμ : StoreRel H E μ μ') :
+    ∃ r' μ₁', Eval ρ' μ' c r' μ₁' ∧ OutRel H E r r' ∧ StoreRel H E μ₁ μ₁' := by
   obtain ⟨hi, hf, hl⟩ := constOf_some hc
   rw [pure_store h hi]
   cases r with
@@ -1116,8 +1125,8 @@ theorem fold_fwd {H : Hints A} {σ : AEnv A} {e c : Expr} {ρ ρ' : Env} {μ μ�
     the value of `c`, and doesn't change the store. -/
 theorem fold_bwd {H : Hints A} {σ : AEnv A} {e c : Expr} {ρ ρ' : Env} {μ μ' μ₁' : Store}
     {r' : Outcome} (hc : constOf H σ e = some c) (hσ : σ.Describes ρ) (hB : σ.Bound ρ)
-    (h' : Eval ρ' μ' c r' μ₁') (hμ : StoreRel H μ μ') :
-    ∃ r μ₁, Eval ρ μ e r μ₁ ∧ OutRel H r r' ∧ StoreRel H μ₁ μ₁' := by
+    (h' : Eval ρ' μ' c r' μ₁') (hμ : StoreRel H E μ μ') :
+    ∃ r μ₁, Eval ρ μ e r μ₁ ∧ OutRel H E r r' ∧ StoreRel H E μ₁ μ₁' := by
   obtain ⟨hi, hf, hl⟩ := constOf_some hc
   obtain ⟨r, μ₁, h⟩ := pure_total e hi ρ μ
   have hμ₁ := pure_store h hi
@@ -1239,7 +1248,84 @@ theorem eval_ite_false {ρ : Env} {μ μ₁ : Store} {t e : Expr} {r : Outcome}
   | ifErr hc => cases hc
 
 
+/-! ## Checks -/
+
+/-- A fatal error: an error that isn't an exception. No `try` catches it, so it ends
+    the whole program. -/
+def _root_.Diva.Outcome.fatal : Outcome → Prop
+  | .ok _ => False
+  | .err k => k.isExn = false
+
+/-- An operator fails only with `divZero` or `typeError`, never with an exception. -/
+theorem denote_err_not_exn {op : BinOp} {va vb : Value} {k : Err}
+    (h : op.denote va vb = .err k) : k.isExn = false := by
+  unfold BinOp.denote at h
+  split at h
+  all_goals grind [Err.isExn]
+
+theorem isCheck_pure {e : Expr} (h : e.isCheck = true) : e.pure = true := by
+  induction e with
+  | binop op a b iha ihb =>
+    simp only [Expr.isCheck, Bool.and_eq_true] at h
+    simp [Expr.pure, iha h.1, ihb h.2]
+  | ite c t e ihc iht ihe =>
+    simp only [Expr.isCheck, Bool.and_eq_true] at h
+    simp [Expr.pure, ihc h.1.1, iht h.1.2, ihe h.2]
+  | int | bool | unit | var | nil => rfl
+  | _ => simp [Expr.isCheck] at h
+
+/-- A check fails only with errors that are not exceptions. -/
+theorem isCheck_err {ρ : Env} {μ μ₁ : Store} {e : Expr} {r : Outcome}
+    (h : Eval ρ μ e r μ₁) (hc : e.isCheck = true) : ¬ (∃ v, r = .err (.exn v)) := by
+  induction h with
+  | binop _ _ =>
+    intro ⟨v, hv⟩
+    have := denote_err_not_exn hv
+    simp [Err.isExn] at this
+  | binopErrL _ ih =>
+    simp only [Expr.isCheck, Bool.and_eq_true] at hc
+    exact ih hc.1
+  | binopErrR _ _ _ ih =>
+    simp only [Expr.isCheck, Bool.and_eq_true] at hc
+    exact ih hc.2
+  | ifT _ _ _ ih =>
+    simp only [Expr.isCheck, Bool.and_eq_true] at hc
+    exact ih hc.1.2
+  | ifF _ _ _ ih =>
+    simp only [Expr.isCheck, Bool.and_eq_true] at hc
+    exact ih hc.2
+  | ifErr _ ih =>
+    simp only [Expr.isCheck, Bool.and_eq_true] at hc
+    exact ih hc.1.1
+  -- the other expressions are not checks
+  | _ => simp_all [Expr.isCheck]
+
+/-- An error of a check is fatal. -/
+theorem isCheck_fatal {ρ : Env} {μ μ₁ : Store} {e : Expr} {k : Err}
+    (h : Eval ρ μ e (.err k) μ₁) (hc : e.isCheck = true) : (Outcome.err k).fatal := by
+  cases k with
+  | exn v => exact absurd ⟨v, rfl⟩ (isCheck_err h hc)
+  | _ => rfl
+
+/-- An error of `assert c`, where `c` is a check, or of a check, is fatal. -/
+theorem onlyFatal_fatal {ρ : Env} {μ μ₁ : Store} {e : Expr} {k : Err}
+    (h : Eval ρ μ e (.err k) μ₁) (hc : e.onlyFatal = true) : (Outcome.err k).fatal := by
+  cases e
+  case assert c =>
+    cases h with
+    | assertF _ => rfl
+    | assertNotBool _ _ => rfl
+    | assertErr hce => exact isCheck_fatal hce hc
+  all_goals exact isCheck_fatal h hc
+
 /-! ## Forward: what the source program does, the optimised one does too -/
+
+/-! The simulations have three hypotheses that each call would have to prove: `hN`
+(the free names are in `N`), `hF` and `hS` (no fatal error). The tactics `fv_sub`,
+`fatal_sub` and `safe_sub` prove them from the same hypotheses of the enclosing
+expression, as automatic arguments (`:= by ...`), so the calls don't write them.
+`set_option hygiene false` lets the tactics use the names `hN`, `hF` and `hS` of the
+proof where they run: otherwise Lean renames the names written in a macro. -/
 
 set_option hygiene false in
 /-- Proves that the free names of an optimised expression are in `N`, the names on
@@ -1254,41 +1340,80 @@ macro "fv_sub" : tactic => `(tactic| first
        Option.toList, List.nil_append, List.cons_append, List.not_mem_nil] at hy hy' ⊢
      grind))
 
+set_option hygiene false in
+/-- Proves that the outcome of a sub-expression isn't fatal, from `hF`, which says the
+    same of the enclosing expression: a fatal error would be its outcome too. -/
+macro "fatal_sub" : tactic => `(tactic| first
+  | assumption
+  | (intro _ hf
+     simp [Outcome.fatal, Err.isExn] at hf))
+
+set_option hygiene false in
+/-- Proves that no run of a sub-expression has a fatal error, from `hS`, which says the
+    same of the enclosing expression: `solve_by_elim` builds the run of the enclosing
+    expression that would end in that error. -/
+macro "safe_sub" : tactic => `(tactic| first
+  | assumption
+  | (intro hE r₀ μ₀ h₀ hf₀
+     cases r₀ with
+     | ok v₀ => simp [Outcome.fatal] at hf₀
+     | err k₀ =>
+       simp only [Outcome.fatal] at hf₀
+       exact hS hE (.err k₀) _ (by solve_by_elim (maxDepth := 4) [Eval.letrec, Eval.app,
+         Eval.appErrF, Eval.appErrA, Eval.letin, Eval.letinErr, Eval.ifT, Eval.ifF,
+         Eval.ifErr, Eval.binopErrL, Eval.binopErrR, Eval.consErrL, Eval.consErrR,
+         Eval.matchNil, Eval.matchCons, Eval.matchErr, Eval.assertErr, Eval.allocErrN,
+         Eval.allocErrV, Eval.getErrA, Eval.getErrI, Eval.setErrA, Eval.setErrI,
+         Eval.setErrV, Eval.lenErr, Eval.refErr, Eval.derefErr, Eval.assignErrR,
+         Eval.assignErrV, Eval.exnErr, Eval.raiseErr, Eval.tryCatch, Eval.tryErr,
+         Eval.exnHit, Eval.exnMiss, Eval.exnCaseErr]) hf₀))
+
 /-- `e` gives `r` in `ρ` and `μ`. Every `e'` related to `e` by `R`, run in an
     environment related on the free names of `e'`, and in a related store, gives an
     outcome related to `r`. -/
-def FwdSim (H : Hints A) (R : AEnv A → Expr → Expr → Prop) (ρ : Env) (μ : Store)
+def FwdSim (H : Hints A) (E : Bool) (R : AEnv A → Expr → Expr → Prop) (ρ : Env) (μ : Store)
     (e : Expr) (r : Outcome) (μ₁ : Store) : Prop :=
   ∀ {σ : AEnv A} {e' : Expr} {ρ' : Env} {μ' : Store} {N : List String},
-    σ.Describes ρ → σ.Bound ρ → R σ e e' → EnvRel H N ρ ρ' → StoreRel H μ μ' →
+    σ.Describes ρ → σ.Bound ρ → R σ e e' → EnvRel H E N ρ ρ' → StoreRel H E μ μ' →
     (hN : ∀ y ∈ freeNames [] e', y ∈ N := by fv_sub) →
-    ∃ r' μ₁', Eval ρ' μ' e' r' μ₁' ∧ OutRel H r r' ∧ StoreRel H μ₁ μ₁'
+    (hF : E = true → ¬ r.fatal := by fatal_sub) →
+    ∃ r' μ₁', Eval ρ' μ' e' r' μ₁' ∧ OutRel H E r r' ∧ StoreRel H E μ₁ μ₁'
 
 /-- `OptStep`, and the cases of `Optimizes` that the forward simulation proves with the
     evaluation of a sub-expression of `e`: the branch kept by `iteT` or `iteF`, and `e2`
     in `letDrop`. -/
-inductive FwdStep (H : Hints A) : AEnv A → Expr → Expr → Prop where
-  | step {σ e e'} : OptStep H σ e e' → FwdStep H σ e e'
+inductive FwdStep (H : Hints A) (E : Bool) : AEnv A → Expr → Expr → Prop where
+  | step {σ e e'} : OptStep H E σ e e' → FwdStep H E σ e e'
   | iteT {σ c t t' e} : constOf H σ c = some (.bool true) →
-      Optimizes H ((σ.assume c true).getD σ) t t' → FwdStep H σ (.ite c t e) t'
+      Optimizes H E ((σ.assume c true).getD σ) t t' → FwdStep H E σ (.ite c t e) t'
   | iteF {σ c t e e'} : constOf H σ c = some (.bool false) →
-      Optimizes H ((σ.assume c false).getD σ) e e' → FwdStep H σ (.ite c t e) e'
+      Optimizes H E ((σ.assume c false).getD σ) e e' → FwdStep H E σ (.ite c t e) e'
   | letDrop {σ x e1 e2 e2'} :
-      e1.pure = true → mayFail H σ e1 = false → (freeNames [] e2').contains x = false →
-      Optimizes H ((x, aeval H σ e1) :: afterAssert σ e1) e2 e2' →
-      FwdStep H σ (.letin x e1 e2) e2'
+      e1.pure = true → (mayFail H σ e1 = false ∨ E = true ∧ e1.onlyFatal = true) →
+      (freeNames [] e2').contains x = false →
+      Optimizes H E ((x, aeval H σ e1) :: afterAssert σ e1) e2 e2' →
+      FwdStep H E σ (.letin x e1 e2) e2'
 
 /-- Adds the cases of `fold`, `assertT`, `identR` and `identL` to the cases of
     `FwdStep`. -/
 theorem lift_fwd {H : Hints A} {ρ : Env} {μ μ₁ : Store} {e : Expr} {r : Outcome}
-    (h : Eval ρ μ e r μ₁) (ih : FwdSim H (FwdStep H) ρ μ e r μ₁) :
-    FwdSim H (Optimizes H) ρ μ e r μ₁ := by
-  intro σ e' ρ' μ' N hσ hB ho hρ hμ hN
+    (h : Eval ρ μ e r μ₁) (ih : FwdSim H E (FwdStep H E) ρ μ e r μ₁) :
+    FwdSim H E (Optimizes H E) ρ μ e r μ₁ := by
+  intro σ e' ρ' μ' N hσ hB ho hρ hμ hN hF
   cases ho with
   | fold hc => exact fold_fwd hc hσ hB h hμ
   | iteT hc hot => exact ih hσ hB (.iteT hc hot) hρ hμ
   | iteF hc hoe => exact ih hσ hB (.iteF hc hoe) hρ hμ
   | letDrop hp hf hx ho2 => exact ih hσ hB (.letDrop hp hf hx ho2) hρ hμ
+  | assertErase hE hc =>
+    -- the source run has no fatal error, so `c` gives `true`. `c` doesn't change the store.
+    cases h with
+    | assert hce =>
+      obtain rfl := pure_store hce (isCheck_pure hc)
+      exact ⟨_, _, .unit, .ok .unit, hμ⟩
+    | assertF hce => exact (hF hE rfl).elim
+    | assertNotBool hce hv => exact (hF hE rfl).elim
+    | assertErr hce => exact (hF hE (isCheck_fatal hce hc)).elim
   | assertT hc =>
     -- `c` gives `true` and doesn't change the store, so `assert c` gives `()`
     cases h with
@@ -1324,9 +1449,10 @@ theorem lift_fwd {H : Hints A} {ρ : Env} {μ μ₁ : Store} {e : Expr} {r : Out
 /-- `sim_fwd`, when `e` keeps its shape. -/
 theorem sim_fwd_step {H : Hints A} {ρ : Env} {μ μ₁ : Store} {e : Expr} {r : Outcome}
     (h : Eval ρ μ e r μ₁) {σ : AEnv A} {e' : Expr} {ρ' : Env} {μ' : Store}
-    {N : List String} (hσ : σ.Describes ρ) (hB : σ.Bound ρ) (ho : FwdStep H σ e e')
-    (hρ : EnvRel H N ρ ρ') (hμ : StoreRel H μ μ') (hN : ∀ y ∈ freeNames [] e', y ∈ N) :
-    ∃ r' μ₁', Eval ρ' μ' e' r' μ₁' ∧ OutRel H r r' ∧ StoreRel H μ₁ μ₁' := by
+    {N : List String} (hσ : σ.Describes ρ) (hB : σ.Bound ρ) (ho : FwdStep H E σ e e')
+    (hρ : EnvRel H E N ρ ρ') (hμ : StoreRel H E μ μ') (hN : ∀ y ∈ freeNames [] e', y ∈ N)
+    (hF : E = true → ¬ r.fatal) :
+    ∃ r' μ₁', Eval ρ' μ' e' r' μ₁' ∧ OutRel H E r r' ∧ StoreRel H E μ₁ μ₁' := by
   induction h generalizing σ e' ρ' μ' N with
   | int =>
     cases ho with | step ho =>
@@ -1435,10 +1561,17 @@ theorem sim_fwd_step {H : Hints A} {ρ : Env} {μ μ₁ : Store} {e : Expr} {r :
   | letinErr h1 ih1 =>
     cases ho with
     | letDrop hp hf hx ho2 =>
-      -- `e1` can't fail
-      have hm := mayFail_sound (H := H) hσ hB h1
-      rw [hf] at hm
-      cases hm
+      -- `e1` can't fail, or its error is fatal
+      cases hf with
+      | inl hf =>
+        have hm := mayFail_sound (H := H) hσ hB h1
+        rw [hf] at hm
+        cases hm
+      | inr hf =>
+        -- with `E`, the error of `e1` is fatal, but the source run has no fatal error
+        obtain ⟨hE, hc⟩ := hf
+        have hfatal := onlyFatal_fatal h1 hc
+        exact absurd hfatal (hF hE)
     | step ho =>
     cases ho with
     | letin ho1 ho2 =>
@@ -1933,23 +2066,25 @@ theorem sim_fwd_step {H : Hints A} {ρ : Env} {μ μ₁ : Store} {e : Expr} {r :
 /-- `e'` gives `r'` in `ρ'` and `μ'`. Every `e` related to `e'` by `R`, run in an
     environment related on the free names of `e'`, and in a related store, gives an
     outcome related to `r'`. -/
-def BwdSim (H : Hints A) (R : AEnv A → Expr → Expr → Prop) (ρ' : Env) (μ' : Store)
+def BwdSim (H : Hints A) (E : Bool) (R : AEnv A → Expr → Expr → Prop) (ρ' : Env) (μ' : Store)
     (e' : Expr) (r' : Outcome) (μ₁' : Store) : Prop :=
   ∀ {σ : AEnv A} {e : Expr} {ρ : Env} {μ : Store} {N : List String},
-    σ.Describes ρ → σ.Bound ρ → R σ e e' → EnvRel H N ρ ρ' → StoreRel H μ μ' →
+    σ.Describes ρ → σ.Bound ρ → R σ e e' → EnvRel H E N ρ ρ' → StoreRel H E μ μ' →
     (hN : ∀ y ∈ freeNames [] e', y ∈ N := by fv_sub) →
-    ∃ r μ₁, Eval ρ μ e r μ₁ ∧ OutRel H r r' ∧ StoreRel H μ₁ μ₁'
+    (hS : E = true → ∀ r μ₁, Eval ρ μ e r μ₁ → ¬ r.fatal := by safe_sub) →
+    ∃ r μ₁, Eval ρ μ e r μ₁ ∧ OutRel H E r r' ∧ StoreRel H E μ₁ μ₁'
 
 /-- Adds the cases of `fold`, `iteT`, `iteF` and `assertT` to the cases where `e`
     keeps its shape. By recursion on `e`, because the branch kept by `iteT` or `iteF`
     can itself be replaced. -/
 theorem lift_bwd {H : Hints A} {ρ' : Env} {μ' μ₁' : Store} {e' : Expr} {r' : Outcome}
-    (h : Eval ρ' μ' e' r' μ₁') (ih : BwdSim H (OptStep H) ρ' μ' e' r' μ₁')
+    (h : Eval ρ' μ' e' r' μ₁') (ih : BwdSim H E (OptStep H E) ρ' μ' e' r' μ₁')
     {σ : AEnv A} {e : Expr} {ρ : Env} {μ : Store} {N : List String}
-    (hσ : σ.Describes ρ) (hB : σ.Bound ρ) (ho : Optimizes H σ e e')
-    (hρ : EnvRel H N ρ ρ') (hμ : StoreRel H μ μ')
-    (hN : ∀ y ∈ freeNames [] e', y ∈ N := by fv_sub) :
-    ∃ r μ₁, Eval ρ μ e r μ₁ ∧ OutRel H r r' ∧ StoreRel H μ₁ μ₁' := by
+    (hσ : σ.Describes ρ) (hB : σ.Bound ρ) (ho : Optimizes H E σ e e')
+    (hρ : EnvRel H E N ρ ρ') (hμ : StoreRel H E μ μ')
+    (hN : ∀ y ∈ freeNames [] e', y ∈ N := by fv_sub)
+    (hS : E = true → ∀ r μ₁, Eval ρ μ e r μ₁ → ¬ r.fatal := by safe_sub) :
+    ∃ r μ₁, Eval ρ μ e r μ₁ ∧ OutRel H E r r' ∧ StoreRel H E μ₁ μ₁' := by
   cases ho with
   | fold hc => exact fold_bwd hc hσ hB h hμ
   | iteT hc hot =>
@@ -1969,6 +2104,22 @@ theorem lift_bwd {H : Hints A} {ρ' : Env} {μ' μ₁' : Store} {e' : Expr} {r' 
     rw [hse, Option.getD_some] at hoe
     obtain ⟨r, μ₁, he, hr, hμ₁⟩ := lift_bwd h @ih hde (AEnv.assume_bound hB hse) hoe hρ hμ hN
     exact ⟨r, μ₁, .ifF hce he, hr, hμ₁⟩
+  | assertErase hE hc =>
+    -- `c` finishes without changing the store. It gives `true`, because no run of
+    -- `assert c` has a fatal error.
+    cases h
+    obtain ⟨rc, μc, hce⟩ := pure_total _ (isCheck_pure hc) ρ μ
+    obtain rfl := pure_store hce (isCheck_pure hc)
+    cases rc with
+    | err k => exact (hS hE _ _ (.assertErr hce) (isCheck_fatal hce hc)).elim
+    | ok v =>
+      cases hb : v.isBool
+      case false => exact (hS hE _ _ (.assertNotBool hce hb) rfl).elim
+      case true =>
+        obtain ⟨b, rfl⟩ := bool_of_isBool hb
+        cases b
+        case false => exact (hS hE _ _ (.assertF hce) rfl).elim
+        case true => exact ⟨_, _, .assert hce, .ok .unit, hμ⟩
   | assertT hc =>
     -- `()` gives `()`. `c` terminates, gives `true` and doesn't change the store.
     cases h
@@ -2024,9 +2175,17 @@ theorem lift_bwd {H : Hints A} {ρ' : Env} {μ' μ₁' : Store} {e' : Expr} {r' 
     subst hμ1
     cases r1 with
     | err k =>
-      have hm := mayFail_sound (H := H) hσ hB h1
-      rw [hf] at hm
-      cases hm
+      -- `e1` can't fail, or its error is fatal
+      cases hf with
+      | inl hf =>
+        have hm := mayFail_sound (H := H) hσ hB h1
+        rw [hf] at hm
+        cases hm
+      | inr hf =>
+        -- with `E`, the error of `e1` is fatal, and it would be the outcome of the `let`
+        obtain ⟨hE, hc⟩ := hf
+        have hfatal := onlyFatal_fatal h1 hc
+        exact absurd hfatal (hS hE _ _ (.letinErr h1))
     | ok v1 =>
       obtain ⟨hd, hb⟩ := afterAssert_sound hσ hB h1
       simp at hx
@@ -2040,9 +2199,10 @@ termination_by sizeOf e
 /-- `sim_bwd`, when `e` keeps its shape. -/
 theorem sim_bwd_step {H : Hints A} {ρ' : Env} {μ' μ₁' : Store} {e' : Expr} {r' : Outcome}
     (h : Eval ρ' μ' e' r' μ₁') {σ : AEnv A} {e : Expr} {ρ : Env} {μ : Store}
-    {N : List String} (hσ : σ.Describes ρ) (hB : σ.Bound ρ) (ho : OptStep H σ e e')
-    (hρ : EnvRel H N ρ ρ') (hμ : StoreRel H μ μ') (hN : ∀ y ∈ freeNames [] e', y ∈ N) :
-    ∃ r μ₁, Eval ρ μ e r μ₁ ∧ OutRel H r r' ∧ StoreRel H μ₁ μ₁' := by
+    {N : List String} (hσ : σ.Describes ρ) (hB : σ.Bound ρ) (ho : OptStep H E σ e e')
+    (hρ : EnvRel H E N ρ ρ') (hμ : StoreRel H E μ μ') (hN : ∀ y ∈ freeNames [] e', y ∈ N)
+    (hS : E = true → ∀ r μ₁, Eval ρ μ e r μ₁ → ¬ r.fatal) :
+    ∃ r μ₁, Eval ρ μ e r μ₁ ∧ OutRel H E r r' ∧ StoreRel H E μ₁ μ₁' := by
   induction h generalizing σ e ρ μ N with
   | int =>
     cases ho with
@@ -2089,7 +2249,8 @@ theorem sim_bwd_step {H : Hints A} {ρ' : Env} {μ' μ₁' : Store} {e' : Expr} 
           | ok hva =>
             obtain ⟨r', μ₃', hb', hr, hμ₃⟩ :=
               lift_bwd hb ihb (describes_bodyEnv hσc hBc) (bound_bodyEnv hBc) hob
-                (EnvRel.call ⟨hc1, hc2⟩ hNc hσc hBc hob hva) hμ₂
+                (EnvRel.call ⟨hc1, hc2⟩ hNc hσc hBc hob hva) hμ₂ (hS := fun hE r μ₁ h hf =>
+                  hS hE r μ₁ (.app hf' ha' h) hf)
             exact ⟨_, _, .app hf' ha' hb', hr, hμ₃⟩
   | appNotFn hf hnc ha ihf iha =>
     cases ho with
@@ -2352,6 +2513,10 @@ theorem sim_bwd_step {H : Hints A} {ρ' : Env} {μ' μ₁' : Store} {e' : Expr} 
         cases hri with
         | ok hvi =>
           obtain ⟨rv', μ₃', hv', hrv, hμ₃⟩ := lift_bwd hv ihv hσ hB hov hρ hμ₂
+            (hS := fun hE r μ₁ h hf => by
+              cases r with
+              | ok _ => exact hf
+              | err k => exact hS hE _ _ (.setErrV ha' hi' h) hf)
           cases hrv with
           | ok hvv =>
             obtain ⟨hr, hμ₄⟩ := setV_rel hμ₃ hva hvi hvv
@@ -2381,6 +2546,10 @@ theorem sim_bwd_step {H : Hints A} {ρ' : Env} {μ' μ₁' : Store} {e' : Expr} 
         cases hri with
         | ok hvi =>
           obtain ⟨rv', μ₃', hv', hrv, hμ₃⟩ := lift_bwd hv ihv hσ hB hov hρ hμ₂
+            (hS := fun hE r μ₁ h hf => by
+              cases r with
+              | ok _ => exact hf
+              | err k => exact hS hE _ _ (.setErrV ha' hi' h) hf)
           cases hrv with
           | err hk => exact ⟨_, _, .setErrV ha' hi' hv', .err hk, hμ₃⟩
   | len ha iha =>
@@ -2522,6 +2691,7 @@ theorem sim_bwd_step {H : Hints A} {ρ' : Env} {μ' μ₁' : Store} {e' : Expr} 
         cases hvs with
         | exn hv =>
           obtain ⟨r', μ₂', hm', hr, hμ₂⟩ := lift_bwd hm ihm hσ hB hom hρ hμ₁
+            (hS := fun hE r μ₁ h hf => hS hE r μ₁ (.exnMiss hs' hne h) hf)
           exact ⟨_, _, .exnMiss hs' hne hm', hr, hμ₂⟩
   | exnCaseNotExn hs hx ihs =>
     cases ho with
@@ -2540,34 +2710,64 @@ theorem sim_bwd_step {H : Hints A} {ρ' : Env} {μ' μ₁' : Store} {e' : Expr} 
 /-- If `e` gives `r`, an optimised version of `e`, run in environments related on its
     free names and in related stores, gives an outcome related to `r`. -/
 theorem sim_fwd {H : Hints A} {ρ : Env} {μ μ₁ : Store} {e : Expr} {r : Outcome}
-    (h : Eval ρ μ e r μ₁) : FwdSim H (Optimizes H) ρ μ e r μ₁ := by
-  intro σ e' ρ' μ' N hσ hB ho hρ hμ hN
-  exact lift_fwd h (fun hσ hB ho hρ hμ hN => sim_fwd_step h hσ hB ho hρ hμ hN) hσ hB ho hρ hμ
+    (h : Eval ρ μ e r μ₁) : FwdSim H E (Optimizes H E) ρ μ e r μ₁ := by
+  intro σ e' ρ' μ' N hσ hB ho hρ hμ hN hF
+  exact lift_fwd h (fun hσ hB ho hρ hμ hN hF => sim_fwd_step h hσ hB ho hρ hμ hN hF) hσ hB ho hρ hμ
 
 /-- If an optimised version of `e` gives `r'`, `e`, run in environments related on the
     free names of the optimised version and in related stores, gives an outcome related
     to `r'`. -/
 theorem sim_bwd {H : Hints A} {ρ' : Env} {μ' μ₁' : Store} {e' : Expr} {r' : Outcome}
-    (h : Eval ρ' μ' e' r' μ₁') : BwdSim H (Optimizes H) ρ' μ' e' r' μ₁' := by
-  intro σ e ρ μ N hσ hB ho hρ hμ hN
-  exact lift_bwd h (fun hσ hB ho hρ hμ hN => sim_bwd_step h hσ hB ho hρ hμ hN) hσ hB ho hρ hμ
+    (h : Eval ρ' μ' e' r' μ₁') : BwdSim H E (Optimizes H E) ρ' μ' e' r' μ₁' := by
+  intro σ e ρ μ N hσ hB ho hρ hμ hN hS
+  exact lift_bwd h (fun hσ hB ho hρ hμ hN hS => sim_bwd_step h hσ hB ho hρ hμ hN hS) hσ hB ho hρ hμ
 
 /-! ## The theorem -/
 
 /-- **The optimiser preserves the meaning of programs**, whatever the hints `H`. The
     hints only decide what `opt` rewrites: `opt` checks each fact that it uses. -/
-theorem opt_correct (H : Hints A) (e : Expr) : Equiv H e (opt H ([] : AEnv A) e) := by
-  have ho := optimizes_opt H e []
+theorem opt_correct (H : Hints A) (e : Expr) :
+    Equiv H false e (opt H false ([] : AEnv A) e) := by
+  have ho := optimizes_opt (E := false) H e []
   constructor
   · intro r μ h
     -- the environments are empty, so they are related on any names
+    exact sim_fwd h AEnv.Describes.nil AEnv.Bound.nil ho EnvRel.nil StoreRel.nil (fun _ hy => hy) (fun hE => by cases hE)
+  · intro r' μ' h'
+    exact sim_bwd h' AEnv.Describes.nil AEnv.Bound.nil ho EnvRel.nil StoreRel.nil (fun _ hy => hy) (fun hE => by cases hE)
+
+/-- **Erasing the checks preserves the meaning of programs that never fail.** With `E`,
+    `opt` also replaces each `assert c`, where `c` is a check, by `()`. If no run of `e`
+    ends in a fatal error, `c` gives `true` whenever it is run, so the assertion does
+    nothing. -/
+theorem opt_erase_correct (H : Hints A) (e : Expr)
+    (hsafe : ∀ r μ, Eval [] [] e r μ → ¬ r.fatal) :
+    Equiv H true e (opt H true ([] : AEnv A) e) := by
+  have ho := optimizes_opt (E := true) H e []
+  constructor
+  · intro r μ h
     exact sim_fwd h AEnv.Describes.nil AEnv.Bound.nil ho EnvRel.nil StoreRel.nil (fun _ hy => hy)
+      (fun _ => hsafe r μ h)
   · intro r' μ' h'
     exact sim_bwd h' AEnv.Describes.nil AEnv.Bound.nil ho EnvRel.nil StoreRel.nil (fun _ hy => hy)
+      (fun _ => hsafe)
+
+/-- `opt_erase_correct`, when the analysis proves that `e` never fails. -/
+theorem opt_erase_correct_of_mayFail (H : Hints A) (e : Expr)
+    (hsafe : mayFail H ([] : AEnv A) e = false) :
+    Equiv H true e (opt H true ([] : AEnv A) e) := by
+  apply opt_erase_correct
+  intro r μ h hf
+  cases r with
+  | ok _ => exact hf
+  | err k =>
+    have hm := mayFail_sound (H := H) AEnv.Describes.nil AEnv.Bound.nil h
+    rw [hsafe] at hm
+    cases hm
 
 /-- **The optimiser preserves the meaning of programs**, with the inferred hints. -/
 theorem optimize_correct (e : Expr) :
-    Equiv (inferHints ([] : AEnv A) e) e (optimize ([] : AEnv A) e) :=
+    Equiv (inferHints ([] : AEnv A) e) false e (optimize ([] : AEnv A) e) :=
   opt_correct _ e
 
 end Diva.Opt
