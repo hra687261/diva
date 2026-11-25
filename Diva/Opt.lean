@@ -16,6 +16,10 @@ certainly `true`, becomes `t` (and `e` if `c` is certainly `false`).
 Proved assertions: `assert c`, where `c` is pure, can't fail and is certainly
 `true`, becomes `()`.
 
+Unused names: `let x = e1 in e2` becomes `e2` when `e1` is pure, can't fail, and the
+optimised `e2` doesn't use `x`. For example, `let _ = () in e2`, which is
+left by a proved `assert`, becomes `e2`.
+
 Identities: `a + 0`, `a - 0`, `a * 1` and `a / 1` become `a`, and `0 + b` and `1 * b`
 become `b`. The dropped side must be pure, can't fail and be certainly that integer.
 -- TODO: this should ideally use type information to determine neutral values etc
@@ -109,7 +113,11 @@ def opt (H : Hints A) (σ : AEnv A) (e : Expr) : Expr :=
         (opt H ((f, letrecVal H σ f x b) :: σ) e2)
     | .app f a => .app (opt H σ f) (opt H σ a)
     | .letin x e1 e2 =>
-      .letin x (opt H σ e1) (opt H ((x, aeval H σ e1) :: afterAssert σ e1) e2)
+      let e1' := opt H σ e1
+      let e2' := opt H ((x, aeval H σ e1) :: afterAssert σ e1) e2
+      -- `e1` finishes, can't fail and doesn't change the store, and `e2'` doesn't use `x`
+      if e1.pure && !mayFail H σ e1 && !(freeNames [] e2').contains x then e2'
+      else .letin x e1' e2'
     | .binop op a b =>
       -- `a + 0`, `a - 0`, `a * 1`, `a / 1` become `a`, and `0 + b`, `1 * b` become `b`
       if rightIdentity H σ op a b then opt H σ a

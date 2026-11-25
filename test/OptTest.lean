@@ -39,9 +39,9 @@ private def sameResult (s : String) : Bool :=
 
 -- dead branches: a condition that is certainly `true` keeps only the `then` branch
 #guard optimized "fun y -> let x = 2 in if x < 3 then y + 1 else y" =
-  some "(fun y -> (let x = 2 in (y + 1)))"
+  some "(fun y -> (y + 1))"
 #guard optimized "fun y -> let x = 2 in if x > 3 then y + 1 else y" =
-  some "(fun y -> (let x = 2 in y))"
+  some "(fun y -> y)"
 
 -- in the `then` branch `x < 3`, so `x < 5` is certainly `true`
 #guard optimized "fun x -> if x < 3 then (if x < 5 then x + 1 else 0) else 0" =
@@ -51,10 +51,9 @@ private def sameResult (s : String) : Bool :=
 #guard optimized "fun y -> if 1 / 0 < 3 then y else 0" =
   some "(fun y -> (if ((1 / 0) < 3) then y else 0))"
 
--- proved assertions become `()`
+-- proved assertions become `()`, and `let _ = () in x` becomes `x`
 #guard optimized "fun x -> if x < 3 then (assert (x < 5); x) else 0" =
-  some "(fun x -> (if (x < 3) then (let _ = () in x) else 0))"
--- TODO: remove the let-binding `let _ = () in ...`
+  some "(fun x -> (if (x < 3) then x else 0))"
 
 -- an assertion that may not hold is kept
 #guard optimized "fun x -> assert (x < 5); x" =
@@ -66,7 +65,7 @@ private def sameResult (s : String) : Bool :=
 #guard optimized "fun x -> if x < 3 then 0 + (1 * x) / 1 else 0" =
   some "(fun x -> (if (x < 3) then x else 0))"
 #guard optimized "fun x -> let z = 0 in if x < 3 then x - z else 0" =
-  some "(fun x -> (let z = 0 in (if (x < 3) then x else 0)))"
+  some "(fun x -> (if (x < 3) then x else 0))"
 -- `x` may not be an integer: `x + 0` may fail, and is kept
 #guard optimized "fun x -> x + 0" = some "(fun x -> (x + 0))"
 
@@ -95,3 +94,10 @@ private def sameResult (s : String) : Bool :=
 -- after `assert c;`, `c` holds: the `assert` stays, but `x < 0` is `false` after it
 #guard optimized "fun x -> assert (x >= 0); if x < 0 then 1 else 2" ==
   some "(fun x -> (let _ = (assert (x >= 0)) in 2))"
+
+-- `x` is replaced by `2`, so the `let` isn't used any more, and is removed
+#guard optimized "fun y -> let x = 2 in x + y" == some "(fun y -> (2 + y))"
+-- a `let` whose value may fail is kept: `y` may not be an integer
+#guard optimized "fun y -> let x = y + 1 in 3" == some "(fun y -> (let x = (y + 1) in 3))"
+-- a `fun` is pure and can't fail, so an unused function is removed
+#guard optimized "fun y -> let f = fun z -> z in 3" == some "(fun y -> 3)"

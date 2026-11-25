@@ -185,4 +185,40 @@ inductive Item where
   | expr : Expr → Item
   deriving BEq
 
+/-- The free names of `e`: the names that `e` uses, minus the names in `bound` and the
+    names that `e` binds. A name is bound by `fun`, `let`, `let rec`,
+    `match ... with x :: xs`, `try ... with k` and `E x`. `bound` are the names
+    bound by the expressions "above" `e`: in `fun y -> e`, `y` is in `bound`
+    for `e`. -/
+def freeNames (bound : List String) : Expr → List String
+  | .int _ | .bool _ | .unit | .nil => []
+  | .var x => if bound.contains x then [] else [x]
+  | .lam x b => freeNames (x :: bound) b
+  | .letin x a b => freeNames bound a ++ freeNames (x :: bound) b
+  | .letrec f x a b => freeNames (f :: x :: bound) a ++ freeNames (f :: bound) b
+  | .matchList s n x xs c =>
+    freeNames bound s ++ freeNames bound n ++ freeNames (x :: xs :: bound) c
+  | .tryw a k h => freeNames bound a ++ freeNames (k :: bound) h
+  | .exnCase s _ x h m =>
+    freeNames bound s ++ freeNames (x :: bound) h ++ freeNames bound m
+  | .assert b | .len b | .ref _ b | .deref b | .exn _ b | .raise b => freeNames bound b
+  | .app a b | .binop _ a b | .cons a b | .get a b | .assign a b | .alloc _ a b =>
+    freeNames bound a ++ freeNames bound b
+  | .ite a b c | .set a b c => freeNames bound a ++ freeNames bound b ++ freeNames bound c
+
+/-- A name bound "above" `e` is not free in `e`: removing `x` from `bound` adds only
+    `x` to the free names. -/
+theorem mem_freeNames_cons {y x : String} (e : Expr) :
+    ∀ bound : List String, y ∈ freeNames (x :: bound) e ↔ y ≠ x ∧ y ∈ freeNames bound e := by
+  induction e generalizing x with
+  | var z =>
+    intro bound
+    simp only [freeNames, List.contains_cons]
+    grind
+  | _ =>
+    intro bound
+    simp only [freeNames, List.mem_append]
+    -- `simp` already proves the cases with a single sub-expression
+    try grind
+
 end Diva

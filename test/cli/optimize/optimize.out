@@ -7,7 +7,7 @@ no runtime error is possible
 [exit 0]
 
 $ diva opt optimize.ml
-(let width = 8 in (let height = 20 in (let area = 160 in (let debug = false in (let scale = (fun x -> (if (x < 0) then 0 else x)) in (let clamp = (fun x -> (if (x < 0) then 0 else (let _ = () in x))) in ((scale 160) + (clamp 3))))))))
+(let scale = (fun x -> (if (x < 0) then 0 else x)) in (let clamp = (fun x -> (if (x < 0) then 0 else x)) in ((scale 160) + (clamp 3))))
 [exit 0]
 
 $ diva hints optimize.ml

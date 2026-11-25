@@ -7,7 +7,7 @@ no runtime error is possible
 [exit 0]
 
 $ diva opt no_contract.ml
-(let half = (fun x -> (x / 2)) in (let inv = (fun x -> (100 / x)) in (let unused = (fun x -> (1 / 0)) in (let f = (fun x -> ((half x) + (inv x))) in (f 3)))))
+(let half = (fun x -> (x / 2)) in (let inv = (fun x -> (100 / x)) in (let f = (fun x -> ((half x) + (inv x))) in (f 3))))
 [exit 0]
 
 $ diva hints no_contract.ml

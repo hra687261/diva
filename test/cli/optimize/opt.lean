@@ -15,7 +15,7 @@ def hints : Diva.AbsInt.Hints Diva.AbsInt.Itv := [
 
 /-- The optimised program. -/
 def optimized : Diva.Expr :=
-  (.letin "width" (.int 8) (.letin "height" (.int 20) (.letin "area" (.int 160) (.letin "debug" (.bool false) (.letin "scale" (.lam "x#0" (.ite (.binop .lt (.var "x#0") (.int 0)) (.int 0) (.var "x#0"))) (.letin "clamp" (.lam "x#1" (.ite (.binop .lt (.var "x#1") (.int 0)) (.int 0) (.letin "_" .unit (.var "x#1")))) (.binop .add (.app (.var "scale") (.int 160)) (.app (.var "clamp") (.int 3)))))))))
+  (.letin "scale" (.lam "x#0" (.ite (.binop .lt (.var "x#0") (.int 0)) (.int 0) (.var "x#0"))) (.letin "clamp" (.lam "x#1" (.ite (.binop .lt (.var "x#1") (.int 0)) (.int 0) (.var "x#1"))) (.binop .add (.app (.var "scale") (.int 160)) (.app (.var "clamp") (.int 3)))))
 
 /-- `opt`, run by the kernel with the hints, gives `optimized`. -/
 theorem opt_source : Diva.Opt.opt hints ([] : Diva.AbsInt.AEnv Diva.AbsInt.Itv) source = optimized := by

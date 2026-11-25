@@ -207,27 +207,6 @@ theorem top{i}_safe (μ : Store) : Holds {Cert.expr e} (fun _ _ => True) {env} �
   Holds.of_wp (S := .none) (Γ := {gamma st.fns}) {verified st.fns} (top{i}_wp μ)
 "
 
-/-- The free names of `e`: the names that `e` uses, minus the names in `bound` and the
-    names that `e` binds. A name is bound by `fun`, `let`, `let rec`,
-    `match ... with x :: xs`, `try ... with k` and `E x`. `bound` are the names
-    bound by the expressions "above" `e`: in `fun y -> e`, `y` is in `bound`
-    for `e`. -/
-def freeNames (bound : List String) : Expr → List String
-  | .int _ | .bool _ | .unit | .nil => []
-  | .var x => if bound.contains x then [] else [x]
-  | .lam x b => freeNames (x :: bound) b
-  | .letin x a b => freeNames bound a ++ freeNames (x :: bound) b
-  | .letrec f x a b => freeNames (f :: x :: bound) a ++ freeNames (f :: bound) b
-  | .matchList s n x xs c =>
-    freeNames bound s ++ freeNames bound n ++ freeNames (x :: xs :: bound) c
-  | .tryw a k h => freeNames bound a ++ freeNames (k :: bound) h
-  | .exnCase s _ x h m =>
-    freeNames bound s ++ freeNames (x :: bound) h ++ freeNames bound m
-  | .assert b | .len b | .ref _ b | .deref b | .exn _ b | .raise b => freeNames bound b
-  | .app a b | .binop _ a b | .cons a b | .get a b | .assign a b | .alloc _ a b =>
-    freeNames bound a ++ freeNames bound b
-  | .ite a b c | .set a b c => freeNames bound a ++ freeNames bound b ++ freeNames bound c
-
 /-- The free names of the top-level declaration `b`. In `let rec f x = e`, `f` and `x`
     are bound in `e`. -/
 def declFreeNames : Binding → List String

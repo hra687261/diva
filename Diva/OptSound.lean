@@ -52,6 +52,8 @@ mutual
     the optimised expression. Either `e` is replaced by its value `c` (`fold`), or
     `if` is replaced by the branch that its condition selects (`iteT`, `iteF`), or
     an assertion that certainly holds is replaced by `()` (`assertT`), or
+    `let x = e1 in e2` is replaced by `e2`, when `e1` is pure, can't fail, and `x` isn't
+    used in the optimised `e2` (`letDrop`), or
     `a op b` is replaced by one side, the other being a unit of `op` (`identR`,
     `identL`), or
     `e` keeps its shape and its sub-expressions are optimised (`step`). -/
@@ -68,6 +70,10 @@ inductive Optimizes (H : Hints A) : AEnv A → Expr → Expr → Prop where
       mayFail H σ (.binop op a b) = false → Optimizes H σ b b' →
       Optimizes H σ (.binop op a b) b'
   | assertT {σ c} : constOf H σ c = some (.bool true) → Optimizes H σ (.assert c) .unit
+  | letDrop {σ x e1 e2 e2'} :
+      e1.pure = true → mayFail H σ e1 = false → (freeNames [] e2').contains x = false →
+      Optimizes H ((x, aeval H σ e1) :: afterAssert σ e1) e2 e2' →
+      Optimizes H σ (.letin x e1 e2) e2'
   | step {σ e e'} : OptStep H σ e e' → Optimizes H σ e e'
 
 /-- `e'` has the shape of `e`, and each sub-expression of `e'` is an optimised version
@@ -187,7 +193,18 @@ theorem optimizes_opt (H : Hints A) (e : Expr) : ∀ σ, Optimizes H σ e (opt H
     exact optimizes_of_none fun hc => by rw [opt.eq_def, hc]; exact .app (ihf _) (iha _)
   | letin x e1 e2 ih1 ih2 =>
     intro σ
-    exact optimizes_of_none fun hc => by rw [opt.eq_def, hc]; exact .letin (ih1 _) (ih2 _)
+    cases hc : constOf H σ (.letin x e1 e2)
+    case some v =>
+      rw [opt.eq_def, hc]
+      exact .fold hc
+    case none =>
+      rw [opt.eq_def, hc]
+      simp only
+      split
+      next hd =>
+        simp only [Bool.and_eq_true, Bool.not_eq_true'] at hd
+        exact .letDrop hd.1.1 hd.1.2 hd.2 (ih2 _)
+      next => exact .step (.letin (ih1 _) (ih2 _))
   | ite c t e ihc iht ihe =>
     intro σ
     cases hc : constOf H σ (.ite c t e)
@@ -295,19 +312,25 @@ inductive VR (H : Hints A) : Value → Value → Prop where
   | arr {l : Nat} : VR H (.arr l) (.arr l)
   | ref {l : Nat} : VR H (.ref l) (.ref l)
   | exn {t : String} {a a' : Value} : VR H a a' → VR H (.exn t a) (.exn t a')
-  -- the optimised closure has an optimised body, and a related environment. `σ`
-  -- describes the source closure's environment.
-  | clos {s : Option String} {x : String} {b b' : Expr} {ρ ρ' : Env} (σ : AEnv A) :
-      (∀ y w w', ρ.lookup y = some w → ρ'.lookup y = some w' → VR H w w') →
-      (∀ y, (ρ.lookup y).isSome = (ρ'.lookup y).isSome) →
+  -- the optimised closure has an optimised body, and an environment related on the
+  -- names `N`. The free names of the optimised body are in `N`, or are its parameter
+  -- `x`, or the name `f` of the function in `let rec f x = ...`. `σ` describes the
+  -- source closure's environment.
+  | clos {s : Option String} {x : String} {b b' : Expr} {ρ ρ' : Env} (σ : AEnv A)
+      (N : List String) :
+      (∀ y ∈ N, ∀ w w', ρ.lookup y = some w → ρ'.lookup y = some w' → VR H w w') →
+      (∀ y ∈ N, (ρ.lookup y).isSome = (ρ'.lookup y).isSome) →
+      (∀ y ∈ freeNames [] b', y ∈ x :: (s.toList ++ N)) →
       σ.Describes ρ → σ.Bound ρ →
       Optimizes H (bodyEnv H σ s x b) b b' →
       VR H (.clos s x b ρ) (.clos s x b' ρ')
 
-/-- Related environments: the same names, bound to related values. -/
-def EnvRel (H : Hints A) (ρ ρ' : Env) : Prop :=
-  (∀ y w w', ρ.lookup y = some w → ρ'.lookup y = some w' → VR H w w') ∧
-  (∀ y, (ρ.lookup y).isSome = (ρ'.lookup y).isSome)
+/-- Environments related on the names `N`: each name of `N` is bound in both or in
+    neither, to related values. The other names don't matter. After `letDrop`, the
+    source environment binds `x` and the optimised one doesn't, so `x` isn't in `N`. -/
+def EnvRel (H : Hints A) (N : List String) (ρ ρ' : Env) : Prop :=
+  (∀ y ∈ N, ∀ w w', ρ.lookup y = some w → ρ'.lookup y = some w' → VR H w w') ∧
+  (∀ y ∈ N, (ρ.lookup y).isSome = (ρ'.lookup y).isSome)
 
 /-- Related errors: related raised exceptions, or the same runtime error. -/
 inductive ErrRel (H : Hints A) : Err → Err → Prop where
@@ -368,19 +391,52 @@ theorem ErrRel.isExn {H : Hints A} {k k' : Err} (h : ErrRel H k k') : k'.isExn =
 
 namespace EnvRel
 
-variable {H : Hints A} {ρ ρ' : Env}
+variable {H : Hints A} {N : List String} {ρ ρ' : Env}
 
-theorem nil : EnvRel H [] [] := by
+theorem nil : EnvRel H N [] [] := by
   constructor
-  · intro y w w' hw
+  · intro y _ w w' hw
     simp [List.lookup] at hw
-  · intro y
+  · intro y _
     rfl
 
-theorem cons {x : String} {v v' : Value} (hρ : EnvRel H ρ ρ') (hv : VR H v v') :
-    EnvRel H ((x, v) :: ρ) ((x, v') :: ρ') := by
+/-- On fewer names. -/
+theorem mono {N' : List String} (hρ : EnvRel H N ρ ρ') (h : ∀ y ∈ N', y ∈ N) :
+    EnvRel H N' ρ ρ' := by
   constructor
-  · intro y w w' hw hw'
+  · intro y hy
+    exact hρ.1 y (h y hy)
+  · intro y hy
+    exact hρ.2 y (h y hy)
+
+/-- `y` is not `x`, if `y` is in `N` and `x` isn't. -/
+theorem beq_false {x y : String} (hx : x ∉ N) (hy : y ∈ N) : (y == x) = false := by
+  simp only [beq_eq_false_iff_ne]
+  intro h
+  subst h
+  exact hx hy
+
+/-- A name bound in the source environment only, and not in `N`. -/
+theorem drop {x : String} {v : Value} (hρ : EnvRel H N ρ ρ') (hx : x ∉ N) :
+    EnvRel H N ((x, v) :: ρ) ρ' := by
+  constructor
+  · intro y hy
+    simp only [List.lookup, beq_false hx hy]
+    exact hρ.1 y hy
+  · intro y hy
+    simp only [List.lookup, beq_false hx hy]
+    exact hρ.2 y hy
+
+/-- `y` is in `N`, if it is in `x :: N` and is not `x`. -/
+theorem mem_of_ne {x y : String} (hy : y ∈ x :: N) (hxy : ¬y = x) : y ∈ N := by
+  cases hy with
+  | head => exact absurd rfl hxy
+  | tail _ h => exact h
+
+theorem cons {x : String} {v v' : Value} (hρ : EnvRel H N ρ ρ') (hv : VR H v v') :
+    EnvRel H (x :: N) ((x, v) :: ρ) ((x, v') :: ρ') := by
+  constructor
+  · intro y hy w w' hw hw'
     by_cases hxy : y = x
     · subst hxy
       simp [List.lookup] at hw hw'
@@ -389,60 +445,61 @@ theorem cons {x : String} {v v' : Value} (hρ : EnvRel H ρ ρ') (hv : VR H v v'
       exact hv
     · have hne : (y == x) = false := by simpa using hxy
       simp only [List.lookup, hne] at hw hw'
-      exact hρ.1 y w w' hw hw'
-  · intro y
+      exact hρ.1 y (mem_of_ne hy hxy) w w' hw hw'
+  · intro y hy
     by_cases hxy : y = x
     · subst hxy
       simp [List.lookup]
     · have hne : (y == x) = false := by simpa using hxy
       simp only [List.lookup, hne]
-      exact hρ.2 y
+      exact hρ.2 y (mem_of_ne hy hxy)
 
-/-- A name bound in the source environment is bound in the optimised one, to a
+/-- A name of `N` bound in the source environment is bound in the optimised one, to a
     related value. -/
-theorem lookup_some {y : String} {w : Value} (hρ : EnvRel H ρ ρ') (hw : ρ.lookup y = some w) :
-    ∃ w', ρ'.lookup y = some w' ∧ VR H w w' := by
+theorem lookup_some {y : String} {w : Value} (hρ : EnvRel H N ρ ρ') (hy : y ∈ N)
+    (hw : ρ.lookup y = some w) : ∃ w', ρ'.lookup y = some w' ∧ VR H w w' := by
   cases hw' : ρ'.lookup y
   case none =>
-    have hs := hρ.2 y
+    have hs := hρ.2 y hy
     simp [hw, hw'] at hs
-  case some w' => exact ⟨w', rfl, hρ.1 y w w' hw hw'⟩
+  case some w' => exact ⟨w', rfl, hρ.1 y hy w w' hw hw'⟩
 
-/-- A name bound in the optimised environment is bound in the source one, to a
+/-- A name of `N` bound in the optimised environment is bound in the source one, to a
     related value. -/
-theorem lookup_some' {y : String} {w' : Value} (hρ : EnvRel H ρ ρ')
+theorem lookup_some' {y : String} {w' : Value} (hρ : EnvRel H N ρ ρ') (hy : y ∈ N)
     (hw' : ρ'.lookup y = some w') : ∃ w, ρ.lookup y = some w ∧ VR H w w' := by
   cases hw : ρ.lookup y
   case none =>
-    have hs := hρ.2 y
+    have hs := hρ.2 y hy
     simp [hw, hw'] at hs
-  case some w => exact ⟨w, rfl, hρ.1 y w w' hw hw'⟩
+  case some w => exact ⟨w, rfl, hρ.1 y hy w w' hw hw'⟩
 
-theorem lookup_none {y : String} (hρ : EnvRel H ρ ρ') (h : ρ.lookup y = none) :
-    ρ'.lookup y = none := by
-  have hs := hρ.2 y
+theorem lookup_none {y : String} (hρ : EnvRel H N ρ ρ') (hy : y ∈ N)
+    (h : ρ.lookup y = none) : ρ'.lookup y = none := by
+  have hs := hρ.2 y hy
   rw [h] at hs
   cases hw' : ρ'.lookup y
   case none => rfl
   case some w' => simp [hw'] at hs
 
-theorem lookup_none' {y : String} (hρ : EnvRel H ρ ρ') (h : ρ'.lookup y = none) :
-    ρ.lookup y = none := by
-  have hs := hρ.2 y
+theorem lookup_none' {y : String} (hρ : EnvRel H N ρ ρ') (hy : y ∈ N)
+    (h : ρ'.lookup y = none) : ρ.lookup y = none := by
+  have hs := hρ.2 y hy
   rw [h] at hs
   cases hw : ρ.lookup y
   case none => rfl
   case some w => simp [hw] at hs
 
-/-- Related closures called on related arguments run their bodies in related
-    environments. -/
+/-- Related closures called on related arguments run their bodies in environments
+    related on the parameter `x`, the name of the function (for `let rec`), and `N`. -/
 theorem call {s : Option String} {x : String} {b b' : Expr} {σ : AEnv A} {va va' : Value}
-    (hρ : EnvRel H ρ ρ') (hσ : σ.Describes ρ) (hB : σ.Bound ρ)
+    (hρ : EnvRel H N ρ ρ') (hNb : ∀ y ∈ freeNames [] b', y ∈ x :: (s.toList ++ N))
+    (hσ : σ.Describes ρ) (hB : σ.Bound ρ)
     (hb : Optimizes H (bodyEnv H σ s x b) b b') (hv : VR H va va') :
-    EnvRel H (callEnv s x b ρ va) (callEnv s x b' ρ' va') := by
+    EnvRel H (x :: (s.toList ++ N)) (callEnv s x b ρ va) (callEnv s x b' ρ' va') := by
   cases s
   case none => exact hρ.cons hv
-  case some f => exact (hρ.cons (.clos σ hρ.1 hρ.2 hσ hB hb)).cons hv
+  case some f => exact (hρ.cons (.clos σ N hρ.1 hρ.2 hNb hσ hB hb)).cons hv
 
 end EnvRel
 
@@ -1184,31 +1241,54 @@ theorem eval_ite_false {ρ : Env} {μ μ₁ : Store} {t e : Expr} {r : Outcome}
 
 /-! ## Forward: what the source program does, the optimised one does too -/
 
-/-- `e` gives `r` in `ρ` and `μ`. Every `e'` related to `e` by `R`, run in related
-    environments and stores, gives an outcome related to `r`. -/
+set_option hygiene false in
+/-- Proves that the free names of an optimised expression are in `N`, the names on
+    which its environments are related. It uses `hN`: the free names of the enclosing
+    optimised expression are in the names of its environments. -/
+macro "fv_sub" : tactic => `(tactic| first
+  | assumption
+  | exact fun _ h => h
+  | (intro y hy
+     have hy' := hN y
+     simp only [freeNames, List.mem_append, mem_freeNames_cons, List.mem_cons,
+       Option.toList, List.nil_append, List.cons_append, List.not_mem_nil] at hy hy' ⊢
+     grind))
+
+/-- `e` gives `r` in `ρ` and `μ`. Every `e'` related to `e` by `R`, run in an
+    environment related on the free names of `e'`, and in a related store, gives an
+    outcome related to `r`. -/
 def FwdSim (H : Hints A) (R : AEnv A → Expr → Expr → Prop) (ρ : Env) (μ : Store)
     (e : Expr) (r : Outcome) (μ₁ : Store) : Prop :=
-  ∀ {σ : AEnv A} {e' : Expr} {ρ' : Env} {μ' : Store}, σ.Describes ρ → σ.Bound ρ →
-    R σ e e' → EnvRel H ρ ρ' → StoreRel H μ μ' →
+  ∀ {σ : AEnv A} {e' : Expr} {ρ' : Env} {μ' : Store} {N : List String},
+    σ.Describes ρ → σ.Bound ρ → R σ e e' → EnvRel H N ρ ρ' → StoreRel H μ μ' →
+    (hN : ∀ y ∈ freeNames [] e', y ∈ N := by fv_sub) →
     ∃ r' μ₁', Eval ρ' μ' e' r' μ₁' ∧ OutRel H r r' ∧ StoreRel H μ₁ μ₁'
 
-/-- Adds the cases of `fold`, `iteT`, `iteF` and `assertT` to the cases where `e`
-    keeps its shape. -/
+/-- `OptStep`, and the cases of `Optimizes` that the forward simulation proves with the
+    evaluation of a sub-expression of `e`: the branch kept by `iteT` or `iteF`, and `e2`
+    in `letDrop`. -/
+inductive FwdStep (H : Hints A) : AEnv A → Expr → Expr → Prop where
+  | step {σ e e'} : OptStep H σ e e' → FwdStep H σ e e'
+  | iteT {σ c t t' e} : constOf H σ c = some (.bool true) →
+      Optimizes H ((σ.assume c true).getD σ) t t' → FwdStep H σ (.ite c t e) t'
+  | iteF {σ c t e e'} : constOf H σ c = some (.bool false) →
+      Optimizes H ((σ.assume c false).getD σ) e e' → FwdStep H σ (.ite c t e) e'
+  | letDrop {σ x e1 e2 e2'} :
+      e1.pure = true → mayFail H σ e1 = false → (freeNames [] e2').contains x = false →
+      Optimizes H ((x, aeval H σ e1) :: afterAssert σ e1) e2 e2' →
+      FwdStep H σ (.letin x e1 e2) e2'
+
+/-- Adds the cases of `fold`, `assertT`, `identR` and `identL` to the cases of
+    `FwdStep`. -/
 theorem lift_fwd {H : Hints A} {ρ : Env} {μ μ₁ : Store} {e : Expr} {r : Outcome}
-    (h : Eval ρ μ e r μ₁) (ih : FwdSim H (OptStep H) ρ μ e r μ₁) :
+    (h : Eval ρ μ e r μ₁) (ih : FwdSim H (FwdStep H) ρ μ e r μ₁) :
     FwdSim H (Optimizes H) ρ μ e r μ₁ := by
-  intro σ e' ρ' μ' hσ hB ho hρ hμ
+  intro σ e' ρ' μ' N hσ hB ho hρ hμ hN
   cases ho with
   | fold hc => exact fold_fwd hc hσ hB h hμ
-  | iteT hc hot =>
-    -- `if true then t' else ...` is related to `e` by `OptStep`, and gives what `t'` gives
-    obtain ⟨r', μ₁', h', hr, hμ₁⟩ :=
-      ih hσ hB (.ite (.fold hc) hot (optimizes_opt H _ _)) hρ hμ
-    exact ⟨r', μ₁', eval_ite_true h', hr, hμ₁⟩
-  | iteF hc hoe =>
-    obtain ⟨r', μ₁', h', hr, hμ₁⟩ :=
-      ih hσ hB (.ite (.fold hc) (optimizes_opt H _ _) hoe) hρ hμ
-    exact ⟨r', μ₁', eval_ite_false h', hr, hμ₁⟩
+  | iteT hc hot => exact ih hσ hB (.iteT hc hot) hρ hμ
+  | iteF hc hoe => exact ih hσ hB (.iteF hc hoe) hρ hμ
+  | letDrop hp hf hx ho2 => exact ih hσ hB (.letDrop hp hf hx ho2) hρ hμ
   | assertT hc =>
     -- `c` gives `true` and doesn't change the store, so `assert c` gives `()`
     cases h with
@@ -1223,7 +1303,7 @@ theorem lift_fwd {H : Hints A} {ρ : Env} {μ μ₁ : Store} {e : Expr} {r : Out
     | assertErr hce => cases (constOf_bool hc hσ hB hce).1
   | identR hu hb hf hoa =>
     -- `a' op n` is related to `e` by `OptStep`, and gives what `a'` gives
-    obtain ⟨r', μ₁', h', hr, hμ₁⟩ := ih hσ hB (.binop hoa (.fold hb)) hρ hμ
+    obtain ⟨r', μ₁', h', hr, hμ₁⟩ := ih hσ hB (.step (.binop hoa (.fold hb))) hρ hμ
     cases hr with
     | ok hv => exact ⟨_, _, eval_identR hu h', .ok hv, hμ₁⟩
     | err _ =>
@@ -1232,54 +1312,63 @@ theorem lift_fwd {H : Hints A} {ρ : Env} {μ μ₁ : Store} {e : Expr} {r : Out
       rw [hf] at hm
       cases hm
   | identL hu ha hf hob =>
-    obtain ⟨r', μ₁', h', hr, hμ₁⟩ := ih hσ hB (.binop (.fold ha) hob) hρ hμ
+    obtain ⟨r', μ₁', h', hr, hμ₁⟩ := ih hσ hB (.step (.binop (.fold ha) hob)) hρ hμ
     cases hr with
     | ok hv => exact ⟨_, _, eval_identL hu h', .ok hv, hμ₁⟩
     | err _ =>
       have hm := mayFail_sound (H := H) hσ hB h
       rw [hf] at hm
       cases hm
-  | step hs => exact ih hσ hB hs hρ hμ
+  | step hs => exact ih hσ hB (.step hs) hρ hμ
 
 /-- `sim_fwd`, when `e` keeps its shape. -/
 theorem sim_fwd_step {H : Hints A} {ρ : Env} {μ μ₁ : Store} {e : Expr} {r : Outcome}
     (h : Eval ρ μ e r μ₁) {σ : AEnv A} {e' : Expr} {ρ' : Env} {μ' : Store}
-    (hσ : σ.Describes ρ) (hB : σ.Bound ρ) (ho : OptStep H σ e e')
-    (hρ : EnvRel H ρ ρ') (hμ : StoreRel H μ μ') :
+    {N : List String} (hσ : σ.Describes ρ) (hB : σ.Bound ρ) (ho : FwdStep H σ e e')
+    (hρ : EnvRel H N ρ ρ') (hμ : StoreRel H μ μ') (hN : ∀ y ∈ freeNames [] e', y ∈ N) :
     ∃ r' μ₁', Eval ρ' μ' e' r' μ₁' ∧ OutRel H r r' ∧ StoreRel H μ₁ μ₁' := by
-  induction h generalizing σ e' ρ' μ' with
+  induction h generalizing σ e' ρ' μ' N with
   | int =>
+    cases ho with | step ho =>
     cases ho with
     | int => exact ⟨_, _, .int, .ok .int, hμ⟩
   | bool =>
+    cases ho with | step ho =>
     cases ho with
     | bool => exact ⟨_, _, .bool, .ok .bool, hμ⟩
   | unit =>
+    cases ho with | step ho =>
     cases ho with
     | unit => exact ⟨_, _, .unit, .ok .unit, hμ⟩
   | nil =>
+    cases ho with | step ho =>
     cases ho with
     | nil => exact ⟨_, _, .nil, .ok .nil, hμ⟩
   | var hx =>
+    cases ho with | step ho =>
     cases ho with
     | var =>
-      obtain ⟨w', hw', hv⟩ := hρ.lookup_some hx
+      obtain ⟨w', hw', hv⟩ := hρ.lookup_some (hN _ (by simp [freeNames])) hx
       exact ⟨_, _, .var hw', .ok hv, hμ⟩
   | varErr hx =>
+    cases ho with | step ho =>
     cases ho with
-    | var => exact ⟨_, _, .varErr (hρ.lookup_none hx), .err (.same rfl), hμ⟩
+    | var => exact ⟨_, _, .varErr (hρ.lookup_none (hN _ (by simp [freeNames])) hx), .err (.same rfl), hμ⟩
   | lam =>
+    cases ho with | step ho =>
     cases ho with
-    | lam hob => exact ⟨_, _, .lam, .ok (.clos σ hρ.1 hρ.2 hσ hB hob), hμ⟩
+    | lam hob => exact ⟨_, _, .lam, .ok (.clos σ N hρ.1 hρ.2 (by fv_sub) hσ hB hob), hμ⟩
   | letrec h2 ih2 =>
+    cases ho with | step ho =>
     cases ho with
     | letrec hob ho2 =>
       -- `f` is bound to related closures
-      have hf := VR.clos σ hρ.1 hρ.2 hσ hB hob
+      have hf := VR.clos σ N hρ.1 hρ.2 (by fv_sub) hσ hB hob
       obtain ⟨r', μ₁', h2', hr, hμ₁⟩ :=
         lift_fwd h2 ih2 (hσ.cons (letrecVal_mem hσ hB)) hB.cons ho2 (hρ.cons hf) hμ
       exact ⟨_, _, .letrec h2', hr, hμ₁⟩
   | app hf ha hb ihf iha ihb =>
+    cases ho with | step ho =>
     cases ho with
     | app hof hoa =>
       obtain ⟨rf', μ₁', hf', hrf, hμ₁⟩ := lift_fwd hf ihf hσ hB hof hρ hμ
@@ -1287,15 +1376,16 @@ theorem sim_fwd_step {H : Hints A} {ρ : Env} {μ μ₁ : Store} {e : Expr} {r :
       | ok hvf =>
         -- the optimised function is a closure with an optimised body
         cases hvf with
-        | clos σc hc1 hc2 hσc hBc hob =>
+        | clos σc Nc hc1 hc2 hNc hσc hBc hob =>
           obtain ⟨ra', μ₂', ha', hra, hμ₂⟩ := lift_fwd ha iha hσ hB hoa hρ hμ₁
           cases hra with
           | ok hva =>
             obtain ⟨r', μ₃', hb', hr, hμ₃⟩ :=
               lift_fwd hb ihb (describes_bodyEnv hσc hBc) (bound_bodyEnv hBc) hob
-                (EnvRel.call ⟨hc1, hc2⟩ hσc hBc hob hva) hμ₂
+                (EnvRel.call ⟨hc1, hc2⟩ hNc hσc hBc hob hva) hμ₂
             exact ⟨_, _, .app hf' ha' hb', hr, hμ₃⟩
   | appNotFn hf hnc ha ihf iha =>
+    cases ho with | step ho =>
     cases ho with
     | app hof hoa =>
       obtain ⟨rf', μ₁', hf', hrf, hμ₁⟩ := lift_fwd hf ihf hσ hB hof hρ hμ
@@ -1306,12 +1396,14 @@ theorem sim_fwd_step {H : Hints A} {ρ : Env} {μ μ₁ : Store} {e : Expr} {r :
         | ok hva =>
           exact ⟨_, _, .appNotFn hf' (hvf.isClos.trans hnc) ha', .err (.same rfl), hμ₂⟩
   | appErrF hf ihf =>
+    cases ho with | step ho =>
     cases ho with
     | app hof hoa =>
       obtain ⟨rf', μ₁', hf', hrf, hμ₁⟩ := lift_fwd hf ihf hσ hB hof hρ hμ
       cases hrf with
       | err hk => exact ⟨_, _, .appErrF hf', .err hk, hμ₁⟩
   | appErrA hf ha ihf iha =>
+    cases ho with | step ho =>
     cases ho with
     | app hof hoa =>
       obtain ⟨rf', μ₁', hf', hrf, hμ₁⟩ := lift_fwd hf ihf hσ hB hof hρ hμ
@@ -1321,6 +1413,15 @@ theorem sim_fwd_step {H : Hints A} {ρ : Env} {μ μ₁ : Store} {e : Expr} {r :
         cases hra with
         | err hk => exact ⟨_, _, .appErrA hf' ha', .err hk, hμ₂⟩
   | letin h1 h2 ih1 ih2 =>
+    cases ho with
+    | letDrop hp hf hx ho2 =>
+      -- `e1` doesn't change the store, and `e2'` doesn't use `x`
+      obtain ⟨hd, hb⟩ := afterAssert_sound hσ hB h1
+      simp at hx
+      have hμ1 := pure_store h1 hp
+      subst hμ1
+      exact lift_fwd h2 ih2 (hd.cons (aeval_sound hσ hB h1)) hb.cons ho2 ((hρ.mono hN).drop hx) hμ
+    | step ho =>
     cases ho with
     | letin ho1 ho2 =>
       obtain ⟨r1', μ₁', h1', hr1, hμ₁⟩ := lift_fwd h1 ih1 hσ hB ho1 hρ hμ
@@ -1333,11 +1434,27 @@ theorem sim_fwd_step {H : Hints A} {ρ : Env} {μ μ₁ : Store} {e : Expr} {r :
         exact ⟨_, _, .letin h1' h2', hr, hμ₂⟩
   | letinErr h1 ih1 =>
     cases ho with
+    | letDrop hp hf hx ho2 =>
+      -- `e1` can't fail
+      have hm := mayFail_sound (H := H) hσ hB h1
+      rw [hf] at hm
+      cases hm
+    | step ho =>
+    cases ho with
     | letin ho1 ho2 =>
       obtain ⟨r1', μ₁', h1', hr1, hμ₁⟩ := lift_fwd h1 ih1 hσ hB ho1 hρ hμ
       cases hr1 with
       | err hk => exact ⟨_, _, .letinErr h1', .err hk, hμ₁⟩
   | ifT hc ht ihc iht =>
+    cases ho with
+    | iteT hck hot =>
+      -- the condition doesn't change the store
+      obtain ⟨_, rfl⟩ := constOf_bool hck hσ hB hc
+      obtain ⟨σt, hst, hdt⟩ := σ.assume_sound hσ hc
+      rw [hst, Option.getD_some] at hot
+      exact lift_fwd ht iht hdt (AEnv.assume_bound hB hst) hot hρ hμ
+    | iteF hck hoe => cases (constOf_bool hck hσ hB hc).1
+    | step ho =>
     cases ho with
     | ite hoc hot hoe =>
       obtain ⟨rc', μ₁', hc', hrc, hμ₁⟩ := lift_fwd hc ihc hσ hB hoc hρ hμ
@@ -1351,6 +1468,14 @@ theorem sim_fwd_step {H : Hints A} {ρ : Env} {μ μ₁ : Store} {e : Expr} {r :
         exact ⟨_, _, .ifT hc' ht', hr, hμ₂⟩
   | ifF hc he ihc ihe =>
     cases ho with
+    | iteT hck hot => cases (constOf_bool hck hσ hB hc).1
+    | iteF hck hoe =>
+      obtain ⟨_, rfl⟩ := constOf_bool hck hσ hB hc
+      obtain ⟨σe, hse, hde⟩ := σ.assume_sound hσ hc
+      rw [hse, Option.getD_some] at hoe
+      exact lift_fwd he ihe hde (AEnv.assume_bound hB hse) hoe hρ hμ
+    | step ho =>
+    cases ho with
     | ite hoc hot hoe =>
       obtain ⟨rc', μ₁', hc', hrc, hμ₁⟩ := lift_fwd hc ihc hσ hB hoc hρ hμ
       cases hrc with
@@ -1362,17 +1487,32 @@ theorem sim_fwd_step {H : Hints A} {ρ : Env} {μ μ₁ : Store} {e : Expr} {r :
         exact ⟨_, _, .ifF hc' he', hr, hμ₂⟩
   | ifNotBool hc hv ihc =>
     cases ho with
+    | iteT hck hot =>
+      obtain ⟨heq, _⟩ := constOf_bool hck hσ hB hc
+      cases heq
+      cases hv
+    | iteF hck hoe =>
+      obtain ⟨heq, _⟩ := constOf_bool hck hσ hB hc
+      cases heq
+      cases hv
+    | step ho =>
+    cases ho with
     | ite hoc hot hoe =>
       obtain ⟨rc', μ₁', hc', hrc, hμ₁⟩ := lift_fwd hc ihc hσ hB hoc hρ hμ
       cases hrc with
       | ok hvc => exact ⟨_, _, .ifNotBool hc' (hvc.isBool.trans hv), .err (.same rfl), hμ₁⟩
   | ifErr hc ihc =>
     cases ho with
+    | iteT hck hot => cases (constOf_bool hck hσ hB hc).1
+    | iteF hck hoe => cases (constOf_bool hck hσ hB hc).1
+    | step ho =>
+    cases ho with
     | ite hoc hot hoe =>
       obtain ⟨rc', μ₁', hc', hrc, hμ₁⟩ := lift_fwd hc ihc hσ hB hoc hρ hμ
       cases hrc with
       | err hk => exact ⟨_, _, .ifErr hc', .err hk, hμ₁⟩
   | binop ha hb iha ihb =>
+    cases ho with | step ho =>
     cases ho with
     | binop hoa hob =>
       obtain ⟨ra', μ₁', ha', hra, hμ₁⟩ := lift_fwd ha iha hσ hB hoa hρ hμ
@@ -1382,12 +1522,14 @@ theorem sim_fwd_step {H : Hints A} {ρ : Env} {μ μ₁ : Store} {e : Expr} {r :
         cases hrb with
         | ok hvb => exact ⟨_, _, .binop ha' hb', denote_rel hva hvb, hμ₂⟩
   | binopErrL ha iha =>
+    cases ho with | step ho =>
     cases ho with
     | binop hoa hob =>
       obtain ⟨ra', μ₁', ha', hra, hμ₁⟩ := lift_fwd ha iha hσ hB hoa hρ hμ
       cases hra with
       | err hk => exact ⟨_, _, .binopErrL ha', .err hk, hμ₁⟩
   | binopErrR ha hb iha ihb =>
+    cases ho with | step ho =>
     cases ho with
     | binop hoa hob =>
       obtain ⟨ra', μ₁', ha', hra, hμ₁⟩ := lift_fwd ha iha hσ hB hoa hρ hμ
@@ -1397,6 +1539,7 @@ theorem sim_fwd_step {H : Hints A} {ρ : Env} {μ μ₁ : Store} {e : Expr} {r :
         cases hrb with
         | err hk => exact ⟨_, _, .binopErrR ha' hb', .err hk, hμ₂⟩
   | cons ha hb hl iha ihb =>
+    cases ho with | step ho =>
     cases ho with
     | cons hoa hob =>
       obtain ⟨ra', μ₁', ha', hra, hμ₁⟩ := lift_fwd ha iha hσ hB hoa hρ hμ
@@ -1407,6 +1550,7 @@ theorem sim_fwd_step {H : Hints A} {ρ : Env} {μ μ₁ : Store} {e : Expr} {r :
         | ok hvb =>
           exact ⟨_, _, .cons ha' hb' (hvb.isList.trans hl), .ok (.cons hva hvb), hμ₂⟩
   | consNotList ha hb hl iha ihb =>
+    cases ho with | step ho =>
     cases ho with
     | cons hoa hob =>
       obtain ⟨ra', μ₁', ha', hra, hμ₁⟩ := lift_fwd ha iha hσ hB hoa hρ hμ
@@ -1417,12 +1561,14 @@ theorem sim_fwd_step {H : Hints A} {ρ : Env} {μ μ₁ : Store} {e : Expr} {r :
         | ok hvb =>
           exact ⟨_, _, .consNotList ha' hb' (hvb.isList.trans hl), .err (.same rfl), hμ₂⟩
   | consErrL ha iha =>
+    cases ho with | step ho =>
     cases ho with
     | cons hoa hob =>
       obtain ⟨ra', μ₁', ha', hra, hμ₁⟩ := lift_fwd ha iha hσ hB hoa hρ hμ
       cases hra with
       | err hk => exact ⟨_, _, .consErrL ha', .err hk, hμ₁⟩
   | consErrR ha hb iha ihb =>
+    cases ho with | step ho =>
     cases ho with
     | cons hoa hob =>
       obtain ⟨ra', μ₁', ha', hra, hμ₁⟩ := lift_fwd ha iha hσ hB hoa hρ hμ
@@ -1432,6 +1578,7 @@ theorem sim_fwd_step {H : Hints A} {ρ : Env} {μ μ₁ : Store} {e : Expr} {r :
         cases hrb with
         | err hk => exact ⟨_, _, .consErrR ha' hb', .err hk, hμ₂⟩
   | matchNil hs hn ihs ihn =>
+    cases ho with | step ho =>
     cases ho with
     | matchList hos hon hoc =>
       obtain ⟨rs', μ₁', hs', hrs, hμ₁⟩ := lift_fwd hs ihs hσ hB hos hρ hμ
@@ -1441,6 +1588,7 @@ theorem sim_fwd_step {H : Hints A} {ρ : Env} {μ μ₁ : Store} {e : Expr} {r :
         obtain ⟨r', μ₂', hn', hr, hμ₂⟩ := lift_fwd hn ihn hσ hB hon hρ hμ₁
         exact ⟨_, _, .matchNil hs' hn', hr, hμ₂⟩
   | matchCons hs hc ihs ihc =>
+    cases ho with | step ho =>
     cases ho with
     | matchList hos hon hoc =>
       obtain ⟨rs', μ₁', hs', hrs, hμ₁⟩ := lift_fwd hs ihs hσ hB hos hρ hμ
@@ -1456,6 +1604,7 @@ theorem sim_fwd_step {H : Hints A} {ρ : Env} {μ μ₁ : Store} {e : Expr} {r :
               hB.cons.cons hoc ((hρ.cons hvh).cons hvt) hμ₁
           exact ⟨_, _, .matchCons hs' hc', hr, hμ₂⟩
   | matchNotList hs hv ihs =>
+    cases ho with | step ho =>
     cases ho with
     | matchList hos hon hoc =>
       obtain ⟨rs', μ₁', hs', hrs, hμ₁⟩ := lift_fwd hs ihs hσ hB hos hρ hμ
@@ -1463,12 +1612,14 @@ theorem sim_fwd_step {H : Hints A} {ρ : Env} {μ μ₁ : Store} {e : Expr} {r :
       | ok hvs =>
         exact ⟨_, _, .matchNotList hs' (hvs.isList.trans hv), .err (.same rfl), hμ₁⟩
   | matchErr hs ihs =>
+    cases ho with | step ho =>
     cases ho with
     | matchList hos hon hoc =>
       obtain ⟨rs', μ₁', hs', hrs, hμ₁⟩ := lift_fwd hs ihs hσ hB hos hρ hμ
       cases hrs with
       | err hk => exact ⟨_, _, .matchErr hs', .err hk, hμ₁⟩
   | assert hc ihc =>
+    cases ho with | step ho =>
     cases ho with
     | assert hoc =>
       obtain ⟨rc', μ₁', hc', hrc, hμ₁⟩ := lift_fwd hc ihc hσ hB hoc hρ hμ
@@ -1477,6 +1628,7 @@ theorem sim_fwd_step {H : Hints A} {ρ : Env} {μ μ₁ : Store} {e : Expr} {r :
         cases hvc
         exact ⟨_, _, .assert hc', .ok .unit, hμ₁⟩
   | assertF hc ihc =>
+    cases ho with | step ho =>
     cases ho with
     | assert hoc =>
       obtain ⟨rc', μ₁', hc', hrc, hμ₁⟩ := lift_fwd hc ihc hσ hB hoc hρ hμ
@@ -1485,6 +1637,7 @@ theorem sim_fwd_step {H : Hints A} {ρ : Env} {μ μ₁ : Store} {e : Expr} {r :
         cases hvc
         exact ⟨_, _, .assertF hc', .err (.same rfl), hμ₁⟩
   | assertNotBool hc hv ihc =>
+    cases ho with | step ho =>
     cases ho with
     | assert hoc =>
       obtain ⟨rc', μ₁', hc', hrc, hμ₁⟩ := lift_fwd hc ihc hσ hB hoc hρ hμ
@@ -1492,12 +1645,14 @@ theorem sim_fwd_step {H : Hints A} {ρ : Env} {μ μ₁ : Store} {e : Expr} {r :
       | ok hvc =>
         exact ⟨_, _, .assertNotBool hc' (hvc.isBool.trans hv), .err (.same rfl), hμ₁⟩
   | assertErr hc ihc =>
+    cases ho with | step ho =>
     cases ho with
     | assert hoc =>
       obtain ⟨rc', μ₁', hc', hrc, hμ₁⟩ := lift_fwd hc ihc hσ hB hoc hρ hμ
       cases hrc with
       | err hk => exact ⟨_, _, .assertErr hc', .err hk, hμ₁⟩
   | alloc hn hv ihn ihv =>
+    cases ho with | step ho =>
     cases ho with
     | alloc hon hov =>
       obtain ⟨rn', μ₁', hn', hrn, hμ₁⟩ := lift_fwd hn ihn hσ hB hon hρ hμ
@@ -1509,12 +1664,14 @@ theorem sim_fwd_step {H : Hints A} {ρ : Env} {μ μ₁ : Store} {e : Expr} {r :
           obtain ⟨hr, hμ₃⟩ := allocV_rel hμ₂ hvn hvv
           exact ⟨_, _, .alloc hn' hv', hr, hμ₃⟩
   | allocErrN hn ihn =>
+    cases ho with | step ho =>
     cases ho with
     | alloc hon hov =>
       obtain ⟨rn', μ₁', hn', hrn, hμ₁⟩ := lift_fwd hn ihn hσ hB hon hρ hμ
       cases hrn with
       | err hk => exact ⟨_, _, .allocErrN hn', .err hk, hμ₁⟩
   | allocErrV hn hv ihn ihv =>
+    cases ho with | step ho =>
     cases ho with
     | alloc hon hov =>
       obtain ⟨rn', μ₁', hn', hrn, hμ₁⟩ := lift_fwd hn ihn hσ hB hon hρ hμ
@@ -1524,6 +1681,7 @@ theorem sim_fwd_step {H : Hints A} {ρ : Env} {μ μ₁ : Store} {e : Expr} {r :
         cases hrv with
         | err hk => exact ⟨_, _, .allocErrV hn' hv', .err hk, hμ₂⟩
   | get ha hi iha ihi =>
+    cases ho with | step ho =>
     cases ho with
     | get hoa hoi =>
       obtain ⟨ra', μ₁', ha', hra, hμ₁⟩ := lift_fwd ha iha hσ hB hoa hρ hμ
@@ -1533,12 +1691,14 @@ theorem sim_fwd_step {H : Hints A} {ρ : Env} {μ μ₁ : Store} {e : Expr} {r :
         cases hri with
         | ok hvi => exact ⟨_, _, .get ha' hi', getV_rel hμ₂ hva hvi, hμ₂⟩
   | getErrA ha iha =>
+    cases ho with | step ho =>
     cases ho with
     | get hoa hoi =>
       obtain ⟨ra', μ₁', ha', hra, hμ₁⟩ := lift_fwd ha iha hσ hB hoa hρ hμ
       cases hra with
       | err hk => exact ⟨_, _, .getErrA ha', .err hk, hμ₁⟩
   | getErrI ha hi iha ihi =>
+    cases ho with | step ho =>
     cases ho with
     | get hoa hoi =>
       obtain ⟨ra', μ₁', ha', hra, hμ₁⟩ := lift_fwd ha iha hσ hB hoa hρ hμ
@@ -1548,6 +1708,7 @@ theorem sim_fwd_step {H : Hints A} {ρ : Env} {μ μ₁ : Store} {e : Expr} {r :
         cases hri with
         | err hk => exact ⟨_, _, .getErrI ha' hi', .err hk, hμ₂⟩
   | set ha hi hv iha ihi ihv =>
+    cases ho with | step ho =>
     cases ho with
     | set hoa hoi hov =>
       obtain ⟨ra', μ₁', ha', hra, hμ₁⟩ := lift_fwd ha iha hσ hB hoa hρ hμ
@@ -1562,12 +1723,14 @@ theorem sim_fwd_step {H : Hints A} {ρ : Env} {μ μ₁ : Store} {e : Expr} {r :
             obtain ⟨hr, hμ₄⟩ := setV_rel hμ₃ hva hvi hvv
             exact ⟨_, _, .set ha' hi' hv', hr, hμ₄⟩
   | setErrA ha iha =>
+    cases ho with | step ho =>
     cases ho with
     | set hoa hoi hov =>
       obtain ⟨ra', μ₁', ha', hra, hμ₁⟩ := lift_fwd ha iha hσ hB hoa hρ hμ
       cases hra with
       | err hk => exact ⟨_, _, .setErrA ha', .err hk, hμ₁⟩
   | setErrI ha hi iha ihi =>
+    cases ho with | step ho =>
     cases ho with
     | set hoa hoi hov =>
       obtain ⟨ra', μ₁', ha', hra, hμ₁⟩ := lift_fwd ha iha hσ hB hoa hρ hμ
@@ -1577,6 +1740,7 @@ theorem sim_fwd_step {H : Hints A} {ρ : Env} {μ μ₁ : Store} {e : Expr} {r :
         cases hri with
         | err hk => exact ⟨_, _, .setErrI ha' hi', .err hk, hμ₂⟩
   | setErrV ha hi hv iha ihi ihv =>
+    cases ho with | step ho =>
     cases ho with
     | set hoa hoi hov =>
       obtain ⟨ra', μ₁', ha', hra, hμ₁⟩ := lift_fwd ha iha hσ hB hoa hρ hμ
@@ -1589,18 +1753,21 @@ theorem sim_fwd_step {H : Hints A} {ρ : Env} {μ μ₁ : Store} {e : Expr} {r :
           cases hrv with
           | err hk => exact ⟨_, _, .setErrV ha' hi' hv', .err hk, hμ₃⟩
   | len ha iha =>
+    cases ho with | step ho =>
     cases ho with
     | len hoa =>
       obtain ⟨ra', μ₁', ha', hra, hμ₁⟩ := lift_fwd ha iha hσ hB hoa hρ hμ
       cases hra with
       | ok hva => exact ⟨_, _, .len ha', lenV_rel hμ₁ hva, hμ₁⟩
   | lenErr ha iha =>
+    cases ho with | step ho =>
     cases ho with
     | len hoa =>
       obtain ⟨ra', μ₁', ha', hra, hμ₁⟩ := lift_fwd ha iha hσ hB hoa hρ hμ
       cases hra with
       | err hk => exact ⟨_, _, .lenErr ha', .err hk, hμ₁⟩
   | ref hv ihv =>
+    cases ho with | step ho =>
     cases ho with
     | ref hov =>
       obtain ⟨rv', μ₁', hv', hrv, hμ₁⟩ := lift_fwd hv ihv hσ hB hov hρ hμ
@@ -1609,24 +1776,28 @@ theorem sim_fwd_step {H : Hints A} {ρ : Env} {μ μ₁ : Store} {e : Expr} {r :
         obtain ⟨hr, hμ₂⟩ := refV_rel hμ₁ hvv
         exact ⟨_, _, .ref hv', hr, hμ₂⟩
   | refErr hv ihv =>
+    cases ho with | step ho =>
     cases ho with
     | ref hov =>
       obtain ⟨rv', μ₁', hv', hrv, hμ₁⟩ := lift_fwd hv ihv hσ hB hov hρ hμ
       cases hrv with
       | err hk => exact ⟨_, _, .refErr hv', .err hk, hμ₁⟩
   | deref hr ihr =>
+    cases ho with | step ho =>
     cases ho with
     | deref hor =>
       obtain ⟨rr', μ₁', hr', hrr, hμ₁⟩ := lift_fwd hr ihr hσ hB hor hρ hμ
       cases hrr with
       | ok hvr => exact ⟨_, _, .deref hr', derefV_rel hμ₁ hvr, hμ₁⟩
   | derefErr hr ihr =>
+    cases ho with | step ho =>
     cases ho with
     | deref hor =>
       obtain ⟨rr', μ₁', hr', hrr, hμ₁⟩ := lift_fwd hr ihr hσ hB hor hρ hμ
       cases hrr with
       | err hk => exact ⟨_, _, .derefErr hr', .err hk, hμ₁⟩
   | assign hr hv ihr ihv =>
+    cases ho with | step ho =>
     cases ho with
     | assign hor hov =>
       obtain ⟨rr', μ₁', hr', hrr, hμ₁⟩ := lift_fwd hr ihr hσ hB hor hρ hμ
@@ -1638,12 +1809,14 @@ theorem sim_fwd_step {H : Hints A} {ρ : Env} {μ μ₁ : Store} {e : Expr} {r :
           obtain ⟨hres, hμ₃⟩ := assignV_rel hμ₂ hvr hvv
           exact ⟨_, _, .assign hr' hv', hres, hμ₃⟩
   | assignErrR hr ihr =>
+    cases ho with | step ho =>
     cases ho with
     | assign hor hov =>
       obtain ⟨rr', μ₁', hr', hrr, hμ₁⟩ := lift_fwd hr ihr hσ hB hor hρ hμ
       cases hrr with
       | err hk => exact ⟨_, _, .assignErrR hr', .err hk, hμ₁⟩
   | assignErrV hr hv ihr ihv =>
+    cases ho with | step ho =>
     cases ho with
     | assign hor hov =>
       obtain ⟨rr', μ₁', hr', hrr, hμ₁⟩ := lift_fwd hr ihr hσ hB hor hρ hμ
@@ -1653,24 +1826,28 @@ theorem sim_fwd_step {H : Hints A} {ρ : Env} {μ μ₁ : Store} {e : Expr} {r :
         cases hrv with
         | err hk => exact ⟨_, _, .assignErrV hr' hv', .err hk, hμ₂⟩
   | exn hv ihv =>
+    cases ho with | step ho =>
     cases ho with
     | exn hov =>
       obtain ⟨rv', μ₁', hv', hrv, hμ₁⟩ := lift_fwd hv ihv hσ hB hov hρ hμ
       cases hrv with
       | ok hvv => exact ⟨_, _, .exn hv', .ok (.exn hvv), hμ₁⟩
   | exnErr hv ihv =>
+    cases ho with | step ho =>
     cases ho with
     | exn hov =>
       obtain ⟨rv', μ₁', hv', hrv, hμ₁⟩ := lift_fwd hv ihv hσ hB hov hρ hμ
       cases hrv with
       | err hk => exact ⟨_, _, .exnErr hv', .err hk, hμ₁⟩
   | raise hv hx ihv =>
+    cases ho with | step ho =>
     cases ho with
     | raise hov =>
       obtain ⟨rv', μ₁', hv', hrv, hμ₁⟩ := lift_fwd hv ihv hσ hB hov hρ hμ
       cases hrv with
       | ok hvv => exact ⟨_, _, .raise hv' (hvv.isExn.trans hx), .err (.exn hvv), hμ₁⟩
   | raiseNotExn hv hx ihv =>
+    cases ho with | step ho =>
     cases ho with
     | raise hov =>
       obtain ⟨rv', μ₁', hv', hrv, hμ₁⟩ := lift_fwd hv ihv hσ hB hov hρ hμ
@@ -1678,18 +1855,21 @@ theorem sim_fwd_step {H : Hints A} {ρ : Env} {μ μ₁ : Store} {e : Expr} {r :
       | ok hvv =>
         exact ⟨_, _, .raiseNotExn hv' (hvv.isExn.trans hx), .err (.same rfl), hμ₁⟩
   | raiseErr hv ihv =>
+    cases ho with | step ho =>
     cases ho with
     | raise hov =>
       obtain ⟨rv', μ₁', hv', hrv, hμ₁⟩ := lift_fwd hv ihv hσ hB hov hρ hμ
       cases hrv with
       | err hk => exact ⟨_, _, .raiseErr hv', .err hk, hμ₁⟩
   | tryOk ha iha =>
+    cases ho with | step ho =>
     cases ho with
     | tryw hoa hoh =>
       obtain ⟨ra', μ₁', ha', hra, hμ₁⟩ := lift_fwd ha iha hσ hB hoa hρ hμ
       cases hra with
       | ok hva => exact ⟨_, _, .tryOk ha', .ok hva, hμ₁⟩
   | tryCatch ha hh iha ihh =>
+    cases ho with | step ho =>
     cases ho with
     | tryw hoa hoh =>
       obtain ⟨ra', μ₁', ha', hra, hμ₁⟩ := lift_fwd ha iha hσ hB hoa hρ hμ
@@ -1702,12 +1882,14 @@ theorem sim_fwd_step {H : Hints A} {ρ : Env} {μ μ₁ : Store} {e : Expr} {r :
           exact ⟨_, _, .tryCatch ha' hh', hr, hμ₂⟩
         | same hx => cases hx
   | tryErr ha hx iha =>
+    cases ho with | step ho =>
     cases ho with
     | tryw hoa hoh =>
       obtain ⟨ra', μ₁', ha', hra, hμ₁⟩ := lift_fwd ha iha hσ hB hoa hρ hμ
       cases hra with
       | err hk => exact ⟨_, _, .tryErr ha' (hk.isExn.trans hx), .err hk, hμ₁⟩
   | exnHit hs hh ihs ihh =>
+    cases ho with | step ho =>
     cases ho with
     | exnCase hos hoh hom =>
       obtain ⟨rs', μ₁', hs', hrs, hμ₁⟩ := lift_fwd hs ihs hσ hB hos hρ hμ
@@ -1719,6 +1901,7 @@ theorem sim_fwd_step {H : Hints A} {ρ : Env} {μ μ₁ : Store} {e : Expr} {r :
             lift_fwd hh ihh (hσ.cons (AVal.mem_top _)) hB.cons hoh (hρ.cons hv) hμ₁
           exact ⟨_, _, .exnHit hs' hh', hr, hμ₂⟩
   | exnMiss hs hne hm ihs ihm =>
+    cases ho with | step ho =>
     cases ho with
     | exnCase hos hoh hom =>
       obtain ⟨rs', μ₁', hs', hrs, hμ₁⟩ := lift_fwd hs ihs hσ hB hos hρ hμ
@@ -1729,6 +1912,7 @@ theorem sim_fwd_step {H : Hints A} {ρ : Env} {μ μ₁ : Store} {e : Expr} {r :
           obtain ⟨r', μ₂', hm', hr, hμ₂⟩ := lift_fwd hm ihm hσ hB hom hρ hμ₁
           exact ⟨_, _, .exnMiss hs' hne hm', hr, hμ₂⟩
   | exnCaseNotExn hs hx ihs =>
+    cases ho with | step ho =>
     cases ho with
     | exnCase hos hoh hom =>
       obtain ⟨rs', μ₁', hs', hrs, hμ₁⟩ := lift_fwd hs ihs hσ hB hos hρ hμ
@@ -1736,6 +1920,7 @@ theorem sim_fwd_step {H : Hints A} {ρ : Env} {μ μ₁ : Store} {e : Expr} {r :
       | ok hvs =>
         exact ⟨_, _, .exnCaseNotExn hs' (hvs.isExn.trans hx), .err (.same rfl), hμ₁⟩
   | exnCaseErr hs ihs =>
+    cases ho with | step ho =>
     cases ho with
     | exnCase hos hoh hom =>
       obtain ⟨rs', μ₁', hs', hrs, hμ₁⟩ := lift_fwd hs ihs hσ hB hos hρ hμ
@@ -1745,12 +1930,14 @@ theorem sim_fwd_step {H : Hints A} {ρ : Env} {μ μ₁ : Store} {e : Expr} {r :
 
 /-! ## Backward: what the optimised program does, the source one does too -/
 
-/-- `e'` gives `r'` in `ρ'` and `μ'`. Every `e` related to `e'` by `R`, run in related
-    environments and stores, gives an outcome related to `r'`. -/
+/-- `e'` gives `r'` in `ρ'` and `μ'`. Every `e` related to `e'` by `R`, run in an
+    environment related on the free names of `e'`, and in a related store, gives an
+    outcome related to `r'`. -/
 def BwdSim (H : Hints A) (R : AEnv A → Expr → Expr → Prop) (ρ' : Env) (μ' : Store)
     (e' : Expr) (r' : Outcome) (μ₁' : Store) : Prop :=
-  ∀ {σ : AEnv A} {e : Expr} {ρ : Env} {μ : Store}, σ.Describes ρ → σ.Bound ρ →
-    R σ e e' → EnvRel H ρ ρ' → StoreRel H μ μ' →
+  ∀ {σ : AEnv A} {e : Expr} {ρ : Env} {μ : Store} {N : List String},
+    σ.Describes ρ → σ.Bound ρ → R σ e e' → EnvRel H N ρ ρ' → StoreRel H μ μ' →
+    (hN : ∀ y ∈ freeNames [] e', y ∈ N := by fv_sub) →
     ∃ r μ₁, Eval ρ μ e r μ₁ ∧ OutRel H r r' ∧ StoreRel H μ₁ μ₁'
 
 /-- Adds the cases of `fold`, `iteT`, `iteF` and `assertT` to the cases where `e`
@@ -1758,9 +1945,10 @@ def BwdSim (H : Hints A) (R : AEnv A → Expr → Expr → Prop) (ρ' : Env) (μ
     can itself be replaced. -/
 theorem lift_bwd {H : Hints A} {ρ' : Env} {μ' μ₁' : Store} {e' : Expr} {r' : Outcome}
     (h : Eval ρ' μ' e' r' μ₁') (ih : BwdSim H (OptStep H) ρ' μ' e' r' μ₁')
-    {σ : AEnv A} {e : Expr} {ρ : Env} {μ : Store}
+    {σ : AEnv A} {e : Expr} {ρ : Env} {μ : Store} {N : List String}
     (hσ : σ.Describes ρ) (hB : σ.Bound ρ) (ho : Optimizes H σ e e')
-    (hρ : EnvRel H ρ ρ') (hμ : StoreRel H μ μ') :
+    (hρ : EnvRel H N ρ ρ') (hμ : StoreRel H μ μ')
+    (hN : ∀ y ∈ freeNames [] e', y ∈ N := by fv_sub) :
     ∃ r μ₁, Eval ρ μ e r μ₁ ∧ OutRel H r r' ∧ StoreRel H μ₁ μ₁' := by
   cases ho with
   | fold hc => exact fold_bwd hc hσ hB h hμ
@@ -1771,7 +1959,7 @@ theorem lift_bwd {H : Hints A} {ρ' : Env} {μ' μ₁' : Store} {e' : Expr} {r' 
     obtain ⟨rfl, rfl⟩ := constOf_bool hc hσ hB hce
     obtain ⟨σt, hst, hdt⟩ := σ.assume_sound hσ hce
     rw [hst, Option.getD_some] at hot
-    obtain ⟨r, μ₁, ht, hr, hμ₁⟩ := lift_bwd h ih hdt (AEnv.assume_bound hB hst) hot hρ hμ
+    obtain ⟨r, μ₁, ht, hr, hμ₁⟩ := lift_bwd h @ih hdt (AEnv.assume_bound hB hst) hot hρ hμ hN
     exact ⟨r, μ₁, .ifT hce ht, hr, hμ₁⟩
   | iteF hc hoe =>
     obtain ⟨hi, _, _⟩ := constOf_some hc
@@ -1779,7 +1967,7 @@ theorem lift_bwd {H : Hints A} {ρ' : Env} {μ' μ₁' : Store} {e' : Expr} {r' 
     obtain ⟨rfl, rfl⟩ := constOf_bool hc hσ hB hce
     obtain ⟨σe, hse, hde⟩ := σ.assume_sound hσ hce
     rw [hse, Option.getD_some] at hoe
-    obtain ⟨r, μ₁, he, hr, hμ₁⟩ := lift_bwd h ih hde (AEnv.assume_bound hB hse) hoe hρ hμ
+    obtain ⟨r, μ₁, he, hr, hμ₁⟩ := lift_bwd h @ih hde (AEnv.assume_bound hB hse) hoe hρ hμ hN
     exact ⟨r, μ₁, .ifF hce he, hr, hμ₁⟩
   | assertT hc =>
     -- `()` gives `()`. `c` terminates, gives `true` and doesn't change the store.
@@ -1789,7 +1977,7 @@ theorem lift_bwd {H : Hints A} {ρ' : Env} {μ' μ₁' : Store} {e' : Expr} {r' 
     obtain ⟨rfl, rfl⟩ := constOf_bool hc hσ hB hce
     exact ⟨_, _, .assert hce, .ok .unit, hμ⟩
   | @identR _ op _ _ _ n hu hb hf hoa =>
-    obtain ⟨r, μ₁, ha, hr, hμ₁⟩ := lift_bwd h ih hσ hB hoa hρ hμ
+    obtain ⟨r, μ₁, ha, hr, hμ₁⟩ := lift_bwd h @ih hσ hB hoa hρ hμ hN
     -- `b` terminates, gives `n` and doesn't change the store
     obtain ⟨hi, _, _⟩ := constOf_some hb
     obtain ⟨rb, μb, hbe⟩ := pure_total _ hi ρ μ₁
@@ -1814,7 +2002,7 @@ theorem lift_bwd {H : Hints A} {ρ' : Env} {μ' μ₁' : Store} {e' : Expr} {r' 
     obtain ⟨hi, _, _⟩ := constOf_some ha
     obtain ⟨ra, μa, hae⟩ := pure_total _ hi ρ μ
     obtain ⟨rfl, rfl⟩ := constOf_int ha hσ hB hae
-    obtain ⟨r, μ₁, hb, hr, hμ₁⟩ := lift_bwd h ih hσ hB hob hρ hμ
+    obtain ⟨r, μ₁, hb, hr, hμ₁⟩ := lift_bwd h @ih hσ hB hob hρ hμ hN
     cases r with
     | err k => exact ⟨_, _, .binopErrR hae hb, hr, hμ₁⟩
     | ok v =>
@@ -1829,16 +2017,33 @@ theorem lift_bwd {H : Hints A} {ρ' : Env} {μ' μ₁' : Store} {e' : Expr} {r' 
         rw [hd] at hs
         obtain rfl := denote_leftUnit_ok hu hd
         exact ⟨_, _, hs, hr, hμ₁⟩
+  | letDrop hp hf hx ho2 =>
+    -- `e1` gives a value without changing the store, and `e'` doesn't use `x`
+    obtain ⟨r1, μ1, h1⟩ := pure_total _ hp ρ μ
+    have hμ1 := pure_store h1 hp
+    subst hμ1
+    cases r1 with
+    | err k =>
+      have hm := mayFail_sound (H := H) hσ hB h1
+      rw [hf] at hm
+      cases hm
+    | ok v1 =>
+      obtain ⟨hd, hb⟩ := afterAssert_sound hσ hB h1
+      simp at hx
+      obtain ⟨r, μ₁, h2, hr, hμ₁⟩ :=
+        lift_bwd h @ih (hd.cons (aeval_sound hσ hB h1)) hb.cons ho2 ((hρ.mono hN).drop hx) hμ
+          (fun _ hy => hy)
+      exact ⟨r, μ₁, .letin h1 h2, hr, hμ₁⟩
   | step hs => exact ih hσ hB hs hρ hμ
 termination_by sizeOf e
 
 /-- `sim_bwd`, when `e` keeps its shape. -/
 theorem sim_bwd_step {H : Hints A} {ρ' : Env} {μ' μ₁' : Store} {e' : Expr} {r' : Outcome}
     (h : Eval ρ' μ' e' r' μ₁') {σ : AEnv A} {e : Expr} {ρ : Env} {μ : Store}
-    (hσ : σ.Describes ρ) (hB : σ.Bound ρ) (ho : OptStep H σ e e')
-    (hρ : EnvRel H ρ ρ') (hμ : StoreRel H μ μ') :
+    {N : List String} (hσ : σ.Describes ρ) (hB : σ.Bound ρ) (ho : OptStep H σ e e')
+    (hρ : EnvRel H N ρ ρ') (hμ : StoreRel H μ μ') (hN : ∀ y ∈ freeNames [] e', y ∈ N) :
     ∃ r μ₁, Eval ρ μ e r μ₁ ∧ OutRel H r r' ∧ StoreRel H μ₁ μ₁' := by
-  induction h generalizing σ e ρ μ with
+  induction h generalizing σ e ρ μ N with
   | int =>
     cases ho with
     | int => exact ⟨_, _, .int, .ok .int, hμ⟩
@@ -1854,19 +2059,19 @@ theorem sim_bwd_step {H : Hints A} {ρ' : Env} {μ' μ₁' : Store} {e' : Expr} 
   | var hx =>
     cases ho with
     | var =>
-      obtain ⟨w', hw', hv⟩ := hρ.lookup_some' hx
+      obtain ⟨w', hw', hv⟩ := hρ.lookup_some' (hN _ (by simp [freeNames])) hx
       exact ⟨_, _, .var hw', .ok hv, hμ⟩
   | varErr hx =>
     cases ho with
-    | var => exact ⟨_, _, .varErr (hρ.lookup_none' hx), .err (.same rfl), hμ⟩
+    | var => exact ⟨_, _, .varErr (hρ.lookup_none' (hN _ (by simp [freeNames])) hx), .err (.same rfl), hμ⟩
   | lam =>
     cases ho with
-    | lam hob => exact ⟨_, _, .lam, .ok (.clos σ hρ.1 hρ.2 hσ hB hob), hμ⟩
+    | lam hob => exact ⟨_, _, .lam, .ok (.clos σ N hρ.1 hρ.2 (by fv_sub) hσ hB hob), hμ⟩
   | letrec h2 ih2 =>
     cases ho with
     | letrec hob ho2 =>
       -- `f` is bound to related closures
-      have hf := VR.clos σ hρ.1 hρ.2 hσ hB hob
+      have hf := VR.clos σ N hρ.1 hρ.2 (by fv_sub) hσ hB hob
       obtain ⟨r', μ₁', h2', hr, hμ₁⟩ :=
         lift_bwd h2 ih2 (hσ.cons (letrecVal_mem hσ hB)) hB.cons ho2 (hρ.cons hf) hμ
       exact ⟨_, _, .letrec h2', hr, hμ₁⟩
@@ -1878,13 +2083,13 @@ theorem sim_bwd_step {H : Hints A} {ρ' : Env} {μ' μ₁' : Store} {e' : Expr} 
       | ok hvf =>
         -- the optimised function is a closure with an optimised body
         cases hvf with
-        | clos σc hc1 hc2 hσc hBc hob =>
+        | clos σc Nc hc1 hc2 hNc hσc hBc hob =>
           obtain ⟨ra', μ₂', ha', hra, hμ₂⟩ := lift_bwd ha iha hσ hB hoa hρ hμ₁
           cases hra with
           | ok hva =>
             obtain ⟨r', μ₃', hb', hr, hμ₃⟩ :=
               lift_bwd hb ihb (describes_bodyEnv hσc hBc) (bound_bodyEnv hBc) hob
-                (EnvRel.call ⟨hc1, hc2⟩ hσc hBc hob hva) hμ₂
+                (EnvRel.call ⟨hc1, hc2⟩ hNc hσc hBc hob hva) hμ₂
             exact ⟨_, _, .app hf' ha' hb', hr, hμ₃⟩
   | appNotFn hf hnc ha ihf iha =>
     cases ho with
@@ -2332,18 +2537,20 @@ theorem sim_bwd_step {H : Hints A} {ρ' : Env} {μ' μ₁' : Store} {e' : Expr} 
       cases hrs with
       | err hk => exact ⟨_, _, .exnCaseErr hs', .err hk, hμ₁⟩
 
-/-- If `e` gives `r`, an optimised version of `e`, run in related environments and
-    stores, gives an outcome related to `r`. -/
+/-- If `e` gives `r`, an optimised version of `e`, run in environments related on its
+    free names and in related stores, gives an outcome related to `r`. -/
 theorem sim_fwd {H : Hints A} {ρ : Env} {μ μ₁ : Store} {e : Expr} {r : Outcome}
-    (h : Eval ρ μ e r μ₁) : FwdSim H (Optimizes H) ρ μ e r μ₁ :=
-  lift_fwd h (sim_fwd_step h)
+    (h : Eval ρ μ e r μ₁) : FwdSim H (Optimizes H) ρ μ e r μ₁ := by
+  intro σ e' ρ' μ' N hσ hB ho hρ hμ hN
+  exact lift_fwd h (fun hσ hB ho hρ hμ hN => sim_fwd_step h hσ hB ho hρ hμ hN) hσ hB ho hρ hμ
 
-/-- If an optimised version of `e` gives `r'`, `e`, run in related environments and
-    stores, gives an outcome related to `r'`. -/
+/-- If an optimised version of `e` gives `r'`, `e`, run in environments related on the
+    free names of the optimised version and in related stores, gives an outcome related
+    to `r'`. -/
 theorem sim_bwd {H : Hints A} {ρ' : Env} {μ' μ₁' : Store} {e' : Expr} {r' : Outcome}
     (h : Eval ρ' μ' e' r' μ₁') : BwdSim H (Optimizes H) ρ' μ' e' r' μ₁' := by
-  intro σ e ρ μ hσ hB ho hρ hμ
-  exact lift_bwd h (sim_bwd_step h) hσ hB ho hρ hμ
+  intro σ e ρ μ N hσ hB ho hρ hμ hN
+  exact lift_bwd h (fun hσ hB ho hρ hμ hN => sim_bwd_step h hσ hB ho hρ hμ hN) hσ hB ho hρ hμ
 
 /-! ## The theorem -/
 
@@ -2353,9 +2560,10 @@ theorem opt_correct (H : Hints A) (e : Expr) : Equiv H e (opt H ([] : AEnv A) e)
   have ho := optimizes_opt H e []
   constructor
   · intro r μ h
-    exact sim_fwd h AEnv.Describes.nil AEnv.Bound.nil ho EnvRel.nil StoreRel.nil
+    -- the environments are empty, so they are related on any names
+    exact sim_fwd h AEnv.Describes.nil AEnv.Bound.nil ho EnvRel.nil StoreRel.nil (fun _ hy => hy)
   · intro r' μ' h'
-    exact sim_bwd h' AEnv.Describes.nil AEnv.Bound.nil ho EnvRel.nil StoreRel.nil
+    exact sim_bwd h' AEnv.Describes.nil AEnv.Bound.nil ho EnvRel.nil StoreRel.nil (fun _ hy => hy)
 
 /-- **The optimiser preserves the meaning of programs**, with the inferred hints. -/
 theorem optimize_correct (e : Expr) :

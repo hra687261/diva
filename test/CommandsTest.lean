@@ -31,7 +31,7 @@ open Diva Commands
 -- `opt`: the optimised program, without the `#n` suffixes of names
 #guard opt "let x = 2 in if x < 3 then x * 1 else 0" == { out := ["2"] }
 #guard opt "fun y -> let x = 2 in if x < 3 then y + 1 else y" ==
-  { out := ["(fun y -> (let x = 2 in (y + 1)))"] }
+  { out := ["(fun y -> (y + 1))"] }
 
 -- `hints`: one line per hint, names with their `#n` suffix, `$f` for results
 #guard hints "let f y = 10 / y in f 3 + f 7" == { out := ["y#0 : [3, 7]"] }
