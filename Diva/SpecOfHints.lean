@@ -35,7 +35,7 @@ def boundTerms (x : String) : Itv → Option (List Term)
 /-- The terms that say that `x` is in `a`, if `a` contains only integers. `none` if
     `a` may also be another kind of value (a boolean, a list, ...), or nothing. -/
 def intTerms (x : String) (a : Flat Itv) : Option (List Term) :=
-  if a.tt || a.ff || a.unit || a.list || a.fn || a.loc || a.exn then none
+  if a.tt || a.ff || a.unit || a.list || a.fn || a.loc || a.ctor then none
   else boundTerms x a.int
 
 /-- The top-level declarations of the program `e` after `resolve`, in order. For a

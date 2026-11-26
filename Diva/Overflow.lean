@@ -134,9 +134,9 @@ def check (t : IntType) : Expr → Loc → Except (Int × Span) LExpr
     let r ← check t r (l.kid 0)
     let v ← check t v (l.kid 1)
     return ⟨.assign r.expr v.expr, .node l.span [r.loc, v.loc]⟩
-  | .exn c v, l => do
+  | .ctor c v, l => do
     let v ← check t v (l.kid 0)
-    return ⟨.exn c v.expr, .node l.span [v.loc]⟩
+    return ⟨.ctor c v.expr, .node l.span [v.loc]⟩
   | .raise v, l => do
     let v ← check t v (l.kid 0)
     return ⟨.raise v.expr, .node l.span [v.loc]⟩
@@ -144,11 +144,11 @@ def check (t : IntType) : Expr → Loc → Except (Int × Span) LExpr
     let a ← check t a (l.kid 0)
     let h ← check t h (l.kid 1)
     return ⟨.tryw a.expr k h.expr, .node l.span [a.loc, h.loc]⟩
-  | .exnCase s c x h m, l => do
+  | .ctorCase s c x h m, l => do
     let s ← check t s (l.kid 0)
     let h ← check t h (l.kid 1)
     let m ← check t m (l.kid 2)
-    return ⟨.exnCase s.expr c x h.expr m.expr, .node l.span [s.loc, h.loc, m.loc]⟩
+    return ⟨.ctorCase s.expr c x h.expr m.expr, .node l.span [s.loc, h.loc, m.loc]⟩
   | e@(.bool _), l | e@.unit, l | e@(.var _), l | e@.nil, l => pure ⟨e, l⟩
 
 /-- A top-level item, with a check after each operation that may overflow `t`. -/

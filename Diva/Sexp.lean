@@ -29,8 +29,8 @@ the bytes `START` to `STOP` of the OCaml file. Names are strings.
 (matchList START STOP S N "x" "xs" C)   (assert START STOP C)
 (alloc START STOP N V)   (get START STOP A I)   (set START STOP A I V)   (len START STOP A)
 (ref START STOP V)   (deref START STOP R)   (assign START STOP R V)
-(exn START STOP "C" V)   (raise START STOP V)   (tryw START STOP A "k" H)
-(exnCase START STOP S "C" "x" H M)
+(ctor START STOP "C" V)   (raise START STOP V)   (tryw START STOP A "k" H)
+(ctorCase START STOP S "C" "x" H M)
 OP ::= add | sub | mul | div | mod | eq | ne | lt | le | gt | ge
 ```
 
@@ -203,9 +203,9 @@ partial def expr (x : Sexp) : Except String LExpr := do
     let r ← expr r
     let v ← expr v
     return node (.assign r.expr v.expr) [r, v]
-  | "exn", [c, v] =>
+  | "ctor", [c, v] =>
     let v ← expr v
-    return node (.exn (← name c) v.expr) [v]
+    return node (.ctor (← name c) v.expr) [v]
   | "raise", [v] =>
     let v ← expr v
     return node (.raise v.expr) [v]
@@ -213,11 +213,11 @@ partial def expr (x : Sexp) : Except String LExpr := do
     let a ← expr a
     let h ← expr h
     return node (.tryw a.expr (← name y) h.expr) [a, h]
-  | "exnCase", [s, c, y, h, m] =>
+  | "ctorCase", [s, c, y, h, m] =>
     let s ← expr s
     let h ← expr h
     let m ← expr m
-    return node (.exnCase s.expr (← name c) (← name y) h.expr m.expr) [s, h, m]
+    return node (.ctorCase s.expr (← name c) (← name y) h.expr m.expr) [s, h, m]
   | "overflow", [bits, e] =>
     let e ← expr e
     let t : IntType := ⟨← nat bits⟩

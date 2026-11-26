@@ -173,10 +173,10 @@ def opt (H : Hints A) (E : Bool) (σ : AEnv A) (e : Expr) : Expr :=
     | .ref site v => .ref site (opt H E σ v)
     | .deref r => .deref (opt H E σ r)
     | .assign r v => .assign (opt H E σ r) (opt H E σ v)
-    | .exn t v => .exn t (opt H E σ v)
+    | .ctor t v => .ctor t (opt H E σ v)
     | .raise v => .raise (opt H E σ v)
     | .tryw a k h => .tryw (opt H E σ a) k (opt H E ((k, AVal.top) :: σ) h)
-    | .exnCase s t x h m => .exnCase (opt H E σ s) t x (opt H E ((x, AVal.top) :: σ) h) (opt H E σ m)
+    | .ctorCase s t x h m => .ctorCase (opt H E σ s) t x (opt H E ((x, AVal.top) :: σ) h) (opt H E σ m)
     | e => e
 
 /-- A program optimised, with the hints inferred for it. `σ` describes its free

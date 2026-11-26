@@ -10,9 +10,9 @@ def program : Diva.Expr :=
 
 /-- The hints of the analysis. The kernel checks them again. -/
 def hints : Diva.AbsInt.Hints Diva.AbsInt.Itv := [
-  ("n#1", { int := (.range .negInf (.fin 10)), tt := false, ff := false, unit := false, list := false, fn := false, loc := false, exn := false }),
-  ("$sumsq#0", { int := (.range (.fin 0) .posInf), tt := false, ff := false, unit := false, list := false, fn := false, loc := false, exn := false }),
-  ("acc#2", { int := (.range (.fin 0) .posInf), tt := false, ff := false, unit := false, list := false, fn := false, loc := false, exn := false })]
+  ("n#1", { int := (.range .negInf (.fin 10)), tt := false, ff := false, unit := false, list := false, fn := false, loc := false, ctor := false }),
+  ("$sumsq#0", { int := (.range (.fin 0) .posInf), tt := false, ff := false, unit := false, list := false, fn := false, loc := false, ctor := false }),
+  ("acc#2", { int := (.range (.fin 0) .posInf), tt := false, ff := false, unit := false, list := false, fn := false, loc := false, ctor := false })]
 
 /-- The program never fails, whatever the starting store. -/
 theorem program_safe {μ μ' : Diva.Store} {k : Diva.Err} :

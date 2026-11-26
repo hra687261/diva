@@ -42,7 +42,7 @@ private def check (s : String) : Option (List String) :=
   "`(f 1)`: calls a function the analysis knows nothing about",
   "`(x + 1)`: the operands may not be integers (⊤ and 1)",
   "`(g (fun x -> (x + 1)))`: the function called may fail",
-  "`(g (fun x -> (x + 1)))`: may raise an exception that isn't caught (exn)"]
+  "`(g (fun x -> (x + 1)))`: may raise an exception that isn't caught (ctor)"]
 -- TODO: add type-checking and low-effort form of type inference/unification
 
 -- exceptions (not proved yet): an exception that isn't caught is reported at its

@@ -10,8 +10,8 @@ def program : Diva.Expr :=
 
 /-- The hints of the analysis. The kernel checks them again. -/
 def hints : Diva.AbsInt.Hints Diva.AbsInt.Itv := [
-  ("a#0", { int := (.range (.fin 1) (.fin 1)), tt := false, ff := false, unit := false, list := false, fn := false, loc := false, exn := false }),
-  ("b#1", { int := (.range (.fin 2) (.fin 2)), tt := false, ff := false, unit := false, list := false, fn := false, loc := false, exn := false })]
+  ("a#0", { int := (.range (.fin 1) (.fin 1)), tt := false, ff := false, unit := false, list := false, fn := false, loc := false, ctor := false }),
+  ("b#1", { int := (.range (.fin 2) (.fin 2)), tt := false, ff := false, unit := false, list := false, fn := false, loc := false, ctor := false })]
 
 /-- The program never fails, whatever the starting store. -/
 theorem program_safe {μ μ' : Diva.Store} {k : Diva.Err} :

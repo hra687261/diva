@@ -10,10 +10,10 @@ def program : Diva.Expr :=
 
 /-- The hints of the analysis. The kernel checks them again. -/
 def hints : Diva.AbsInt.Hints Diva.AbsInt.Itv := [
-  ("n#1", { int := (.range (.fin 0) (.fin 3)), tt := false, ff := false, unit := false, list := false, fn := false, loc := false, exn := false }),
-  ("$g#0", { int := (.range (.fin 1) .posInf), tt := false, ff := false, unit := false, list := false, fn := false, loc := false, exn := false }),
-  ("x#2", { int := (.range (.fin 1) .posInf), tt := false, ff := false, unit := false, list := false, fn := false, loc := false, exn := false }),
-  ("x#3", { int := (.range (.fin (-5)) (.fin (-5))), tt := false, ff := false, unit := false, list := false, fn := false, loc := false, exn := false })]
+  ("n#1", { int := (.range (.fin 0) (.fin 3)), tt := false, ff := false, unit := false, list := false, fn := false, loc := false, ctor := false }),
+  ("$g#0", { int := (.range (.fin 1) .posInf), tt := false, ff := false, unit := false, list := false, fn := false, loc := false, ctor := false }),
+  ("x#2", { int := (.range (.fin 1) .posInf), tt := false, ff := false, unit := false, list := false, fn := false, loc := false, ctor := false }),
+  ("x#3", { int := (.range (.fin (-5)) (.fin (-5))), tt := false, ff := false, unit := false, list := false, fn := false, loc := false, ctor := false })]
 
 /-- The program never fails, whatever the starting store. -/
 theorem program_safe {μ μ' : Diva.Store} {k : Diva.Err} :

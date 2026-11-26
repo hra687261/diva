@@ -13,7 +13,7 @@ basics.ml:15:14-46: `map (fun x -> x * x) (range 1 5)`: the function called may 
 basics.ml:16:12-23: `sum squares`: the function called may fail
 basics.ml:17:8-22: `length squares`: the function called may fail
 basics.ml:21:0-9: `assert ok` may fail
-basics.ml:15:14-46: `map (fun x -> x * x) (range 1 5)`: may raise an exception that isn't caught (exn)
+basics.ml:15:14-46: `map (fun x -> x * x) (range 1 5)`: may raise an exception that isn't caught (ctor)
 [exit 1]
 
 $ diva opt basics.ml

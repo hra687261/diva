@@ -80,10 +80,10 @@ def intTok : P Int := lexeme do
   let n ← ASCII.parseNat
   return Int.ofNat n
 
-/-- The pattern of a `try` handler: `E x` / `E` (an exception tag), or `k` / `_`
+/-- The pattern of a `try` handler: `E x` / `E` (an exception constructor), or `k` / `_`
     (any exception). -/
 inductive Handler where
-  | tag : String → String → Handler
+  | ctor : String → String → Handler
   | any : String → Handler
 
 /-- `try e with p1 -> h1 | ... | pn -> hn` catches the exception as `%exn` (a name
@@ -94,7 +94,7 @@ def tryWith (e : Expr) (arms : List (Handler × Expr)) : Expr :=
 where
   go : List (Handler × Expr) → Expr
     | [] => .raise (.var "%exn")
-    | (.tag c x, h) :: rest => .exnCase (.var "%exn") c x h (go rest)
+    | (.ctor c x, h) :: rest => .ctorCase (.var "%exn") c x h (go rest)
     | (.any k, h) :: _ => .letin k (.var "%exn") h
 
 /-- The positions of `try e with ...` (`tryWith`), whose span is `sp`. `el` and the
@@ -104,7 +104,7 @@ def tryWithLoc (sp : Span) (el : Loc) (arms : List (Handler × Loc)) : Loc :=
 where
   go : List (Handler × Loc) → Loc
     | [] => .node sp [.leaf sp]
-    | (.tag _ _, h) :: rest => .node sp [.leaf sp, h, go rest]
+    | (.ctor _ _, h) :: rest => .node sp [.leaf sp, h, go rest]
     | (.any _, h) :: _ => .node sp [.leaf sp, h]
 
 /-- The positions of `lams xs b` (`fun x1 -> ... -> b`): one node per `fun`, with the
@@ -213,7 +213,7 @@ partial def tryExpr : P LExpr := do
 
 /-- One handler `p -> h` of a `try`. -/
 partial def handler : P (Handler × LExpr) := do
-  let p ← (do let c ← ctorTok; let x ← binderTok <|> pure "_"; return Handler.tag c x)
+  let p ← (do let c ← ctorTok; let x ← binderTok <|> pure "_"; return Handler.ctor c x)
     <|> (Handler.any <$> binderTok)
   symbol "->"
   let h ← seqExpr
@@ -347,7 +347,7 @@ partial def unary : P LExpr := do
   (do
     let c ← ctorTok
     let v ← postfixExpr
-    mk (.exn c v.expr) fun _ => [v.loc]) <|>
+    mk (.ctor c v.expr) fun _ => [v.loc]) <|>
   (do
     keyword "raise"
     let e ← unary
@@ -429,7 +429,7 @@ partial def atom : P LExpr := do
     <|> (do leaf (.int (← intTok)))
     <|> boolLit
     <|> (do leaf (.var (← identTok)))
-    <|> (do let c ← ctorTok; leaf (.exn c .unit))
+    <|> (do let c ← ctorTok; leaf (.ctor c .unit))
 
 /-- `[a; b; c]` is `a :: b :: c :: []`. Each `::` has the span of the whole list. -/
 partial def listLit : P LExpr := do
@@ -613,8 +613,8 @@ def resolve (sc : List (String × String)) : Expr → StateM Fresh Expr
     return .matchList (← resolve sc s) (← resolve sc n) x xs
       (← resolve ((xs, xs) :: (x, x) :: sc) c)
   | .tryw e k h => return .tryw (← resolve sc e) k (← resolve ((k, k) :: sc) h)
-  | .exnCase s c x h m =>
-    return .exnCase (← resolve sc s) c x (← resolve ((x, x) :: sc) h) (← resolve sc m)
+  | .ctorCase s c x h m =>
+    return .ctorCase (← resolve sc s) c x (← resolve ((x, x) :: sc) h) (← resolve sc m)
   | .alloc _ n v => do
     let s ← freshSite
     return .alloc s (← resolve sc n) (← resolve sc v)
@@ -631,7 +631,7 @@ def resolve (sc : List (String × String)) : Expr → StateM Fresh Expr
   | .len a => return .len (← resolve sc a)
   | .deref r => return .deref (← resolve sc r)
   | .assign r v => return .assign (← resolve sc r) (← resolve sc v)
-  | .exn c e => return .exn c (← resolve sc e)
+  | .ctor c e => return .ctor c (← resolve sc e)
   | .raise e => return .raise (← resolve sc e)
   | e => return e
 

@@ -176,7 +176,7 @@ theorem mayFail_sound_aux {ρ : Env} {μ μ' : Store} {e : Expr} {r : Outcome}
       mayFail H σ e = true := by
   induction h with
   -- the rules giving a value: no error
-  | int | bool | unit | nil | var | lam | cons | assert | exn =>
+  | int | bool | unit | nil | var | lam | cons | assert | ctor =>
     intro H σ k hσ hB hr
     cases hr
   | varErr hx =>
@@ -287,7 +287,7 @@ theorem mayFail_sound_aux {ρ : Env} {μ μ' : Store} {e : Expr} {r : Outcome}
   | assertErr _ ih =>
     intro H σ k hσ hB hr
     simp [mayFail, mayFailM, ih hσ hB hr]
-  | exnErr _ ih =>
+  | ctorErr _ ih =>
     intro H σ k hσ hB hr
     exact ih hσ hB hr
   -- the expressions not analysed yet: `mayFail` says `true`

@@ -21,7 +21,7 @@ inductive Value where
   | cons : Value → Value → Value
   | arr  : Nat → Value  -- the address of an array in the store
   | ref  : Nat → Value  -- the address of a ref in the store
-  | exn  : String → Value → Value  -- the exception `E v`
+  | ctor : String → Value → Value  -- `C v`: the constructor `C` applied to `v`
   deriving Repr, Inhabited
 
 /-- Variable environment. -/
@@ -31,7 +31,7 @@ abbrev Env := List (String × Value)
 value). An array's length never changes. -/
 abbrev Store := List (List Value)
 
-/-- Runtime errors, and raised exceptions (`exn v`). -/
+/-- Runtime errors, and raised exceptions (`exn v`: the exception `v`, a constructor applied to its argument). -/
 inductive Err where
   | divZero | assertFail | typeError | unbound | outOfBounds
   | exn : Value → Err
@@ -141,8 +141,8 @@ def Value.isList : Value → Bool
   | .nil | .cons .. => true
   | _ => false
 
-def Value.isExn : Value → Bool
-  | .exn .. => true
+def Value.isCtor : Value → Bool
+  | .ctor .. => true
   | _ => false
 
 def Err.isExn : Err → Bool
@@ -251,28 +251,28 @@ inductive Eval : Env → Store → Expr → Outcome → Store → Prop where
   | assignErrR : Eval ρ μ r (.err k) μ₁ → Eval ρ μ (.assign r e) (.err k) μ₁
   | assignErrV :
     Eval ρ μ r (.ok vr) μ₁ → Eval ρ μ₁ e (.err k) μ₂ → Eval ρ μ (.assign r e) (.err k) μ₂
-  | exn : Eval ρ μ e (.ok v) μ₁ → Eval ρ μ (.exn c e) (.ok (.exn c v)) μ₁
-  | exnErr : Eval ρ μ e (.err k) μ₁ → Eval ρ μ (.exn c e) (.err k) μ₁
+  | ctor : Eval ρ μ e (.ok v) μ₁ → Eval ρ μ (.ctor c e) (.ok (.ctor c v)) μ₁
+  | ctorErr : Eval ρ μ e (.err k) μ₁ → Eval ρ μ (.ctor c e) (.err k) μ₁
   | raise :
-    Eval ρ μ e (.ok v) μ₁ → v.isExn = true → Eval ρ μ (.raise e) (.err (.exn v)) μ₁
-  | raiseNotExn :
-    Eval ρ μ e (.ok v) μ₁ → v.isExn = false → Eval ρ μ (.raise e) (.err .typeError) μ₁
+    Eval ρ μ e (.ok v) μ₁ → v.isCtor = true → Eval ρ μ (.raise e) (.err (.exn v)) μ₁
+  | raiseNotCtor :
+    Eval ρ μ e (.ok v) μ₁ → v.isCtor = false → Eval ρ μ (.raise e) (.err .typeError) μ₁
   | raiseErr : Eval ρ μ e (.err k) μ₁ → Eval ρ μ (.raise e) (.err k) μ₁
   | tryOk : Eval ρ μ e (.ok v) μ₁ → Eval ρ μ (.tryw e x h) (.ok v) μ₁
   | tryCatch :
     Eval ρ μ e (.err (.exn v)) μ₁ → Eval ((x, v) :: ρ) μ₁ h r μ₂ → Eval ρ μ (.tryw e x h) r μ₂
   | tryErr :
     Eval ρ μ e (.err k) μ₁ → k.isExn = false → Eval ρ μ (.tryw e x h) (.err k) μ₁
-  | exnHit :
-    Eval ρ μ s (.ok (.exn c v)) μ₁ → Eval ((x, v) :: ρ) μ₁ hit r μ₂ →
-    Eval ρ μ (.exnCase s c x hit miss) r μ₂
-  | exnMiss :
-    Eval ρ μ s (.ok (.exn c' v)) μ₁ → c' ≠ c → Eval ρ μ₁ miss r μ₂ →
-    Eval ρ μ (.exnCase s c x hit miss) r μ₂
-  | exnCaseNotExn :
-    Eval ρ μ s (.ok v) μ₁ → v.isExn = false →
-    Eval ρ μ (.exnCase s c x hit miss) (.err .typeError) μ₁
-  | exnCaseErr : Eval ρ μ s (.err k) μ₁ → Eval ρ μ (.exnCase s c x hit miss) (.err k) μ₁
+  | ctorHit :
+    Eval ρ μ s (.ok (.ctor c v)) μ₁ → Eval ((x, v) :: ρ) μ₁ hit r μ₂ →
+    Eval ρ μ (.ctorCase s c x hit miss) r μ₂
+  | ctorMiss :
+    Eval ρ μ s (.ok (.ctor c' v)) μ₁ → c' ≠ c → Eval ρ μ₁ miss r μ₂ →
+    Eval ρ μ (.ctorCase s c x hit miss) r μ₂
+  | ctorCaseNotCtor :
+    Eval ρ μ s (.ok v) μ₁ → v.isCtor = false →
+    Eval ρ μ (.ctorCase s c x hit miss) (.err .typeError) μ₁
+  | ctorCaseErr : Eval ρ μ s (.err k) μ₁ → Eval ρ μ (.ctorCase s c x hit miss) (.err k) μ₁
 
 /-- Evaluation is deterministic: the same expression, environment and store give
 the same outcome and the same final store. -/
@@ -536,28 +536,28 @@ theorem Eval.deterministic {ρ : Env} {μ : Store} {e : Expr} {r₁ r₂ : Outco
     | assign hr he => cases ihr hr; cases ihe he
     | assignErrR hr => cases ihr hr
     | assignErrV hr he => cases ihr hr; cases ihe he; rfl
-  case exn ihe =>
+  case ctor ihe =>
     cases h₂ with
-    | exn he => cases ihe he; rfl
-    | exnErr he => cases ihe he
-  case exnErr ihe =>
+    | ctor he => cases ihe he; rfl
+    | ctorErr he => cases ihe he
+  case ctorErr ihe =>
     cases h₂ with
-    | exn he => cases ihe he
-    | exnErr he => cases ihe he; rfl
+    | ctor he => cases ihe he
+    | ctorErr he => cases ihe he; rfl
   case raise hx ihe =>
     cases h₂ with
     | raise he _ => cases ihe he; rfl
-    | raiseNotExn he hx' => cases ihe he; rw [hx] at hx'; cases hx'
+    | raiseNotCtor he hx' => cases ihe he; rw [hx] at hx'; cases hx'
     | raiseErr he => cases ihe he
-  case raiseNotExn hx ihe =>
+  case raiseNotCtor hx ihe =>
     cases h₂ with
     | raise he hx' => cases ihe he; rw [hx] at hx'; cases hx'
-    | raiseNotExn he _ => cases ihe he; rfl
+    | raiseNotCtor he _ => cases ihe he; rfl
     | raiseErr he => cases ihe he
   case raiseErr ihe =>
     cases h₂ with
     | raise he _ => cases ihe he
-    | raiseNotExn he _ => cases ihe he
+    | raiseNotCtor he _ => cases ihe he
     | raiseErr he => cases ihe he; rfl
   case tryOk ihe =>
     cases h₂ with
@@ -574,29 +574,29 @@ theorem Eval.deterministic {ρ : Env} {μ : Store} {e : Expr} {r₁ r₂ : Outco
     | tryOk he => cases ihe he
     | tryCatch he _ => cases ihe he; cases hk
     | tryErr he _ => cases ihe he; rfl
-  case exnHit ihs ihh =>
+  case ctorHit ihs ihh =>
     cases h₂ with
-    | exnHit hs hh => cases ihs hs; exact ihh hh
-    | exnMiss hs hne _ => cases ihs hs; exact absurd rfl hne
-    | exnCaseNotExn hs hnx => cases ihs hs; cases hnx
-    | exnCaseErr hs => cases ihs hs
-  case exnMiss hne _ ihs ihm =>
+    | ctorHit hs hh => cases ihs hs; exact ihh hh
+    | ctorMiss hs hne _ => cases ihs hs; exact absurd rfl hne
+    | ctorCaseNotCtor hs hnx => cases ihs hs; cases hnx
+    | ctorCaseErr hs => cases ihs hs
+  case ctorMiss hne _ ihs ihm =>
     cases h₂ with
-    | exnHit hs _ => cases ihs hs; exact absurd rfl hne
-    | exnMiss hs _ hm => cases ihs hs; exact ihm hm
-    | exnCaseNotExn hs hnx => cases ihs hs; cases hnx
-    | exnCaseErr hs => cases ihs hs
-  case exnCaseNotExn hnx ihs =>
+    | ctorHit hs _ => cases ihs hs; exact absurd rfl hne
+    | ctorMiss hs _ hm => cases ihs hs; exact ihm hm
+    | ctorCaseNotCtor hs hnx => cases ihs hs; cases hnx
+    | ctorCaseErr hs => cases ihs hs
+  case ctorCaseNotCtor hnx ihs =>
     cases h₂ with
-    | exnHit hs _ => cases ihs hs; cases hnx
-    | exnMiss hs _ _ => cases ihs hs; cases hnx
-    | exnCaseNotExn hs _ => cases ihs hs; rfl
-    | exnCaseErr hs => cases ihs hs
-  case exnCaseErr ihs =>
+    | ctorHit hs _ => cases ihs hs; cases hnx
+    | ctorMiss hs _ _ => cases ihs hs; cases hnx
+    | ctorCaseNotCtor hs _ => cases ihs hs; rfl
+    | ctorCaseErr hs => cases ihs hs
+  case ctorCaseErr ihs =>
     cases h₂ with
-    | exnHit hs _ => cases ihs hs
-    | exnMiss hs _ _ => cases ihs hs
-    | exnCaseNotExn hs _ => cases ihs hs
-    | exnCaseErr hs => cases ihs hs; rfl
+    | ctorHit hs _ => cases ihs hs
+    | ctorMiss hs _ _ => cases ihs hs
+    | ctorCaseNotCtor hs _ => cases ihs hs
+    | ctorCaseErr hs => cases ihs hs; rfl
 
 end Diva

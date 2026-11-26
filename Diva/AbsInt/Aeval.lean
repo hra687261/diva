@@ -257,20 +257,20 @@ def inBounds [NumDomain A] (H : Hints A) (a i : AVal A) : Bool :=
 def fitsAt [NumDomain A] (H : Hints A) (ss : List Nat) (v : AVal A) : Bool :=
   ss.all fun s => v.flat.leq (H.cell s)
 
-/-! ## Exceptions (untrusted, see `aevalM`)
+/-! ## Constructors and exceptions (untrusted, see `aevalM`)
 
-An exception is a tagged value `exn C v`, with a constructor `C` and an argument `v`.
-So is a value of a sum type of the source language. The analysis describes a tagged
-value by its constructor (`Flat.tags`). The hint `C` describes the arguments of all the
-tagged values of `C`.
+A value `C v` is the constructor `C` applied to the argument `v`. Exceptions and the
+values of sum types of the source language are such values. The analysis describes a
+value `C v` by its constructor `C` (`Flat.ctors`). The hint `C` describes the arguments
+of all the values `C v`.
 -/
 
-/-- The arguments of the tagged values of constructor `c` (key `c`). -/
+/-- The arguments `v` of the values `c v` (key `c`). -/
 def Hints.arg [NumDomain A] (H : Hints A) (c : String) : Flat A :=
   (H.lookup c).getD Flat.top
 
 /-- The number of components of the tuples of constructor `c`: `n` if `c` is `%n`. A
-    tuple `(a, b)` is the tagged value `exn "%2" [a; b]`. -/
+    tuple `(a, b)` is the constructor `%2` applied to `[a; b]`. -/
 def tupleArity (c : String) : Option Nat :=
   if c.startsWith "%" then (String.ofList (c.toList.drop 1)).toNat? else none
 
@@ -278,7 +278,7 @@ def tupleArity (c : String) : Option Nat :=
 def Hints.comp [NumDomain A] (H : Hints A) (c : String) (i : Nat) : Flat A :=
   (H.lookup s!"{c}.{i}").getD Flat.top
 
-/-- The arguments of the tagged values of constructor `c`, as the hints describe them.
+/-- The arguments `v` of the values `c v`, as the hints describe them.
     For a tuple, the list of its components, each described by its own hint. -/
 def Hints.argV [NumDomain A] (H : Hints A) (c : String) : AVal A :=
   match tupleArity c with
@@ -308,28 +308,28 @@ def argClaims [NumDomain A] (c : String) (v : AVal A) : List (String × Flat A) 
   | some _, none => (argKeys c).map (·, Flat.top)
   | none, _ => [(c, v.flat)]
 
-/-- The tagged values that `a` may be. -/
-def AVal.tagged [NumDomain A] (a : AVal A) : Flat A := { Flat.bot with exn := a.exn, tags := a.tags }
+/-- The values `C v` that `a` may be. -/
+def AVal.ctorPart [NumDomain A] (a : AVal A) : Flat A := { Flat.bot with ctor := a.ctor, ctors := a.ctors }
 
-/-- `a` is only tagged values. -/
-def AVal.taggedOnly [NumDomain A] (a : AVal A) : Bool := a.flat.leq a.tagged
+/-- `a` is only values `C v`. -/
+def AVal.ctorsOnly [NumDomain A] (a : AVal A) : Bool := a.flat.leq a.ctorPart
 
-/-- `a` may be a tagged value of constructor `c`. -/
-def AVal.mayBeTag [NumDomain A] (a : AVal A) (c : String) : Bool := a.exn || a.tags.contains c
+/-- `a` may be a value `c v`. -/
+def AVal.mayBeCtor [NumDomain A] (a : AVal A) (c : String) : Bool := a.ctor || a.ctors.contains c
 
-/-- `a` may be a tagged value of another constructor than `c`. -/
-def AVal.mayBeOtherTag [NumDomain A] (a : AVal A) (c : String) : Bool :=
-  a.exn || a.tags.any (· != c)
+/-- `a` may be a value `C v` with another constructor `C` than `c`. -/
+def AVal.mayBeOtherCtor [NumDomain A] (a : AVal A) (c : String) : Bool :=
+  a.ctor || a.ctors.any (· != c)
 
-/-- `a`, except the tagged values of constructor `c`. If `a` may be any tagged value,
-    it still may be one of `c`. -/
-def AVal.withoutTag [NumDomain A] (a : AVal A) (c : String) : AVal A :=
-  AVal.ofFlat { a.flat with tags := a.tags.erase c }
+/-- `a`, except the values `c v`. If `a` may be any value `C v` (`a.ctor`),
+    the result still may be a value `c v`. -/
+def AVal.withoutCtor [NumDomain A] (a : AVal A) (c : String) : AVal A :=
+  AVal.ofFlat { a.flat with ctors := a.ctors.erase c }
 
-/-- The argument of a tagged value of constructor `c` that `a` describes: the hints of
-    `c` (`Hints.argV`), or any value if `a` may be any tagged value. -/
-def tagArg [NumDomain A] (H : Hints A) (a : AVal A) (c : String) : AVal A :=
-  if a.exn then AVal.top else H.argV c
+/-- The argument `v` of a value `c v` that `a` describes: the hints of
+    `c` (`Hints.argV`), or any value if `a` may be any value `C v`. -/
+def ctorArg [NumDomain A] (H : Hints A) (a : AVal A) (c : String) : AVal A :=
+  if a.ctor then AVal.top else H.argV c
 
 /-- The exceptions a call of `af` on `aa` may raise: those of the summary of `af`, or
     any exception if the call isn't known (`af` may be any closure, or `aa` isn't in the
@@ -339,16 +339,16 @@ def callRaises [NumDomain A] (opt : Bool) (af aa : AVal A) : Flat A :=
   let known := match af.sum with
     | some S =>
       if opt || aa.flat.leq S.pre then (if S.rest.isEmpty then S.raises else Flat.bot)
-      else Flat.exnV
+      else Flat.ctorV
     | none => Flat.bot
-  if af.fn then known.join Flat.exnV else known
+  if af.fn then known.join Flat.ctorV else known
 
 /-- The environment of the branch `C x -> h` of `match s with C x -> h | _ -> m`, where
-    `vs` describes `s`: `x` is the argument of `C`, and `s`, if it is a name, is a tagged
-    value of `C`. -/
+    `vs` describes `s`: `x` is the argument of `C`, and `s`, if it is a name, is a
+    value `C v`. -/
 def hitEnv [NumDomain A] (H : Hints A) (σ : AEnv A) (s : Expr) (vs : AVal A) (c x : String) :
     AEnv A :=
-  (x, tagArg H vs c) :: σ.bind s (AVal.ofFlat { Flat.bot with tags := [c] })
+  (x, ctorArg H vs c) :: σ.bind s (AVal.ofFlat { Flat.bot with ctors := [c] })
 
 mutual
 
@@ -401,13 +401,13 @@ def aevalM [NumDomain A] (opt ext : Bool) (H : Hints A) (σ : AEnv A) : Expr →
     -- the exceptions the last body may raise (only with `ext`), assuming those `E` for the
     -- recursive calls
     let raisesIn (E : Flat A) :=
-      if b.isLam then ((aevalM opt ext H (env false E) b).sum.map Summary.raises).getD Flat.exnV
+      if b.isLam then ((aevalM opt ext H (env false E) b).sum.map Summary.raises).getD Flat.ctorV
       else raisesM opt ext H (env false E) b
     -- first assuming none, then those found. If these give more, any exception.
     let E := if ext then
         let E₀ := raisesIn Flat.bot
         if E₀.leq Flat.bot then E₀
-        else if (raisesIn E₀).leq E₀ then E₀ else Flat.exnV
+        else if (raisesIn E₀).leq E₀ then E₀ else Flat.ctorV
       else Flat.bot
     -- whether the last body may fail, assuming that the recursive calls don't
     let fails := lastFailsOf b (aevalM opt ext H (env false E) b) (mayFailM opt ext H (env false E) b)
@@ -421,7 +421,7 @@ def aevalM [NumDomain A] (opt ext : Bool) (H : Hints A) (σ : AEnv A) : Expr →
       (if (aevalM opt ext H σ c).tt then (σ.assume c true).map (aevalM opt ext H · t) else none)
       (if (aevalM opt ext H σ c).ff then (σ.assume c false).map (aevalM opt ext H · e) else none)
   | .assert _ => AVal.unitV
-  | .exn c _ => if ext then AVal.ofFlat { Flat.bot with tags := [c] } else AVal.exnV
+  | .ctor c _ => if ext then AVal.ofFlat { Flat.bot with ctors := [c] } else AVal.ctorV
   | .raise _ => AVal.bot   -- never gives a value
   | .matchList s n x xs c =>
     -- a branch is taken only if the list may be `[]`, or may have a first element
@@ -456,12 +456,12 @@ def aevalM [NumDomain A] (opt ext : Bool) (H : Hints A) (σ : AEnv A) : Expr →
       (aevalM opt ext H σ a).join
         (if ea.leq Flat.bot then AVal.bot else aevalM opt ext H ((k, AVal.ofFlat ea) :: σ) h)
     else AVal.top
-  | .exnCase s c x h m =>
+  | .ctorCase s c x h m =>
     if ext then
       let vs := aevalM opt ext H σ s
       joinOpt
-        (if vs.mayBeTag c then some (aevalM opt ext H (hitEnv H σ s vs c x) h) else none)
-        (if vs.mayBeOtherTag c then some (aevalM opt ext H (σ.bind s (vs.withoutTag c)) m)
+        (if vs.mayBeCtor c then some (aevalM opt ext H (hitEnv H σ s vs c x) h) else none)
+        (if vs.mayBeOtherCtor c then some (aevalM opt ext H (σ.bind s (vs.withoutCtor c)) m)
          else none)
     else AVal.top
 
@@ -492,13 +492,13 @@ def mayFailM [NumDomain A] (opt ext : Bool) (H : Hints A) (σ : AEnv A) : Expr �
     -- the exceptions the last body may raise (only with `ext`), assuming those `E` for the
     -- recursive calls
     let raisesIn (E : Flat A) :=
-      if b.isLam then ((aevalM opt ext H (env false E) b).sum.map Summary.raises).getD Flat.exnV
+      if b.isLam then ((aevalM opt ext H (env false E) b).sum.map Summary.raises).getD Flat.ctorV
       else raisesM opt ext H (env false E) b
     -- first assuming none, then those found. If these give more, any exception.
     let E := if ext then
         let E₀ := raisesIn Flat.bot
         if E₀.leq Flat.bot then E₀
-        else if (raisesIn E₀).leq E₀ then E₀ else Flat.exnV
+        else if (raisesIn E₀).leq E₀ then E₀ else Flat.ctorV
       else Flat.bot
     -- whether the last body may fail, assuming that the recursive calls don't
     let fails := lastFailsOf b (aevalM opt ext H (env false E) b) (mayFailM opt ext H (env false E) b)
@@ -528,7 +528,7 @@ def mayFailM [NumDomain A] (opt ext : Bool) (H : Hints A) (σ : AEnv A) : Expr �
       (vs.mayBeNil && mayFailM opt ext H σ n) ||
       (!vs.heads.leq Flat.bot &&
         mayFailM opt ext H ((xs, vs.tails) :: (x, AVal.ofFlat vs.heads) :: σ) c)
-  | .exn c e =>
+  | .ctor c e =>
     if ext then mayFailM opt ext H σ e || !fitsArg H c (aevalM opt ext H σ e)
     else mayFailM opt ext H σ e
   -- the store, only with `ext` (as in `aevalM`). Each write checks that the value is
@@ -572,25 +572,25 @@ def mayFailM [NumDomain A] (opt ext : Bool) (H : Hints A) (σ : AEnv A) : Expr �
   -- exceptions, only with `ext`. Then `mayFail` says whether `e` may stop with an error
   -- that isn't an exception, and `raisesM` gives the exceptions `e` may raise.
   | .raise v =>
-    if ext then mayFailM opt ext H σ v || !(aevalM opt ext H σ v).taggedOnly else true
+    if ext then mayFailM opt ext H σ v || !(aevalM opt ext H σ v).ctorsOnly else true
   | .tryw a k h =>
     if ext then
       let ea := raisesM opt ext H σ a
       mayFailM opt ext H σ a ||
         (!ea.leq Flat.bot && mayFailM opt ext H ((k, AVal.ofFlat ea) :: σ) h)
     else true
-  | .exnCase s c x h m =>
+  | .ctorCase s c x h m =>
     if ext then
       let vs := aevalM opt ext H σ s
-      mayFailM opt ext H σ s || !vs.taggedOnly ||
-        (vs.mayBeTag c && mayFailM opt ext H (hitEnv H σ s vs c x) h) ||
-        (vs.mayBeOtherTag c && mayFailM opt ext H (σ.bind s (vs.withoutTag c)) m)
+      mayFailM opt ext H σ s || !vs.ctorsOnly ||
+        (vs.mayBeCtor c && mayFailM opt ext H (hitEnv H σ s vs c x) h) ||
+        (vs.mayBeOtherCtor c && mayFailM opt ext H (σ.bind s (vs.withoutCtor c)) m)
     else true
 
-/-- The exceptions `e` may raise, as tagged values (only with `ext`, see `aevalM`). -/
+/-- The exceptions `e` may raise, as values `C v` (only with `ext`, see `aevalM`). -/
 def raisesM [NumDomain A] (opt ext : Bool) (H : Hints A) (σ : AEnv A) : Expr → Flat A
   | .int _ | .bool _ | .unit | .nil | .var _ | .lam _ _ => Flat.bot
-  | .raise v => (raisesM opt ext H σ v).join (aevalM opt ext H σ v).tagged
+  | .raise v => (raisesM opt ext H σ v).join (aevalM opt ext H σ v).ctorPart
   | .app f a =>
     ((raisesM opt ext H σ f).join (raisesM opt ext H σ a)).join
       (callRaises opt (aevalM opt ext H σ f) (aevalM opt ext H σ a))
@@ -604,12 +604,12 @@ def raisesM [NumDomain A] (opt ext : Bool) (H : Hints A) (σ : AEnv A) : Expr �
     let env (F : Bool) (E : Flat A) :=
       (x, AVal.ofFlat P) :: (f, AVal.summary ⟨P, Ps, R, F, E⟩) :: σ
     let raisesIn (E : Flat A) :=
-      if b.isLam then ((aevalM opt ext H (env false E) b).sum.map Summary.raises).getD Flat.exnV
+      if b.isLam then ((aevalM opt ext H (env false E) b).sum.map Summary.raises).getD Flat.ctorV
       else raisesM opt ext H (env false E) b
     let E := if ext then
         let E₀ := raisesIn Flat.bot
         if E₀.leq Flat.bot then E₀
-        else if (raisesIn E₀).leq E₀ then E₀ else Flat.exnV
+        else if (raisesIn E₀).leq E₀ then E₀ else Flat.ctorV
       else Flat.bot
     let fails := lastFailsOf b (aevalM opt ext H (env false E) b) (mayFailM opt ext H (env false E) b)
     let res := lastResOf b (aevalM opt ext H (env fails E) b)
@@ -632,17 +632,17 @@ def raisesM [NumDomain A] (opt ext : Bool) (H : Hints A) (σ : AEnv A) : Expr �
     -- the exceptions of `h`, called on those of `a`
     let ea := raisesM opt ext H σ a
     if ea.leq Flat.bot then Flat.bot else raisesM opt ext H ((k, AVal.ofFlat ea) :: σ) h
-  | .exnCase s c x h m =>
+  | .ctorCase s c x h m =>
     let vs := aevalM opt ext H σ s
     ((raisesM opt ext H σ s).join
-      (if vs.mayBeTag c then raisesM opt ext H (hitEnv H σ s vs c x) h else Flat.bot)).join
-      (if vs.mayBeOtherTag c then raisesM opt ext H (σ.bind s (vs.withoutTag c)) m
+      (if vs.mayBeCtor c then raisesM opt ext H (hitEnv H σ s vs c x) h else Flat.bot)).join
+      (if vs.mayBeOtherCtor c then raisesM opt ext H (σ.bind s (vs.withoutCtor c)) m
        else Flat.bot)
   | .binop _ a b | .cons a b | .get a b | .assign a b | .alloc _ a b =>
     (raisesM opt ext H σ a).join (raisesM opt ext H σ b)
   | .set a i v =>
     ((raisesM opt ext H σ a).join (raisesM opt ext H σ i)).join (raisesM opt ext H σ v)
-  | .assert b | .len b | .ref _ b | .deref b | .exn _ b => raisesM opt ext H σ b
+  | .assert b | .len b | .ref _ b | .deref b | .ctor _ b => raisesM opt ext H σ b
 
 end
 
@@ -1588,11 +1588,11 @@ theorem aeval_sound_aux [NumDomain A] {ρ : Env} {μ μ' : Store} {e : Expr} {r 
     obtain ⟨σe, hse, hde⟩ := σ.assume_sound hσ hc
     simp only [aeval, aevalM, hff, hse, Option.map_some, ↓reduceIte]
     exact joinOpt_sound_r (ihe hde (AEnv.assume_bound hB hse) hr)
-  | assert | exn => intro H σ v hσ hB hr; cases hr; exact .flat rfl
+  | assert | ctor => intro H σ v hσ hB hr; cases hr; exact .flat rfl
   -- the rules giving an error: no value
   | varErr | appNotFn | appErrF | appErrA | letinErr | ifNotBool | ifErr
   | binopErrL | binopErrR | consNotList | consErrL | consErrR | matchNotList | matchErr
-  | assertF | assertNotBool | assertErr | exnErr | raise | raiseNotExn | raiseErr =>
+  | assertF | assertNotBool | assertErr | ctorErr | raise | raiseNotCtor | raiseErr =>
     intro H σ v hσ hB hr
     cases hr
   -- the expressions not analysed yet: `top`

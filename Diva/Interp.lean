@@ -127,22 +127,22 @@ def eval : Nat → Env → Store → Expr → Result
         | .ok v μ₂ => some (assignV μ₂ vr v)
         | r => r
       | r => r
-    | .exn c e =>
+    | .ctor c e =>
       match eval fuel ρ μ e with
-      | .ok v μ₁ => .ok (.exn c v) μ₁
+      | .ok v μ₁ => .ok (.ctor c v) μ₁
       | r => r
     | .raise e =>
       match eval fuel ρ μ e with
       | .ok v μ₁ =>
-        if v.isExn then .err (.exn v) μ₁ else .err .typeError μ₁
+        if v.isCtor then .err (.exn v) μ₁ else .err .typeError μ₁
       | r => r
     | .tryw e x h =>
       match eval fuel ρ μ e with
       | .err (.exn v) μ₁ => eval fuel ((x, v) :: ρ) μ₁ h
       | r => r
-    | .exnCase s c x hit miss =>
+    | .ctorCase s c x hit miss =>
       match eval fuel ρ μ s with
-      | .ok (.exn c' v) μ₁ =>
+      | .ok (.ctor c' v) μ₁ =>
         if c' = c then eval fuel ((x, v) :: ρ) μ₁ hit else eval fuel ρ μ₁ miss
       | .ok _ μ₁ => .err .typeError μ₁
       | r => r
@@ -410,15 +410,15 @@ theorem eval_sound :
         cases r with
         | ok v => exact absurd h (hnr v μ')
         | err k => exact .assignErrR (ih h)
-    case exn =>
+    case ctor =>
       split at h
       case h_1 v μ₁ he =>
         cases h
-        exact .exn (ih he)
+        exact .ctor (ih he)
       case h_2 hne =>
         cases r with
         | ok v => exact absurd h (hne v μ')
-        | err k => exact .exnErr (ih h)
+        | err k => exact .ctorErr (ih h)
     case raise =>
       split at h
       case h_1 v μ₁ he =>
@@ -428,7 +428,7 @@ theorem eval_sound :
           exact .raise (ih he) hx
         case isFalse hx =>
           cases h
-          exact .raiseNotExn (ih he) (by simpa using hx)
+          exact .raiseNotCtor (ih he) (by simpa using hx)
       case h_2 hne =>
         cases r with
         | ok v => exact absurd h (hne v μ')
@@ -443,23 +443,23 @@ theorem eval_sound :
           cases k
           case exn v => exact absurd h (hne v μ')
           all_goals exact .tryErr (ih h) rfl
-    case exnCase =>
+    case ctorCase =>
       split at h
       case h_1 c' v μ₁ hs =>
         split at h
-        case isTrue hc => subst hc; exact .exnHit (ih hs) (ih h)
-        case isFalse hc => exact .exnMiss (ih hs) hc (ih h)
+        case isTrue hc => subst hc; exact .ctorHit (ih hs) (ih h)
+        case isFalse hc => exact .ctorMiss (ih hs) hc (ih h)
       case h_2 _ v μ₁ hne hs =>
         cases h
-        have hv : v.isExn = false := by
+        have hv : v.isCtor = false := by
           cases v
-          case exn c' v' => exact absurd rfl (hne c' v')
+          case ctor c' v' => exact absurd rfl (hne c' v')
           all_goals rfl
-        exact .exnCaseNotExn (ih hs) hv
+        exact .ctorCaseNotCtor (ih hs) hv
       case h_3 hns =>
         cases r with
         | ok v => exact absurd h (hns v μ')
-        | err k => exact .exnCaseErr (ih h)
+        | err k => exact .ctorCaseErr (ih h)
 
 def ppValue : Value → String
   | .int n  => toString n
@@ -470,8 +470,8 @@ def ppValue : Value → String
   | .cons a b => s!"({ppValue a} :: {ppValue b})"
   | .arr l => s!"<array {l}>"
   | .ref l => s!"<ref {l}>"
-  | .exn c .unit => c
-  | .exn c v => s!"({c} {ppValue v})"
+  | .ctor c .unit => c
+  | .ctor c v => s!"({c} {ppValue v})"
 
 instance : ToString Value := ⟨ppValue⟩
 

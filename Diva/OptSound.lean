@@ -127,14 +127,14 @@ inductive OptStep (H : Hints A) (E : Bool) : AEnv A → Expr → Expr → Prop w
   | deref {σ r r'} : Optimizes H E σ r r' → OptStep H E σ (.deref r) (.deref r')
   | assign {σ r r' v v'} :
       Optimizes H E σ r r' → Optimizes H E σ v v' → OptStep H E σ (.assign r v) (.assign r' v')
-  | exn {σ t v v'} : Optimizes H E σ v v' → OptStep H E σ (.exn t v) (.exn t v')
+  | ctor {σ t v v'} : Optimizes H E σ v v' → OptStep H E σ (.ctor t v) (.ctor t v')
   | raise {σ v v'} : Optimizes H E σ v v' → OptStep H E σ (.raise v) (.raise v')
   | tryw {σ a a' k h h'} :
       Optimizes H E σ a a' → Optimizes H E ((k, AVal.top) :: σ) h h' →
       OptStep H E σ (.tryw a k h) (.tryw a' k h')
-  | exnCase {σ s s' t x h h' m m'} :
+  | ctorCase {σ s s' t x h h' m m'} :
       Optimizes H E σ s s' → Optimizes H E ((x, AVal.top) :: σ) h h' → Optimizes H E σ m m' →
-      OptStep H E σ (.exnCase s t x h m) (.exnCase s' t x h' m')
+      OptStep H E σ (.ctorCase s t x h m) (.ctorCase s' t x h' m')
 end
 
 theorem isInt_true {H : Hints A} {σ : AEnv A} {e : Expr} {n : Int}
@@ -287,20 +287,20 @@ theorem optimizes_opt (H : Hints A) (e : Expr) : ∀ σ, Optimizes H E σ e (opt
   | assign r v ihr ihv =>
     intro σ
     exact optimizes_of_none fun hc => by rw [opt.eq_def, hc]; exact .assign (ihr _) (ihv _)
-  | exn t v ih =>
+  | ctor t v ih =>
     intro σ
-    exact optimizes_of_none fun hc => by rw [opt.eq_def, hc]; exact .exn (ih _)
+    exact optimizes_of_none fun hc => by rw [opt.eq_def, hc]; exact .ctor (ih _)
   | raise v ih =>
     intro σ
     exact optimizes_of_none fun hc => by rw [opt.eq_def, hc]; exact .raise (ih _)
   | tryw a k h iha ihh =>
     intro σ
     exact optimizes_of_none fun hc => by rw [opt.eq_def, hc]; exact .tryw (iha _) (ihh _)
-  | exnCase s t x h m ihs ihh ihm =>
+  | ctorCase s t x h m ihs ihh ihm =>
     intro σ
     exact optimizes_of_none fun hc => by
       rw [opt.eq_def, hc]
-      exact .exnCase (ihs _) (ihh _) (ihm _)
+      exact .ctorCase (ihs _) (ihh _) (ihm _)
 
 /-! ## Related values, outcomes and stores
 
@@ -320,7 +320,7 @@ inductive VR (H : Hints A) (E : Bool) : Value → Value → Prop where
   | cons {a a' b b' : Value} : VR H E a a' → VR H E b b' → VR H E (.cons a b) (.cons a' b')
   | arr {l : Nat} : VR H E (.arr l) (.arr l)
   | ref {l : Nat} : VR H E (.ref l) (.ref l)
-  | exn {t : String} {a a' : Value} : VR H E a a' → VR H E (.exn t a) (.exn t a')
+  | ctor {t : String} {a a' : Value} : VR H E a a' → VR H E (.ctor t a) (.ctor t a')
   -- the optimised closure has an optimised body, and an environment related on the
   -- names `N`. The free names of the optimised body are in `N`, or are its parameter
   -- `x`, or the name `f` of the function in `let rec f x = ...`. `σ` describes the
@@ -386,7 +386,7 @@ theorem isBool (h : VR H E v v') : v'.isBool = v.isBool := by
 theorem isList (h : VR H E v v') : v'.isList = v.isList := by
   cases h <;> rfl
 
-theorem isExn (h : VR H E v v') : v'.isExn = v.isExn := by
+theorem isCtor (h : VR H E v v') : v'.isCtor = v.isCtor := by
   cases h <;> rfl
 
 end VR
@@ -797,10 +797,10 @@ theorem list_of_isList {v : Value} (h : v.isList = true) :
   case cons a b => exact .inr ⟨a, b, rfl⟩
   all_goals simp [Value.isList] at h
 
-theorem exn_of_isExn {v : Value} (h : v.isExn = true) : ∃ t w, v = .exn t w := by
+theorem ctor_of_isCtor {v : Value} (h : v.isCtor = true) : ∃ t w, v = .ctor t w := by
   cases v
-  case exn t w => exact ⟨t, w, rfl⟩
-  all_goals simp [Value.isExn] at h
+  case ctor t w => exact ⟨t, w, rfl⟩
+  all_goals simp [Value.isCtor] at h
 
 theorem exn_of_err_isExn {k : Err} (h : k.isExn = true) : ∃ w, k = .exn w := by
   cases k
@@ -834,7 +834,7 @@ theorem pure_store {ρ : Env} {μ μ₁ : Store} {e : Expr} {r : Outcome}
     simp only [Expr.pure, Bool.and_eq_true] at hi
     rw [ihe hi.2, ihc hi.1.1]
   | ifNotBool _ _ ihc | ifErr _ ihc | matchNotList _ _ ihc | matchErr _ ihc
-  | exnCaseNotExn _ _ ihc | exnCaseErr _ ihc =>
+  | ctorCaseNotCtor _ _ ihc | ctorCaseErr _ ihc =>
     intro hi
     simp only [Expr.pure, Bool.and_eq_true] at hi
     exact ihc hi.1.1
@@ -848,17 +848,17 @@ theorem pure_store {ρ : Env} {μ μ₁ : Store} {e : Expr} {r : Outcome}
     intro hi
     simp only [Expr.pure, Bool.and_eq_true] at hi
     exact iha hi.1
-  | matchNil _ _ ihs ihn | exnHit _ _ ihs ihn =>
+  | matchNil _ _ ihs ihn | ctorHit _ _ ihs ihn =>
     intro hi
     simp only [Expr.pure, Bool.and_eq_true] at hi
     rw [ihn hi.1.2, ihs hi.1.1]
-  | matchCons _ _ ihs ihc | exnMiss _ _ _ ihs ihc =>
+  | matchCons _ _ ihs ihc | ctorMiss _ _ _ ihs ihc =>
     intro hi
     simp only [Expr.pure, Bool.and_eq_true] at hi
     rw [ihc hi.2, ihs hi.1.1]
   | assert _ ih | assertF _ ih | assertNotBool _ _ ih | assertErr _ ih | len _ ih
-  | lenErr _ ih | deref _ ih | derefErr _ ih | exn _ ih | exnErr _ ih | raise _ _ ih
-  | raiseNotExn _ _ ih | raiseErr _ ih =>
+  | lenErr _ ih | deref _ ih | derefErr _ ih | ctor _ ih | ctorErr _ ih | raise _ _ ih
+  | raiseNotCtor _ _ ih | raiseErr _ ih =>
     intro hi
     exact ih hi
 
@@ -985,21 +985,21 @@ theorem pure_total (e : Expr) : e.pure = true → ∀ ρ μ, ∃ r μ₁, Eval �
     cases rr with
     | err k => exact ⟨_, _, .derefErr hr⟩
     | ok vr => exact ⟨_, _, .deref hr⟩
-  | exn t v ih =>
+  | ctor t v ih =>
     intro hi ρ μ
     obtain ⟨rv, μ₁, hv⟩ := ih hi ρ μ
     cases rv with
-    | err k => exact ⟨_, _, .exnErr hv⟩
-    | ok w => exact ⟨_, _, .exn hv⟩
+    | err k => exact ⟨_, _, .ctorErr hv⟩
+    | ok w => exact ⟨_, _, .ctor hv⟩
   | raise v ih =>
     intro hi ρ μ
     obtain ⟨rv, μ₁, hv⟩ := ih hi ρ μ
     cases rv with
     | err k => exact ⟨_, _, .raiseErr hv⟩
     | ok w =>
-      cases hx : w.isExn
+      cases hx : w.isCtor
       case true => exact ⟨_, _, .raise hv hx⟩
-      case false => exact ⟨_, _, .raiseNotExn hv hx⟩
+      case false => exact ⟨_, _, .raiseNotCtor hv hx⟩
   | tryw a k h iha ihh =>
     intro hi ρ μ
     simp only [Expr.pure, Bool.and_eq_true] at hi
@@ -1013,23 +1013,23 @@ theorem pure_total (e : Expr) : e.pure = true → ∀ ρ μ, ∃ r μ₁, Eval �
         obtain ⟨w, rfl⟩ := exn_of_err_isExn hx
         obtain ⟨r, μ₂, hh⟩ := ihh hi.2 ((k, w) :: ρ) μ₁
         exact ⟨_, _, .tryCatch ha hh⟩
-  | exnCase s t x h m ihs ihh ihm =>
+  | ctorCase s t x h m ihs ihh ihm =>
     intro hi ρ μ
     simp only [Expr.pure, Bool.and_eq_true] at hi
     obtain ⟨rs, μ₁, hs⟩ := ihs hi.1.1 ρ μ
     cases rs with
-    | err k => exact ⟨_, _, .exnCaseErr hs⟩
+    | err k => exact ⟨_, _, .ctorCaseErr hs⟩
     | ok v =>
-      cases hx : v.isExn
-      case false => exact ⟨_, _, .exnCaseNotExn hs hx⟩
+      cases hx : v.isCtor
+      case false => exact ⟨_, _, .ctorCaseNotCtor hs hx⟩
       case true =>
-        obtain ⟨t', w, rfl⟩ := exn_of_isExn hx
+        obtain ⟨t', w, rfl⟩ := ctor_of_isCtor hx
         by_cases ht : t' = t
         · subst ht
           obtain ⟨r, μ₂, hh⟩ := ihh hi.1.2 ((x, w) :: ρ) μ₁
-          exact ⟨_, _, .exnHit hs hh⟩
+          exact ⟨_, _, .ctorHit hs hh⟩
         · obtain ⟨r, μ₂, hm⟩ := ihm hi.2 ρ μ₁
-          exact ⟨_, _, .exnMiss hs ht hm⟩
+          exact ⟨_, _, .ctorMiss hs ht hm⟩
 
 /-! ## Folded expressions -/
 
@@ -1365,8 +1365,8 @@ macro "safe_sub" : tactic => `(tactic| first
          Eval.matchNil, Eval.matchCons, Eval.matchErr, Eval.assertErr, Eval.allocErrN,
          Eval.allocErrV, Eval.getErrA, Eval.getErrI, Eval.setErrA, Eval.setErrI,
          Eval.setErrV, Eval.lenErr, Eval.refErr, Eval.derefErr, Eval.assignErrR,
-         Eval.assignErrV, Eval.exnErr, Eval.raiseErr, Eval.tryCatch, Eval.tryErr,
-         Eval.exnHit, Eval.exnMiss, Eval.exnCaseErr]) hf₀))
+         Eval.assignErrV, Eval.ctorErr, Eval.raiseErr, Eval.tryCatch, Eval.tryErr,
+         Eval.ctorHit, Eval.ctorMiss, Eval.ctorCaseErr]) hf₀))
 
 /-- `e` gives `r` in `ρ` and `μ`. Every `e'` related to `e` by `R`, run in an
     environment related on the free names of `e'`, and in a related store, gives an
@@ -1958,35 +1958,35 @@ theorem sim_fwd_step {H : Hints A} {ρ : Env} {μ μ₁ : Store} {e : Expr} {r :
         obtain ⟨rv', μ₂', hv', hrv, hμ₂⟩ := lift_fwd hv ihv hσ hB hov hρ hμ₁
         cases hrv with
         | err hk => exact ⟨_, _, .assignErrV hr' hv', .err hk, hμ₂⟩
-  | exn hv ihv =>
+  | ctor hv ihv =>
     cases ho with | step ho =>
     cases ho with
-    | exn hov =>
+    | ctor hov =>
       obtain ⟨rv', μ₁', hv', hrv, hμ₁⟩ := lift_fwd hv ihv hσ hB hov hρ hμ
       cases hrv with
-      | ok hvv => exact ⟨_, _, .exn hv', .ok (.exn hvv), hμ₁⟩
-  | exnErr hv ihv =>
+      | ok hvv => exact ⟨_, _, .ctor hv', .ok (.ctor hvv), hμ₁⟩
+  | ctorErr hv ihv =>
     cases ho with | step ho =>
     cases ho with
-    | exn hov =>
+    | ctor hov =>
       obtain ⟨rv', μ₁', hv', hrv, hμ₁⟩ := lift_fwd hv ihv hσ hB hov hρ hμ
       cases hrv with
-      | err hk => exact ⟨_, _, .exnErr hv', .err hk, hμ₁⟩
+      | err hk => exact ⟨_, _, .ctorErr hv', .err hk, hμ₁⟩
   | raise hv hx ihv =>
     cases ho with | step ho =>
     cases ho with
     | raise hov =>
       obtain ⟨rv', μ₁', hv', hrv, hμ₁⟩ := lift_fwd hv ihv hσ hB hov hρ hμ
       cases hrv with
-      | ok hvv => exact ⟨_, _, .raise hv' (hvv.isExn.trans hx), .err (.exn hvv), hμ₁⟩
-  | raiseNotExn hv hx ihv =>
+      | ok hvv => exact ⟨_, _, .raise hv' (hvv.isCtor.trans hx), .err (.exn hvv), hμ₁⟩
+  | raiseNotCtor hv hx ihv =>
     cases ho with | step ho =>
     cases ho with
     | raise hov =>
       obtain ⟨rv', μ₁', hv', hrv, hμ₁⟩ := lift_fwd hv ihv hσ hB hov hρ hμ
       cases hrv with
       | ok hvv =>
-        exact ⟨_, _, .raiseNotExn hv' (hvv.isExn.trans hx), .err (.same rfl), hμ₁⟩
+        exact ⟨_, _, .raiseNotCtor hv' (hvv.isCtor.trans hx), .err (.same rfl), hμ₁⟩
   | raiseErr hv ihv =>
     cases ho with | step ho =>
     cases ho with
@@ -2021,44 +2021,44 @@ theorem sim_fwd_step {H : Hints A} {ρ : Env} {μ μ₁ : Store} {e : Expr} {r :
       obtain ⟨ra', μ₁', ha', hra, hμ₁⟩ := lift_fwd ha iha hσ hB hoa hρ hμ
       cases hra with
       | err hk => exact ⟨_, _, .tryErr ha' (hk.isExn.trans hx), .err hk, hμ₁⟩
-  | exnHit hs hh ihs ihh =>
+  | ctorHit hs hh ihs ihh =>
     cases ho with | step ho =>
     cases ho with
-    | exnCase hos hoh hom =>
+    | ctorCase hos hoh hom =>
       obtain ⟨rs', μ₁', hs', hrs, hμ₁⟩ := lift_fwd hs ihs hσ hB hos hρ hμ
       cases hrs with
       | ok hvs =>
         cases hvs with
-        | exn hv =>
+        | ctor hv =>
           obtain ⟨r', μ₂', hh', hr, hμ₂⟩ :=
             lift_fwd hh ihh (hσ.cons (AVal.mem_top _)) hB.cons hoh (hρ.cons hv) hμ₁
-          exact ⟨_, _, .exnHit hs' hh', hr, hμ₂⟩
-  | exnMiss hs hne hm ihs ihm =>
+          exact ⟨_, _, .ctorHit hs' hh', hr, hμ₂⟩
+  | ctorMiss hs hne hm ihs ihm =>
     cases ho with | step ho =>
     cases ho with
-    | exnCase hos hoh hom =>
+    | ctorCase hos hoh hom =>
       obtain ⟨rs', μ₁', hs', hrs, hμ₁⟩ := lift_fwd hs ihs hσ hB hos hρ hμ
       cases hrs with
       | ok hvs =>
         cases hvs with
-        | exn hv =>
+        | ctor hv =>
           obtain ⟨r', μ₂', hm', hr, hμ₂⟩ := lift_fwd hm ihm hσ hB hom hρ hμ₁
-          exact ⟨_, _, .exnMiss hs' hne hm', hr, hμ₂⟩
-  | exnCaseNotExn hs hx ihs =>
+          exact ⟨_, _, .ctorMiss hs' hne hm', hr, hμ₂⟩
+  | ctorCaseNotCtor hs hx ihs =>
     cases ho with | step ho =>
     cases ho with
-    | exnCase hos hoh hom =>
+    | ctorCase hos hoh hom =>
       obtain ⟨rs', μ₁', hs', hrs, hμ₁⟩ := lift_fwd hs ihs hσ hB hos hρ hμ
       cases hrs with
       | ok hvs =>
-        exact ⟨_, _, .exnCaseNotExn hs' (hvs.isExn.trans hx), .err (.same rfl), hμ₁⟩
-  | exnCaseErr hs ihs =>
+        exact ⟨_, _, .ctorCaseNotCtor hs' (hvs.isCtor.trans hx), .err (.same rfl), hμ₁⟩
+  | ctorCaseErr hs ihs =>
     cases ho with | step ho =>
     cases ho with
-    | exnCase hos hoh hom =>
+    | ctorCase hos hoh hom =>
       obtain ⟨rs', μ₁', hs', hrs, hμ₁⟩ := lift_fwd hs ihs hσ hB hos hρ hμ
       cases hrs with
-      | err hk => exact ⟨_, _, .exnCaseErr hs', .err hk, hμ₁⟩
+      | err hk => exact ⟨_, _, .ctorCaseErr hs', .err hk, hμ₁⟩
 
 
 /-! ## Backward: what the optimised program does, the source one does too -/
@@ -2616,31 +2616,31 @@ theorem sim_bwd_step {H : Hints A} {ρ' : Env} {μ' μ₁' : Store} {e' : Expr} 
         obtain ⟨rv', μ₂', hv', hrv, hμ₂⟩ := lift_bwd hv ihv hσ hB hov hρ hμ₁
         cases hrv with
         | err hk => exact ⟨_, _, .assignErrV hr' hv', .err hk, hμ₂⟩
-  | exn hv ihv =>
+  | ctor hv ihv =>
     cases ho with
-    | exn hov =>
+    | ctor hov =>
       obtain ⟨rv', μ₁', hv', hrv, hμ₁⟩ := lift_bwd hv ihv hσ hB hov hρ hμ
       cases hrv with
-      | ok hvv => exact ⟨_, _, .exn hv', .ok (.exn hvv), hμ₁⟩
-  | exnErr hv ihv =>
+      | ok hvv => exact ⟨_, _, .ctor hv', .ok (.ctor hvv), hμ₁⟩
+  | ctorErr hv ihv =>
     cases ho with
-    | exn hov =>
+    | ctor hov =>
       obtain ⟨rv', μ₁', hv', hrv, hμ₁⟩ := lift_bwd hv ihv hσ hB hov hρ hμ
       cases hrv with
-      | err hk => exact ⟨_, _, .exnErr hv', .err hk, hμ₁⟩
+      | err hk => exact ⟨_, _, .ctorErr hv', .err hk, hμ₁⟩
   | raise hv hx ihv =>
     cases ho with
     | raise hov =>
       obtain ⟨rv', μ₁', hv', hrv, hμ₁⟩ := lift_bwd hv ihv hσ hB hov hρ hμ
       cases hrv with
-      | ok hvv => exact ⟨_, _, .raise hv' (hvv.isExn.symm.trans hx), .err (.exn hvv), hμ₁⟩
-  | raiseNotExn hv hx ihv =>
+      | ok hvv => exact ⟨_, _, .raise hv' (hvv.isCtor.symm.trans hx), .err (.exn hvv), hμ₁⟩
+  | raiseNotCtor hv hx ihv =>
     cases ho with
     | raise hov =>
       obtain ⟨rv', μ₁', hv', hrv, hμ₁⟩ := lift_bwd hv ihv hσ hB hov hρ hμ
       cases hrv with
       | ok hvv =>
-        exact ⟨_, _, .raiseNotExn hv' (hvv.isExn.symm.trans hx), .err (.same rfl), hμ₁⟩
+        exact ⟨_, _, .raiseNotCtor hv' (hvv.isCtor.symm.trans hx), .err (.same rfl), hμ₁⟩
   | raiseErr hv ihv =>
     cases ho with
     | raise hov =>
@@ -2671,41 +2671,41 @@ theorem sim_bwd_step {H : Hints A} {ρ' : Env} {μ' μ₁' : Store} {e' : Expr} 
       obtain ⟨ra', μ₁', ha', hra, hμ₁⟩ := lift_bwd ha iha hσ hB hoa hρ hμ
       cases hra with
       | err hk => exact ⟨_, _, .tryErr ha' (hk.isExn.symm.trans hx), .err hk, hμ₁⟩
-  | exnHit hs hh ihs ihh =>
+  | ctorHit hs hh ihs ihh =>
     cases ho with
-    | exnCase hos hoh hom =>
+    | ctorCase hos hoh hom =>
       obtain ⟨rs', μ₁', hs', hrs, hμ₁⟩ := lift_bwd hs ihs hσ hB hos hρ hμ
       cases hrs with
       | ok hvs =>
         cases hvs with
-        | exn hv =>
+        | ctor hv =>
           obtain ⟨r', μ₂', hh', hr, hμ₂⟩ :=
             lift_bwd hh ihh (hσ.cons (AVal.mem_top _)) hB.cons hoh (hρ.cons hv) hμ₁
-          exact ⟨_, _, .exnHit hs' hh', hr, hμ₂⟩
-  | exnMiss hs hne hm ihs ihm =>
+          exact ⟨_, _, .ctorHit hs' hh', hr, hμ₂⟩
+  | ctorMiss hs hne hm ihs ihm =>
     cases ho with
-    | exnCase hos hoh hom =>
+    | ctorCase hos hoh hom =>
       obtain ⟨rs', μ₁', hs', hrs, hμ₁⟩ := lift_bwd hs ihs hσ hB hos hρ hμ
       cases hrs with
       | ok hvs =>
         cases hvs with
-        | exn hv =>
+        | ctor hv =>
           obtain ⟨r', μ₂', hm', hr, hμ₂⟩ := lift_bwd hm ihm hσ hB hom hρ hμ₁
-            (hS := fun hE r μ₁ h hf => hS hE r μ₁ (.exnMiss hs' hne h) hf)
-          exact ⟨_, _, .exnMiss hs' hne hm', hr, hμ₂⟩
-  | exnCaseNotExn hs hx ihs =>
+            (hS := fun hE r μ₁ h hf => hS hE r μ₁ (.ctorMiss hs' hne h) hf)
+          exact ⟨_, _, .ctorMiss hs' hne hm', hr, hμ₂⟩
+  | ctorCaseNotCtor hs hx ihs =>
     cases ho with
-    | exnCase hos hoh hom =>
+    | ctorCase hos hoh hom =>
       obtain ⟨rs', μ₁', hs', hrs, hμ₁⟩ := lift_bwd hs ihs hσ hB hos hρ hμ
       cases hrs with
       | ok hvs =>
-        exact ⟨_, _, .exnCaseNotExn hs' (hvs.isExn.symm.trans hx), .err (.same rfl), hμ₁⟩
-  | exnCaseErr hs ihs =>
+        exact ⟨_, _, .ctorCaseNotCtor hs' (hvs.isCtor.symm.trans hx), .err (.same rfl), hμ₁⟩
+  | ctorCaseErr hs ihs =>
     cases ho with
-    | exnCase hos hoh hom =>
+    | ctorCase hos hoh hom =>
       obtain ⟨rs', μ₁', hs', hrs, hμ₁⟩ := lift_bwd hs ihs hσ hB hos hρ hμ
       cases hrs with
-      | err hk => exact ⟨_, _, .exnCaseErr hs', .err hk, hμ₁⟩
+      | err hk => exact ⟨_, _, .ctorCaseErr hs', .err hk, hμ₁⟩
 
 /-- If `e` gives `r`, an optimised version of `e`, run in environments related on its
     free names and in related stores, gives an outcome related to `r`. -/

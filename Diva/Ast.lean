@@ -71,12 +71,12 @@ inductive Expr where
     -- `ref v`, the Nat is the id of the allocation site
   | deref : Expr → Expr                 -- `!r`
   | assign : Expr → Expr → Expr         -- `r := v`
-  | exn   : String → Expr → Expr        -- `E v`: the exception `E` carrying `v`
+  | ctor  : String → Expr → Expr        -- `C v`: the constructor `C` applied to `v`
   | raise : Expr → Expr                 -- `raise e`
   | tryw  : Expr → String → Expr → Expr
     -- `try e with k -> h`: catch any exception as `k`
-  | exnCase : Expr → String → String → Expr → Expr → Expr
-    -- `match e1 with E x -> e2 | _ -> e3`: test the tag of the exception `e1`
+  | ctorCase : Expr → String → String → Expr → Expr → Expr
+    -- `match e1 with C x -> e2 | _ -> e3`: test the constructor of `e1`
   deriving Inhabited, BEq, DecidableEq
 
 /-- `e` contains no call and doesn't have side effects on the store (no `Array.make`,
@@ -87,8 +87,8 @@ def Expr.pure : Expr → Bool
   | .int _ | .bool _ | .unit | .var _ | .nil | .lam _ _ => true
   | .app _ _ | .alloc .. | .set .. | .ref .. | .assign .. => false
   | .letin _ a b | .binop _ a b | .cons a b | .get a b | .tryw a _ b => a.pure && b.pure
-  | .letrec _ _ _ b | .assert b | .len b | .deref b | .exn _ b | .raise b => b.pure
-  | .ite c t e | .matchList c t _ _ e | .exnCase c _ _ t e => c.pure && t.pure && e.pure
+  | .letrec _ _ _ b | .assert b | .len b | .deref b | .ctor _ b | .raise b => b.pure
+  | .ite c t e | .matchList c t _ _ e | .ctorCase c _ _ t e => c.pure && t.pure && e.pure
 
 def ppExpr : Expr → String
   | .int n         => toString n
@@ -113,11 +113,11 @@ def ppExpr : Expr → String
   | .ref _ v       => s!"(ref {ppExpr v})"
   | .deref r       => s!"!{ppExpr r}"
   | .assign r v    => s!"({ppExpr r} := {ppExpr v})"
-  | .exn c .unit   => c
-  | .exn c v       => s!"({c} {ppExpr v})"
+  | .ctor c .unit   => c
+  | .ctor c v       => s!"({c} {ppExpr v})"
   | .raise e       => s!"(raise {ppExpr e})"
   | .tryw e k h     => s!"(try {ppExpr e} with {k} -> {ppExpr h})"
-  | .exnCase s c x h m =>
+  | .ctorCase s c x h m =>
     s!"(match {ppExpr s} with {c} {x} -> {ppExpr h} | _ -> {ppExpr m})"
 
 instance : Repr Expr := ⟨fun e _ => Std.Format.text (ppExpr e)⟩
@@ -199,9 +199,9 @@ def freeNames (bound : List String) : Expr → List String
   | .matchList s n x xs c =>
     freeNames bound s ++ freeNames bound n ++ freeNames (x :: xs :: bound) c
   | .tryw a k h => freeNames bound a ++ freeNames (k :: bound) h
-  | .exnCase s _ x h m =>
+  | .ctorCase s _ x h m =>
     freeNames bound s ++ freeNames (x :: bound) h ++ freeNames bound m
-  | .assert b | .len b | .ref _ b | .deref b | .exn _ b | .raise b => freeNames bound b
+  | .assert b | .len b | .ref _ b | .deref b | .ctor _ b | .raise b => freeNames bound b
   | .app a b | .binop _ a b | .cons a b | .get a b | .assign a b | .alloc _ a b =>
     freeNames bound a ++ freeNames bound b
   | .ite a b c | .set a b c => freeNames bound a ++ freeNames bound b ++ freeNames bound c

@@ -109,7 +109,7 @@ def diagnose (H : Hints A) (place code : Span → String) :
     let P := H.param x
     let vf := aevalExt H σ (.letrec f x b (.var f))
     let S : Summary A :=
-      ⟨P, restPres H b, H.result f, false, (vf.sum.map Summary.raises).getD Flat.exnV⟩
+      ⟨P, restPres H b, H.result f, false, (vf.sum.map Summary.raises).getD Flat.ctorV⟩
     let rejected :=
       if vf.sum.isNone then
         [msg l s!"`{clean f}`: the result of its body is not in the claimed result \
@@ -177,7 +177,7 @@ def diagnose (H : Hints A) (place code : Span → String) :
     diagnose H place code σ a (l.kid 0) ++
       (if aa.arrsOnly then [] else [msg l s!"{snippet code e l}: may not be an array ({aa})"])
   -- exceptions (as in `mayFailExt`)
-  | σ, e@(.exn c a), l =>
+  | σ, e@(.ctor c a), l =>
     let va := aevalExt H σ a
     diagnose H place code σ a (l.kid 0) ++
       (if fitsArg H c va then []
@@ -186,18 +186,18 @@ def diagnose (H : Hints A) (place code : Span → String) :
   | σ, e@(.raise v), l =>
     let vv := aevalExt H σ v
     diagnose H place code σ v (l.kid 0) ++
-      (if vv.taggedOnly then [] else [msg l s!"{snippet code e l}: may not raise an exception ({vv})"])
+      (if vv.ctorsOnly then [] else [msg l s!"{snippet code e l}: may not raise an exception ({vv})"])
   | σ, .tryw a k h, l =>
     let ea := raisesExt H σ a
     diagnose H place code σ a (l.kid 0) ++
       (if ea.leq Flat.bot then [] else diagnose H place code ((k, AVal.ofFlat ea) :: σ) h (l.kid 1))
-  | σ, e@(.exnCase s c x h m), l =>
+  | σ, e@(.ctorCase s c x h m), l =>
     let vs := aevalExt H σ s
     diagnose H place code σ s (l.kid 0) ++
-      (if vs.taggedOnly then []
+      (if vs.ctorsOnly then []
        else [msg l s!"{snippet code e l}: may not match an exception or a constructor ({vs})"]) ++
-      (if vs.mayBeTag c then diagnose H place code (hitEnv H σ s vs c x) h (l.kid 1) else []) ++
-      (if vs.mayBeOtherTag c then diagnose H place code (σ.bind s (vs.withoutTag c)) m (l.kid 2)
+      (if vs.mayBeCtor c then diagnose H place code (hitEnv H σ s vs c x) h (l.kid 1) else []) ++
+      (if vs.mayBeOtherCtor c then diagnose H place code (σ.bind s (vs.withoutCtor c)) m (l.kid 2)
        else [])
 where
   /-- `m`, after the position of `l` if `place` prints one. -/

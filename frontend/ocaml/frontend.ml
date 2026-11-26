@@ -54,10 +54,10 @@ and desc =
   | Ref of expr
   | Deref of expr
   | Assign of expr * expr
-  | Exn of string * expr  (** the exception [C v] *)
+  | Ctor of string * expr  (** the constructor [C] applied to [v] *)
   | Raise of expr
   | Try of expr * string * expr  (** [try a with k -> h] *)
-  | ExnCase of expr * string * string * expr * expr
+  | CtorCase of expr * string * string * expr * expr
       (** [match s with C x -> h | _ -> m] *)
   | Overflow of int * expr
       (** [e], an integer of [bits] bits: DIVA checks that its value fits, if it
@@ -138,10 +138,10 @@ let rec to_sexp (e : expr) =
   | Ref v -> node "ref" [ s v ]
   | Deref r -> node "deref" [ s r ]
   | Assign (r, v) -> node "assign" [ s r; s v ]
-  | Exn (c, v) -> node "exn" [ Str c; s v ]
+  | Ctor (c, v) -> node "ctor" [ Str c; s v ]
   | Raise v -> node "raise" [ s v ]
   | Try (a, k, h) -> node "tryw" [ s a; Str k; s h ]
-  | ExnCase (v, c, x, h, m) -> node "exnCase" [ s v; Str c; Str x; s h; s m ]
+  | CtorCase (v, c, x, h, m) -> node "ctorCase" [ s v; Str c; Str x; s h; s m ]
   | Overflow (bits, e) -> node "overflow" [ Atom (string_of_int bits); s e ]
 
 let spec_sexp = function Some s -> [ Str s ] | None -> []
@@ -318,16 +318,16 @@ let pat_name (p : pattern) =
 
 (**** Constructors and tuples ****)
 
-(* A value of a variant type, such as [option], is a tagged value, as an exception:
-   [C] is [exn "C" ()], [C a] is [exn "C" a], and [C (a, b)] is [exn "C" (a, b)]. A tuple
-   [(a, b)] is [exn "%2" [a; b]]. *)
+(* A value of a variant type, such as [option], and an exception are constructors applied
+   to an argument: [C] is [Ctor ("C", unit)], [C a] is [Ctor ("C", a)], and [C (a, b)] is
+   [Ctor ("C", (a, b))]. A tuple [(a, b)] is [Ctor ("%2", [a; b])]. *)
 
 (* The constructors seen so far, by name: an exception or the type of the variant. *)
-let tags : (string, string) Hashtbl.t = Hashtbl.create 16
+let ctors : (string, string) Hashtbl.t = Hashtbl.create 16
 
-(* The tag of the constructor [cd]: its name. DIVA tells tagged values apart by their tag
+(* The name of the constructor [cd]. DIVA tells constructors apart by their name
    only, so two constructors with the same name are rejected. *)
-let tag loc (cd : Data_types.constructor_description) =
+let ctor_name loc (cd : Data_types.constructor_description) =
   if cd.cstr_generalized || cd.cstr_existentials <> [] then
     unsupported loc "GADTs";
   if cd.cstr_inlined <> None then unsupported loc "records (for now)";
@@ -340,28 +340,28 @@ let tag loc (cd : Data_types.constructor_description) =
     | Cstr_extension (p, _) -> "the exception " ^ unique p
     | _ -> "the type " ^ unique (Data_types.cstr_res_type_path cd)
   in
-  (match Hashtbl.find_opt tags cd.cstr_name with
+  (match Hashtbl.find_opt ctors cd.cstr_name with
   | Some o when o <> owner ->
       unsupported loc
         "two constructors named `%s`: it tells constructors apart by their \
          names only"
         cd.cstr_name
-  | _ -> Hashtbl.replace tags cd.cstr_name owner);
+  | _ -> Hashtbl.replace ctors cd.cstr_name owner);
   cd.cstr_name
 
-(* The tag of the tuples of [n] components. *)
-let tuple_tag n = Printf.sprintf "%%%d" n
+(* The constructor of the tuples of [n] components. *)
+let tuple_ctor n = Printf.sprintf "%%%d" n
 
 (* The list [[a1; ...; an]]. *)
 let list loc es =
   List.fold_right (fun e l -> mk loc (Cons (e, l))) es (mk loc Nil)
 
 (* The tuple [(a1, ..., an)]. *)
-let tuple loc es = mk loc (Exn (tuple_tag (List.length es), list loc es))
+let tuple loc es = mk loc (Ctor (tuple_ctor (List.length es), list loc es))
 
 (* What happens when no case of a [match] matches: OCaml raises [Match_failure]. *)
 let match_failure loc =
-  mk loc (Raise (mk loc (Exn ("Match_failure", unit loc))))
+  mk loc (Raise (mk loc (Ctor ("Match_failure", unit loc))))
 
 (* The translation of [e]. The sub-expressions are translated from the first to the
    last, with [let]: OCaml computes the arguments of a function from the last to the
@@ -475,13 +475,13 @@ and construct loc cd args =
       ordered loc [ a; b ] (function
         | [ a; b ] -> mk loc (Cons (a, b))
         | _ -> assert false)
-  | _, [] -> mk loc (Exn (tag loc cd, unit loc))
+  | _, [] -> mk loc (Ctor (ctor_name loc cd, unit loc))
   | _, [ a ] ->
-      let c = tag loc cd in
-      mk loc (Exn (c, arg a))
+      let c = ctor_name loc cd in
+      mk loc (Ctor (c, arg a))
   | _, args ->
-      let c = tag loc cd in
-      ordered loc args (fun l -> mk loc (Exn (c, tuple loc l)))
+      let c = ctor_name loc cd in
+      ordered loc args (fun l -> mk loc (Ctor (c, tuple loc l)))
 
 (* An argument of an exception or of an output function. A string is [()]: DIVA has
    no strings. *)
@@ -586,9 +586,9 @@ and apply loc f args =
           mk loc (Assign (r, arith loc 63 op (mk loc (Deref r)) (int loc 1))))
   | Some "Stdlib.raise", [ v ] -> mk loc (Raise (expr v))
   | Some "Stdlib.failwith", [ s ] ->
-      mk loc (Raise (mk loc (Exn ("Failure", arg s))))
+      mk loc (Raise (mk loc (Ctor ("Failure", arg s))))
   | Some "Stdlib.invalid_arg", [ s ] ->
-      mk loc (Raise (mk loc (Exn ("Invalid_argument", arg s))))
+      mk loc (Raise (mk loc (Ctor ("Invalid_argument", arg s))))
   | Some "Stdlib.ignore", [ a ] -> seq loc (expr a) (unit loc)
   | Some p, [ a ] when List.mem p output_functions -> seq loc (arg a) (unit loc)
   | Some "Stdlib.Char.code", [ a ] -> expr a
@@ -708,7 +708,7 @@ and pat_uses (p : pattern) =
   | Tpat_or (_, q, _) -> pat_uses q
   | _ -> 0
 
-(* a tuple: its tag, then a [match] on each component *)
+(* a tuple: its constructor, then a [match] on each component *)
 and tuple_uses ps =
   1 + List.length ps + List.fold_left (fun n p -> n + pat_uses p) 0 ps
 
@@ -753,7 +753,7 @@ and pattern (p : pattern) v ok ko =
             (MatchList
                (var loc v, ko, h, t, pattern ph h (pattern pt t ok ko) ko))
       | _ ->
-          let c = tag loc cd in
+          let c = ctor_name loc cd in
           let x, inner =
             match ps with
             | [] -> ("_", ok)
@@ -764,7 +764,7 @@ and pattern (p : pattern) v ok ko =
                 let x = fresh () in
                 (x, tuple_pattern loc ps x ok ko)
           in
-          mk loc (ExnCase (var loc v, c, x, inner, ko)))
+          mk loc (CtorCase (var loc v, c, x, inner, ko)))
   | Tpat_or (p1, p2, _) -> pattern p1 v ok (pattern p2 v ok ko)
   | Tpat_record _ -> unsupported loc "records (for now)"
   | Tpat_array _ -> unsupported loc "array patterns"
@@ -782,7 +782,7 @@ and tuple_pattern loc ps v ok ko =
           (MatchList (var loc l, ko, h, t, pattern p h (components t ps) ko))
   in
   mk loc
-    (ExnCase (var loc v, tuple_tag (List.length ps), l, components l ps, ko))
+    (CtorCase (var loc v, tuple_ctor (List.length ps), l, components l ps, ko))
 
 (* The name for the value that the pattern [p] tests: the name of [p] if it is a name,
    else a new name. *)

@@ -41,7 +41,7 @@ private def analyse (s : String) : Option String :=
 #guard analyse "[1; 2]"                          = some "non-empty list of [1, 2]"
 #guard analyse "fun y -> y"                      = some "fun ⊤ -> ⊤"
 #guard analyse "let rec f y = y in f"            = some "fun ⊤ -> ⊤"
-#guard analyse "E 1"                             = some "exn"
+#guard analyse "E 1"                             = some "ctor"
 #guard analyse "x < 5"                           = some "bool"
 #guard analyse "x < 20"                          = some "true"
 #guard analyse "x = 3"                           = some "bool"

@@ -53,10 +53,10 @@ def expr : Expr → String
   | .ref site v => s!"(.ref {site} {expr v})"
   | .deref r => s!"(.deref {expr r})"
   | .assign r v => s!"(.assign {expr r} {expr v})"
-  | .exn t v => s!"(.exn {str t} {expr v})"
+  | .ctor t v => s!"(.ctor {str t} {expr v})"
   | .raise v => s!"(.raise {expr v})"
   | .tryw a k h => s!"(.tryw {expr a} {str k} {expr h})"
-  | .exnCase s t x h m => s!"(.exnCase {expr s} {str t} {str x} {expr h} {expr m})"
+  | .ctorCase s t x h m => s!"(.ctorCase {expr s} {str t} {str x} {expr h} {expr m})"
 
 def bound : Bound → String
   | .negInf => ".negInf"
@@ -73,7 +73,7 @@ def flat (a : Flat Itv) : String :=
   let sites := (if a.refs.isEmpty then "" else s!", refs := {a.refs}") ++
     (if a.arrs.isEmpty then "" else s!", arrs := {a.arrs}")
   s!"\{ int := {itv a.int}, tt := {a.tt}, ff := {a.ff}, unit := {a.unit}, " ++
-  s!"list := {a.list}, fn := {a.fn}, loc := {a.loc}, exn := {a.exn}{sites} }"
+  s!"list := {a.list}, fn := {a.fn}, loc := {a.loc}, ctor := {a.ctor}{sites} }"
 
 /-- `H` as a Lean term of type `Hints Itv`, one hint per line. -/
 def hints (H : Hints Itv) : String :=

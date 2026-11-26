@@ -13,7 +13,7 @@ analysis under `H`:
 - `($f, r)`: the result `r` of the body of `f`, assuming `H`'s claims;
 - `(!s, v)`: a value `v` written to a ref or an array of the allocation site `s`, and
   `(!s.length, n)`: the length `n` of an array created at `s`;
-- `(C, v)`: the argument `v` of a tagged value `C v`, an exception for example, and
+- `(C, v)`: the argument `v` of a value `C v` (an exception, for example), and
   `(%n.i, v)`: the `i`-th component `v` of a tuple of `n` components.
 
 `up` grows the hints from `⊥`, with widening, until they cover all their claims.
@@ -88,7 +88,7 @@ def claims (H : Hints A) (C : Callees) (σ : AEnv A) : Expr → List (String × 
   | .letrec f x b e2 =>
     -- `f`'s summary, as the analysis gives it
     let S : Summary A := (aevalM true true H σ (.letrec f x b (.var f))).sum.getD
-      ⟨H.param x, restPres H b, H.result f, false, Flat.exnV⟩
+      ⟨H.param x, restPres H b, H.result f, false, Flat.ctorV⟩
     let σb := (x, AVal.ofFlat S.pre) :: (f, AVal.summary S) :: σ
     let Cb := (x, []) :: (f, x :: lamParams b) :: C
     ("$" ++ f, lastResOpt H σb b) :: claims H Cb σb b ++
@@ -112,22 +112,22 @@ def claims (H : Hints A) (C : Callees) (σ : AEnv A) : Expr → List (String × 
       claims H C σ v
   | .deref a | .len a | .assert a | .raise a => claims H C σ a
   | .get a i => claims H C σ a ++ claims H C σ i
-  -- a tagged value: a claim on the arguments of its constructor
-  | .exn c v => argClaims c (aevalM true true H σ v) ++ claims H C σ v
+  -- `C v`: a claim on the arguments of `C`
+  | .ctor c v => argClaims c (aevalM true true H σ v) ++ claims H C σ v
   | .tryw a k h =>
     let ea := raisesM true true H σ a
     claims H C σ a ++
       (if ea.leq Flat.bot then [] else claims H ((k, []) :: C) ((k, AVal.ofFlat ea) :: σ) h)
-  | .exnCase s c x h m =>
+  | .ctorCase s c x h m =>
     let vs := aevalM true true H σ s
     claims H C σ s ++
-      (if vs.mayBeTag c then claims H ((x, []) :: C) (hitEnv H σ s vs c x) h else []) ++
-      (if vs.mayBeOtherTag c then claims H C (σ.bind s (vs.withoutTag c)) m else [])
+      (if vs.mayBeCtor c then claims H ((x, []) :: C) (hitEnv H σ s vs c x) h else []) ++
+      (if vs.mayBeOtherCtor c then claims H C (σ.bind s (vs.withoutCtor c)) m else [])
   | .int _ | .bool _ | .unit | .var _ | .nil => []
 
 /-- The hint keys of `e`: its parameters, `$f` for each recursive function `f`, for
     each allocation site `s`, `!s` (the contents) and, for an array, `!s.length`, and
-    each constructor `C` of a tagged value, its arguments (`argKeys`). -/
+    each constructor `C`, its arguments (`argKeys`). -/
 def hintKeys : Expr → List String
   | .lam x b => x :: hintKeys b
   | .letrec f x b e2 => x :: ("$" ++ f) :: hintKeys b ++ hintKeys e2
@@ -138,9 +138,9 @@ def hintKeys : Expr → List String
   | .assign a b | .get a b => hintKeys a ++ hintKeys b
   | .set a i v => hintKeys a ++ hintKeys i ++ hintKeys v
   | .deref a | .len a | .assert a | .raise a => hintKeys a
-  | .exn c v => argKeys c ++ hintKeys v
+  | .ctor c v => argKeys c ++ hintKeys v
   | .tryw a _ h => hintKeys a ++ hintKeys h
-  | .exnCase s _ _ h m => hintKeys s ++ hintKeys h ++ hintKeys m
+  | .ctorCase s _ _ h m => hintKeys s ++ hintKeys h ++ hintKeys m
   | .int _ | .bool _ | .unit | .var _ | .nil => []
 
 /-- For each key of `H`, the join of its claims. A parameter that no call reaches

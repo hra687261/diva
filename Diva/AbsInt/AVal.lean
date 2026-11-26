@@ -29,16 +29,16 @@ structure Flat (A : Type) where
   list : Bool   -- may be a list
   fn   : Bool   -- may be a closure
   loc  : Bool   -- may be an array or a ref
-  exn  : Bool   -- may be an exception
+  ctor : Bool   -- may be a constructor applied to an argument (an exception, ...)
   /-- The allocation sites of the refs it may be, for the analysis of the store (see
       `aevalM`). `mem` doesn't use them: `loc` gives the arrays and refs it may be. -/
   refs : List Nat := []
   /-- The allocation sites of the arrays it may be, as `refs`. -/
   arrs : List Nat := []
-  /-- The constructors of the tagged values it may be: `C` for `exn C v`, for the
-      analysis of exceptions (see `aevalM`). `mem` doesn't use them: `exn` gives the
-      tagged values it may be. -/
-  tags : List String := []
+  /-- The constructors `C` of the values `C v` it may be, for the analysis of exceptions
+      and constructors (see `aevalM`). `mem` doesn't use them: `ctor` gives the values
+      `C v` it may be. -/
+  ctors : List String := []
   deriving Inhabited
 
 namespace Flat
@@ -58,34 +58,34 @@ def bools (t f : Bool) : Flat A := { (bot : Flat A) with tt := t, ff := f }
 def unitV : Flat A := { (bot : Flat A) with unit := true }
 def listV : Flat A := { (bot : Flat A) with list := true }
 def fnV : Flat A := { (bot : Flat A) with fn := true }
-def exnV : Flat A := { (bot : Flat A) with exn := true }
+def ctorV : Flat A := { (bot : Flat A) with ctor := true }
 
 def join (a b : Flat A) : Flat A :=
   ⟨AbsDomain.join a.int b.int, a.tt || b.tt, a.ff || b.ff, a.unit || b.unit,
-   a.list || b.list, a.fn || b.fn, a.loc || b.loc, a.exn || b.exn,
-   (a.refs ++ b.refs).eraseDups, (a.arrs ++ b.arrs).eraseDups, (a.tags ++ b.tags).eraseDups⟩
+   a.list || b.list, a.fn || b.fn, a.loc || b.loc, a.ctor || b.ctor,
+   (a.refs ++ b.refs).eraseDups, (a.arrs ++ b.arrs).eraseDups, (a.ctors ++ b.ctors).eraseDups⟩
 
 /-- The sites or constructors of `xs` that `b` also has: those of `ys`, or all of
-    them if `any` (`b` may be any array or ref, or any tagged value). -/
+    them if `any` (`b` may be any array or ref, or any constructor applied to an argument). -/
 def common [BEq α] (xs ys : List α) (any : Bool) : List α :=
   xs.filter fun x => any || ys.contains x
 
 /-- The values that both `a` and `b` describe. -/
 def meet (a b : Flat A) : Flat A :=
   ⟨AbsDomain.meet a.int b.int, a.tt && b.tt, a.ff && b.ff, a.unit && b.unit,
-   a.list && b.list, a.fn && b.fn, a.loc && b.loc, a.exn && b.exn,
+   a.list && b.list, a.fn && b.fn, a.loc && b.loc, a.ctor && b.ctor,
    common a.refs b.refs b.loc ++ common b.refs [] (a.loc && !b.loc),
    common a.arrs b.arrs b.loc ++ common b.arrs [] (a.loc && !b.loc),
-   common a.tags b.tags b.exn ++ common b.tags [] (a.exn && !b.exn)⟩
+   common a.ctors b.ctors b.ctor ++ common b.ctors [] (a.ctor && !b.ctor)⟩
 
 /-- `a` describes no more values than `b`. A site or a constructor of `a` must be in
-    `b`, unless `b` may be any array or ref (`loc`), or any tagged value (`exn`). -/
+    `b`, unless `b` may be any array or ref (`loc`), or any constructor (`ctor`). -/
 def leq (a b : Flat A) : Bool :=
   AbsDomain.leq a.int b.int && (!a.tt || b.tt) && (!a.ff || b.ff) && (!a.unit || b.unit) &&
-  (!a.list || b.list) && (!a.fn || b.fn) && (!a.loc || b.loc) && (!a.exn || b.exn) &&
+  (!a.list || b.list) && (!a.fn || b.fn) && (!a.loc || b.loc) && (!a.ctor || b.ctor) &&
   (common a.refs b.refs b.loc).length == a.refs.length &&
   (common a.arrs b.arrs b.loc).length == a.arrs.length &&
-  (common a.tags b.tags b.exn).length == a.tags.length
+  (common a.ctors b.ctors b.ctor).length == a.ctors.length
 
 /-- Concretisation: the values `a` describes. -/
 def mem (a : Flat A) : Value → Prop
@@ -96,7 +96,7 @@ def mem (a : Flat A) : Value → Prop
   | .nil | .cons _ _ => a.list = true
   | .clos .. => a.fn = true
   | .arr _ | .ref _ => a.loc = true
-  | .exn _ _ => a.exn = true
+  | .ctor _ _ => a.ctor = true
 
 theorem not_mem_bot {v : Value} : ¬ (bot : Flat A).mem v := by
   intro h
@@ -199,8 +199,8 @@ instance [ToString A] : ToString (Flat A) where
         | false, true => ["false"] | false, false => []) ++
       (if a.unit then ["()"] else []) ++ (if a.list then ["list"] else []) ++
       (if a.fn then ["fun"] else []) ++ (if a.loc then ["loc"] else []) ++
-      (if a.exn then ["exn"] else []) ++
-      a.refs.map (s!"ref !{·}") ++ a.arrs.map (s!"array !{·}") ++ a.tags
+      (if a.ctor then ["ctor"] else []) ++
+      a.refs.map (s!"ref !{·}") ++ a.arrs.map (s!"array !{·}") ++ a.ctors
     if parts.isEmpty then "⊥" else " | ".intercalate parts
 
 end Flat
@@ -254,7 +254,7 @@ def unitV : AVal A := ofFlat Flat.unitV
 def listV : AVal A := ofFlat Flat.listV
 /-- Any closure. -/
 def fnV : AVal A := ofFlat Flat.fnV
-def exnV : AVal A := ofFlat Flat.exnV
+def ctorV : AVal A := ofFlat Flat.ctorV
 /-- The closures that satisfy `S`. -/
 def summary (S : Summary A) : AVal A := { toFlat := Flat.bot, sum := some S }
 /-- The lists whose elements are in `e`, and that may be `[]` only if `mayNil`. -/
