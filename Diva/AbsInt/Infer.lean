@@ -10,7 +10,9 @@ wrong one only costs precision.
 `claims H σ e` lists what each hint must cover, in one pass of the optimistic
 analysis under `H`:
 - `(x, a)`: an argument `a` passed to a function of parameter `x`;
-- `($f, r)`: the result `r` of the body of `f`, assuming `H`'s claims.
+- `($f, r)`: the result `r` of the body of `f`, assuming `H`'s claims;
+- `(!s, v)`: a value `v` written to a ref or an array of the allocation site `s`, and
+  `(!s.length, n)`: the length `n` of an array created at `s`.
 
 `up` grows the hints from `⊥`, with widening, until they cover all their claims.
 `down` then shrinks them back to their claims, as long as they still cover them,
@@ -59,14 +61,14 @@ def callee (C : Callees) : Expr → List String
 /-- `lastRes` without checking the hints (`aevalM true`): the value of `e` for
     `fun y -> fun z -> e`. -/
 def lastResOpt (H : Hints A) (σ : AEnv A) (b : Expr) : Flat A :=
-  lastResOf b (aevalM true H σ b)
+  lastResOf b (aevalM true true H σ b)
 
 /-- What each hint must cover, in one pass over `e`. It goes where the optimistic
     analysis goes, with the same environments. -/
 def claims (H : Hints A) (C : Callees) (σ : AEnv A) : Expr → List (String × Flat A)
   | .binop _ a b | .cons a b => claims H C σ a ++ claims H C σ b
   | .matchList s n x xs c =>
-    let vs := aevalM true H σ s
+    let vs := aevalM true true H σ s
     claims H C σ s ++
       (if vs.mayBeNil then claims H C σ n else []) ++
       (if vs.heads.leq Flat.bot then []
@@ -74,11 +76,11 @@ def claims (H : Hints A) (C : Callees) (σ : AEnv A) : Expr → List (String × 
          ((xs, vs.tails) :: (x, AVal.ofFlat vs.heads) :: σ) c)
   | .letin x e1 e2 =>
     claims H C σ e1 ++
-      claims H ((x, callee C e1) :: C) ((x, aevalM true H σ e1) :: σ) e2
+      claims H ((x, callee C e1) :: C) ((x, aevalM true true H σ e1) :: σ) e2
   | .lam x b => claims H ((x, []) :: C) ((x, AVal.ofFlat (H.param x)) :: σ) b
   | .app f a =>
     let arg := match callee C f with
-      | x :: _ => [(x, (aevalM true H σ a).flat)]
+      | x :: _ => [(x, (aevalM true true H σ a).flat)]
       | [] => []
     arg ++ claims H C σ f ++ claims H C σ a
   | .letrec f x b e2 =>
@@ -89,18 +91,38 @@ def claims (H : Hints A) (C : Callees) (σ : AEnv A) : Expr → List (String × 
     ("$" ++ f, lastResOpt H σb b) :: claims H Cb σb b ++
       claims H ((f, x :: lamParams b) :: C) ((f, AVal.summary S) :: σ) e2
   | .ite c t e =>
-    let ac := aevalM true H σ c
+    let ac := aevalM true true H σ c
     claims H C σ c ++
       (if ac.tt then ((σ.assume c true).map (claims H C · t)).getD [] else []) ++
       (if ac.ff then ((σ.assume c false).map (claims H C · e)).getD [] else [])
+  -- a value written to the store: a claim on the contents of each site written to
+  | .ref site v => (s!"!{site}", (aevalM true true H σ v).flat) :: claims H C σ v
+  | .alloc site n v =>
+    (s!"!{site}", (aevalM true true H σ v).flat) ::
+      (s!"!{site}.length", (aevalM true true H σ n).flat) :: claims H C σ n ++ claims H C σ v
+  | .assign r v =>
+    let av := (aevalM true true H σ v).flat
+    ((aevalM true true H σ r).refs.map (s!"!{·}", av)) ++ claims H C σ r ++ claims H C σ v
+  | .set a i v =>
+    let av := (aevalM true true H σ v).flat
+    ((aevalM true true H σ a).arrs.map (s!"!{·}", av)) ++ claims H C σ a ++ claims H C σ i ++
+      claims H C σ v
+  | .deref a | .len a => claims H C σ a
+  | .get a i => claims H C σ a ++ claims H C σ i
   | _ => []
 
-/-- The hint keys of `e`: its parameters, and `$f` for each recursive function `f`. -/
+/-- The hint keys of `e`: its parameters, `$f` for each recursive function `f`, and for
+    each allocation site `s`, `!s` (the contents) and, for an array, `!s.length`. -/
 def hintKeys : Expr → List String
   | .lam x b => x :: hintKeys b
   | .letrec f x b e2 => x :: ("$" ++ f) :: hintKeys b ++ hintKeys e2
   | .app a b | .letin _ a b | .binop _ a b | .cons a b => hintKeys a ++ hintKeys b
   | .ite c t e | .matchList c t _ _ e => hintKeys c ++ hintKeys t ++ hintKeys e
+  | .ref site v => s!"!{site}" :: hintKeys v
+  | .alloc site n v => s!"!{site}" :: s!"!{site}.length" :: hintKeys n ++ hintKeys v
+  | .assign a b | .get a b => hintKeys a ++ hintKeys b
+  | .set a i v => hintKeys a ++ hintKeys i ++ hintKeys v
+  | .deref a | .len a => hintKeys a
   | _ => []
 
 /-- For each key of `H`, the join of its claims. A parameter that no call reaches

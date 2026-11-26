@@ -152,6 +152,19 @@ def Hints.param [NumDomain A] (H : Hints A) (x : String) : Flat A :=
 def Hints.result [NumDomain A] (H : Hints A) (f : String) : Flat A :=
   (H.lookup ("$" ++ f)).getD Flat.top
 
+/-- The values stored at the allocation site `s` (key `!s`): the contents of the refs,
+    or of the arrays, that `ref` or `Array.make` creates there. -/
+def Hints.cell [NumDomain A] (H : Hints A) (s : Nat) : Flat A :=
+  (H.lookup s!"!{s}").getD Flat.top
+
+/-- The lengths of the arrays created at the allocation site `s` (key `!s.length`). -/
+def Hints.len [NumDomain A] (H : Hints A) (s : Nat) : Flat A :=
+  (H.lookup s!"!{s}.length").getD Flat.top
+
+/-- The join of `get s` for the sites `ss`. -/
+def Hints.joinAt [NumDomain A] (get : Nat → Flat A) (ss : List Nat) : Flat A :=
+  ss.foldl (fun acc s => acc.join (get s)) Flat.bot
+
 /-- The value of a call of `af` on `aa`. `af`'s summary `S` says: for an argument
     in `S.pre`, the function returns a value in `S.res`, or, if it has more
     parameters (`S.rest`), a closure for them.
@@ -226,6 +239,24 @@ def callMayFail [NumDomain A] (af aa : AVal A) : Bool :=
       (!S.rest.isEmpty || !S.fails))
   | none => true
 
+/-! ## The store (untrusted, see `aevalM`) -/
+
+/-- Every value that `a` describes is a ref. -/
+def AVal.refsOnly [NumDomain A] (a : AVal A) : Bool := a.flat.leq { Flat.bot with refs := a.refs }
+
+/-- Every value that `a` describes is an array. -/
+def AVal.arrsOnly [NumDomain A] (a : AVal A) : Bool := a.flat.leq { Flat.bot with arrs := a.arrs }
+
+/-- `a.(i)` is in bounds: `i` is an integer, `0 <= i`, and `i` is less than
+    the length of the arrays of each site of `a`. -/
+def inBounds [NumDomain A] (H : Hints A) (a i : AVal A) : Bool :=
+  i.within Flat.ints && !(cmpLe (const 0) i.int).2 &&
+    a.arrs.all fun s => !(cmpLt i.int (H.len s).int).2
+
+/-- `v` fits in the contents of each site of `ss`. -/
+def fitsAt [NumDomain A] (H : Hints A) (ss : List Nat) (v : AVal A) : Bool :=
+  ss.all fun s => v.flat.leq (H.cell s)
+
 mutual
 
 /-- The analysis, checking the claims of `H`. The checker is `aeval` (`opt = false`).
@@ -233,16 +264,20 @@ mutual
     With `opt`, a claim is used even if it fails its check: a call gives the
     summary's result even if the argument isn't in the precondition. This isn't
     sound. Only the inference uses it, because its first guesses are always wrong:
-    with checking, they would give `top`, and the next guesses would be `top`. -/
-def aevalM [NumDomain A] (opt : Bool) (H : Hints A) (σ : AEnv A) : Expr → AVal A
+    with checking, they would give `top`, and the next guesses would be `top`.
+
+    With `st`, arrays and refs are analysed too (`aevalStore`). This isn't proved yet: the
+    proofs are about the checker, which has no `st`. Without `st`, a value read from
+    the store is `top`, and `mayFail` says that a store operation may fail. -/
+def aevalM [NumDomain A] (opt st : Bool) (H : Hints A) (σ : AEnv A) : Expr → AVal A
   | .int n => AVal.ofInt (const n)
   | .bool b => AVal.bools b !b
   | .unit => AVal.unitV
   | .nil => AVal.listOf Flat.bot
-  | .cons a b => (aevalM opt H σ a).cons (aevalM opt H σ b)
+  | .cons a b => (aevalM opt st H σ a).cons (aevalM opt st H σ b)
   | .var x => σ.get x
-  | .binop op a b => abinopE op a b (aevalM opt H σ a) (aevalM opt H σ b)
-  | .letin x e1 e2 => aevalM opt H ((x, aevalM opt H σ e1) :: σ) e2
+  | .binop op a b => abinopE op a b (aevalM opt st H σ a) (aevalM opt st H σ b)
+  | .letin x e1 e2 => aevalM opt st H ((x, aevalM opt st H σ e1) :: σ) e2
   | .lam x b =>
     -- the body, analysed with `x` in its precondition
     let P := H.param x
@@ -250,11 +285,11 @@ def aevalM [NumDomain A] (opt : Bool) (H : Hints A) (σ : AEnv A) : Expr → AVa
     match b with
     | .lam _ _ =>
       -- a curried function: `x`, then the parameters of the inner function
-      match (aevalM opt H σb b).sum with
+      match (aevalM opt st H σb b).sum with
       | some T => AVal.summary ⟨P, T.pre :: T.rest, T.res, T.fails⟩
       | none => AVal.fnV   -- doesn't happen: a `fun` has a summary
-    | _ => AVal.summary ⟨P, [], (aevalM opt H σb b).flat, mayFailM opt H σb b⟩
-  | .app f a => apply opt (aevalM opt H σ f) (aevalM opt H σ a)
+    | _ => AVal.summary ⟨P, [], (aevalM opt st H σb b).flat, mayFailM opt st H σb b⟩
+  | .app f a => apply opt (aevalM opt st H σ f) (aevalM opt st H σ a)
   | .letrec f x b e2 =>
     -- the claimed summary, checked against the body (which may call `f`)
     let P := H.param x
@@ -262,84 +297,142 @@ def aevalM [NumDomain A] (opt : Bool) (H : Hints A) (σ : AEnv A) : Expr → AVa
     let R := H.result f
     let env (F : Bool) := (x, AVal.ofFlat P) :: (f, AVal.summary ⟨P, Ps, R, F⟩) :: σ
     -- whether the last body may fail, assuming that the recursive calls don't
-    let fails := lastFailsOf b (aevalM opt H (env false) b) (mayFailM opt H (env false) b)
+    let fails := lastFailsOf b (aevalM opt st H (env false) b) (mayFailM opt st H (env false) b)
     -- the last body's result, assuming the claimed summary for the recursive calls
-    let res := lastResOf b (aevalM opt H (env fails) b)
+    let res := lastResOf b (aevalM opt st H (env fails) b)
     let S : Summary A := ⟨P, Ps, R, fails⟩
-    aevalM opt H ((f, if opt || res.leq R then AVal.summary S else AVal.fnV) :: σ) e2
+    aevalM opt st H ((f, if opt || res.leq R then AVal.summary S else AVal.fnV) :: σ) e2
   | .ite c t e =>
     -- a branch is taken only if the condition may have that value
     joinOpt
-      (if (aevalM opt H σ c).tt then (σ.assume c true).map (aevalM opt H · t) else none)
-      (if (aevalM opt H σ c).ff then (σ.assume c false).map (aevalM opt H · e) else none)
+      (if (aevalM opt st H σ c).tt then (σ.assume c true).map (aevalM opt st H · t) else none)
+      (if (aevalM opt st H σ c).ff then (σ.assume c false).map (aevalM opt st H · e) else none)
   | .assert _ => AVal.unitV
   | .exn _ _ => AVal.exnV
   | .raise _ => AVal.bot   -- never gives a value
   | .matchList s n x xs c =>
     -- a branch is taken only if the list may be `[]`, or may have a first element
-    let vs := aevalM opt H σ s
+    let vs := aevalM opt st H σ s
     joinOpt
-      (if vs.mayBeNil then some (aevalM opt H σ n) else none)
+      (if vs.mayBeNil then some (aevalM opt st H σ n) else none)
       (if vs.heads.leq Flat.bot then none
-       else some (aevalM opt H ((xs, vs.tails) :: (x, AVal.ofFlat vs.heads) :: σ) c))
+       else some (aevalM opt st H ((xs, vs.tails) :: (x, AVal.ofFlat vs.heads) :: σ) c))
+  -- the store, only with `st`: a ref or an array is described by its allocation
+  -- sites, and what it contains by the hints of these sites (`Hints.cell`)
+  | .ref site _ => if st then AVal.ofFlat { Flat.bot with refs := [site] } else AVal.top
+  | .alloc site _ _ => if st then AVal.ofFlat { Flat.bot with arrs := [site] } else AVal.top
+  | .deref r =>
+    if st then AVal.ofFlat (Hints.joinAt H.cell (aevalM opt st H σ r).refs) else AVal.top
+  | .get a _ =>
+    if st then AVal.ofFlat (Hints.joinAt H.cell (aevalM opt st H σ a).arrs) else AVal.top
+  | .len a =>
+    if st then AVal.ofFlat (Hints.joinAt H.len (aevalM opt st H σ a).arrs) else AVal.top
+  | .assign _ _ | .set _ _ _ => if st then AVal.unitV else AVal.top
   | _ => AVal.top
 
 /-- Whether `e` may end in an error: division by zero, a failed `assert`, a type
     error (like `1 + true`), an unbound variable, or an exception. The checker is
     `mayFail` (`opt = false`). -/
-def mayFailM [NumDomain A] (opt : Bool) (H : Hints A) (σ : AEnv A) : Expr → Bool
+def mayFailM [NumDomain A] (opt st : Bool) (H : Hints A) (σ : AEnv A) : Expr → Bool
   | .int _ | .bool _ | .unit | .nil | .lam _ _ => false
   -- a variable `σ` knows is bound (see `AEnv.Bound`)
   | .var x => (σ.lookup x).isNone
   | .binop op a b =>
-    mayFailM opt H σ a || mayFailM opt H σ b ||
-      opMayFail op (aevalM opt H σ a) (aevalM opt H σ b)
+    mayFailM opt st H σ a || mayFailM opt st H σ b ||
+      opMayFail op (aevalM opt st H σ a) (aevalM opt st H σ b)
   | .cons a b =>
-    mayFailM opt H σ a || mayFailM opt H σ b || !(aevalM opt H σ b).within Flat.listV
+    mayFailM opt st H σ a || mayFailM opt st H σ b || !(aevalM opt st H σ b).within Flat.listV
   | .letin x e1 e2 =>
-    mayFailM opt H σ e1 || mayFailM opt H ((x, aevalM opt H σ e1) :: σ) e2
+    mayFailM opt st H σ e1 || mayFailM opt st H ((x, aevalM opt st H σ e1) :: σ) e2
   | .app f a =>
-    mayFailM opt H σ f || mayFailM opt H σ a ||
-      callMayFail (aevalM opt H σ f) (aevalM opt H σ a)
+    mayFailM opt st H σ f || mayFailM opt st H σ a ||
+      callMayFail (aevalM opt st H σ f) (aevalM opt st H σ a)
   | .letrec f x b e2 =>
     -- `f` as in `aevalM`
     let P := H.param x
     let Ps := restPres H b
     let R := H.result f
     let env (F : Bool) := (x, AVal.ofFlat P) :: (f, AVal.summary ⟨P, Ps, R, F⟩) :: σ
-    let fails := lastFailsOf b (aevalM opt H (env false) b) (mayFailM opt H (env false) b)
-    let res := lastResOf b (aevalM opt H (env fails) b)
+    let fails := lastFailsOf b (aevalM opt st H (env false) b) (mayFailM opt st H (env false) b)
+    let res := lastResOf b (aevalM opt st H (env fails) b)
     let S : Summary A := ⟨P, Ps, R, fails⟩
-    mayFailM opt H ((f, if opt || res.leq R then AVal.summary S else AVal.fnV) :: σ) e2
+    mayFailM opt st H ((f, if opt || res.leq R then AVal.summary S else AVal.fnV) :: σ) e2
   | .ite c t e =>
     -- a branch counts only if it can be taken
-    let ac := aevalM opt H σ c
-    mayFailM opt H σ c || !ac.within Flat.anyBool ||
-      (ac.tt && ((σ.assume c true).map (mayFailM opt H · t)).getD false) ||
-      (ac.ff && ((σ.assume c false).map (mayFailM opt H · e)).getD false)
+    let ac := aevalM opt st H σ c
+    mayFailM opt st H σ c || !ac.within Flat.anyBool ||
+      (ac.tt && ((σ.assume c true).map (mayFailM opt st H · t)).getD false) ||
+      (ac.ff && ((σ.assume c false).map (mayFailM opt st H · e)).getD false)
   | .assert c =>
-    let ac := aevalM opt H σ c
-    mayFailM opt H σ c || !ac.within Flat.anyBool || ac.ff
+    let ac := aevalM opt st H σ c
+    mayFailM opt st H σ c || !ac.within Flat.anyBool || ac.ff
   | .matchList s n x xs c =>
     -- a branch counts only if it can be taken (as in `aevalM`)
-    let vs := aevalM opt H σ s
-    mayFailM opt H σ s || !vs.within Flat.listV ||
-      (vs.mayBeNil && mayFailM opt H σ n) ||
+    let vs := aevalM opt st H σ s
+    mayFailM opt st H σ s || !vs.within Flat.listV ||
+      (vs.mayBeNil && mayFailM opt st H σ n) ||
       (!vs.heads.leq Flat.bot &&
-        mayFailM opt H ((xs, vs.tails) :: (x, AVal.ofFlat vs.heads) :: σ) c)
-  | .exn _ e => mayFailM opt H σ e
-  -- `raise`, `try`, lists, arrays and refs: not analysed yet
+        mayFailM opt st H ((xs, vs.tails) :: (x, AVal.ofFlat vs.heads) :: σ) c)
+  | .exn _ e => mayFailM opt st H σ e
+  -- the store, only with `st` (as in `aevalM`). Each write checks that the value is
+  -- in the contents of the sites written to. An array has a length of its site's
+  -- hint, and an index must be in bounds.
+  | .ref site v =>
+    if st then
+      mayFailM opt st H σ v || !fitsAt H [site] (aevalM opt st H σ v)
+    else true
+  | .deref r =>
+    if st then mayFailM opt st H σ r || !(aevalM opt st H σ r).refsOnly else true
+  | .assign r v =>
+    if st then
+      let ar := aevalM opt st H σ r
+      mayFailM opt st H σ r || mayFailM opt st H σ v || !ar.refsOnly ||
+        !fitsAt H ar.refs (aevalM opt st H σ v)
+    else true
+  | .alloc site n v =>
+    if st then
+      let an := aevalM opt st H σ n
+      mayFailM opt st H σ n || mayFailM opt st H σ v || !an.within Flat.ints ||
+        -- `Array.make` fails on a negative length
+        (cmpLe (const 0) an.int).2 ||
+        !an.flat.leq (H.len site) || !fitsAt H [site] (aevalM opt st H σ v)
+    else true
+  | .get a i =>
+    if st then
+      let aa := aevalM opt st H σ a
+      mayFailM opt st H σ a || mayFailM opt st H σ i || !aa.arrsOnly ||
+        !inBounds H aa (aevalM opt st H σ i)
+    else true
+  | .set a i v =>
+    if st then
+      let aa := aevalM opt st H σ a
+      mayFailM opt st H σ a || mayFailM opt st H σ i || mayFailM opt st H σ v ||
+        !aa.arrsOnly || !inBounds H aa (aevalM opt st H σ i) ||
+        !fitsAt H aa.arrs (aevalM opt st H σ v)
+    else true
+  | .len a =>
+    if st then mayFailM opt st H σ a || !(aevalM opt st H σ a).arrsOnly else true
+  -- `raise` and `try`: not analysed yet
   | _ => true
 
 end
 
 /-- The checker. -/
 abbrev aeval [NumDomain A] (H : Hints A) (σ : AEnv A) (e : Expr) : AVal A :=
-  aevalM false H σ e
+  aevalM false false H σ e
 
 /-- The checker for errors. -/
 abbrev mayFail [NumDomain A] (H : Hints A) (σ : AEnv A) (e : Expr) : Bool :=
-  mayFailM false H σ e
+  mayFailM false false H σ e
+
+/-- The analysis with arrays and refs (untrusted: not proved yet). `diva check` and the
+    inference use it. -/
+abbrev aevalStore [NumDomain A] (H : Hints A) (σ : AEnv A) (e : Expr) : AVal A :=
+  aevalM false true H σ e
+
+/-- Whether `e` may fail, with arrays and refs (untrusted: not proved yet). -/
+abbrev mayFailStore [NumDomain A] (H : Hints A) (σ : AEnv A) (e : Expr) : Bool :=
+  mayFailM false true H σ e
 
 /-! ## Concretisation -/
 
@@ -1213,7 +1306,7 @@ theorem aeval_sound_aux [NumDomain A] {ρ : Env} {μ μ' : Store} {e : Expr} {r 
   | matchNil _ _ ihs ihn =>
     intro H σ v hσ hB hr
     -- the list is `[]`, so the `[]` branch is taken
-    have hnil : (aevalM false H σ _).mayBeNil = true := AVal.mayBeNil_of_mem (ihs hσ hB rfl)
+    have hnil : (aevalM false false H σ _).mayBeNil = true := AVal.mayBeNil_of_mem (ihs hσ hB rfl)
     simp only [aeval, aevalM, hnil, ↓reduceIte]
     exact joinOpt_sound_l (ihn hσ hB hr)
   | @matchCons _ _ _ _ _ _ xs x _ _ _ _ _ _ ihs ihc =>
@@ -1223,7 +1316,7 @@ theorem aeval_sound_aux [NumDomain A] {ρ : Env} {μ μ' : Store} {e : Expr} {r 
     have hd := (hσ.cons (x := x) (AVal.mem_ofFlat (AVal.mem_heads hs))).cons (x := xs)
       (AVal.mem_tails hs)
     -- the list has a first element, so the `::` branch is taken
-    have hcons : (aevalM false H σ _).heads.leq Flat.bot = false := AVal.heads_not_bot hs
+    have hcons : (aevalM false false H σ _).heads.leq Flat.bot = false := AVal.heads_not_bot hs
     simp only [aeval, aevalM, hcons, Bool.false_eq_true, ↓reduceIte]
     exact joinOpt_sound_r (ihc hd hB.cons.cons hr)
   | var hx => intro H σ v hσ hB hr; cases hr; exact hσ _ _ hx
@@ -1248,13 +1341,13 @@ theorem aeval_sound_aux [NumDomain A] {ρ : Env} {μ μ' : Store} {e : Expr} {r 
     exact ih2 (hσ.cons (letrecVal_mem hσ hB)) hB.cons hr
   | ifT hc _ ihc iht =>
     intro H σ v hσ hB hr
-    have htt : (aevalM false H σ _).tt = true := AVal.mem_tt (ihc hσ hB rfl)
+    have htt : (aevalM false false H σ _).tt = true := AVal.mem_tt (ihc hσ hB rfl)
     obtain ⟨σt, hst, hdt⟩ := σ.assume_sound hσ hc
     simp only [aeval, aevalM, htt, hst, Option.map_some, ↓reduceIte]
     exact joinOpt_sound_l (iht hdt (AEnv.assume_bound hB hst) hr)
   | ifF hc _ ihc ihe =>
     intro H σ v hσ hB hr
-    have hff : (aevalM false H σ _).ff = true := AVal.mem_ff (ihc hσ hB rfl)
+    have hff : (aevalM false false H σ _).ff = true := AVal.mem_ff (ihc hσ hB rfl)
     obtain ⟨σe, hse, hde⟩ := σ.assume_sound hσ hc
     simp only [aeval, aevalM, hff, hse, Option.map_some, ↓reduceIte]
     exact joinOpt_sound_r (ihe hde (AEnv.assume_bound hB hse) hr)

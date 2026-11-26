@@ -67,10 +67,13 @@ def itv : Itv → String
   | .bot => ".bot"
   | .range lo hi => s!"(.range {bound lo} {bound hi})"
 
-/-- `a` as a Lean term of type `Flat Itv`. -/
+/-- `a` as a Lean term of type `Flat Itv`. The sites (`refs`, `arrs`) are printed only
+    if there are some. -/
 def flat (a : Flat Itv) : String :=
+  let sites := (if a.refs.isEmpty then "" else s!", refs := {a.refs}") ++
+    (if a.arrs.isEmpty then "" else s!", arrs := {a.arrs}")
   s!"\{ int := {itv a.int}, tt := {a.tt}, ff := {a.ff}, unit := {a.unit}, " ++
-  s!"list := {a.list}, fn := {a.fn}, loc := {a.loc}, exn := {a.exn} }"
+  s!"list := {a.list}, fn := {a.fn}, loc := {a.loc}, exn := {a.exn}{sites} }"
 
 /-- `H` as a Lean term of type `Hints Itv`, one hint per line. -/
 def hints (H : Hints Itv) : String :=

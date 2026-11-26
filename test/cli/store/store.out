@@ -1,0 +1,31 @@
+$ diva run store.ml
+runtime error: index out of bounds
+[exit 1]
+
+$ diva check store.ml
+store.ml:16:8-14: `a.(10)`: the index (10) may be out of bounds (length: 10)
+[exit 1]
+
+$ diva opt store.ml
+(let sum_to = (fun n -> (let s = (ref 0) in (let _ = (let %hi = n in (let rec %for i = (if (i <= %hi) then (let _ = (s := (!s + i)) in (%for (i + 1))) else ()) in (%for 1))) in !s))) in (let a = (Array.make 10 0) in (let _ = (let rec %for i = (if (i <= 9) then (let _ = (a.(i) <- (sum_to i)) in (%for (i + 1))) else ()) in (%for 0)) in (let x = (a.(3) + a.(9)) in (let y = a.(10) in y)))))
+[exit 0]
+
+$ diva hints store.ml
+n#0 : [0, 9]
+!0 : [0, +∞]
+i#2 : [1, 10]
+$%for#1 : ()
+!1 : [0, +∞]
+!1.length : 10
+i#4 : [0, 10]
+$%for#3 : ()
+[exit 0]
+
+$ diva cert --check store.ml
+the program may fail, so there is no certificate (see `diva check`)
+[exit 1]
+
+$ diva prove --check -o prove.lean store.ml
+no function has a contract: write one in a `(*@ ... *)` comment after a function
+[exit 1]
+

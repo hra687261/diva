@@ -239,13 +239,13 @@ theorem mayFail_sound_aux {ρ : Env} {μ μ' : Store} {e : Expr} {r : Outcome}
   | ifT hc _ _ iht =>
     intro H σ k hσ hB hr
     -- the `then` branch can be taken, and it fails
-    have htt : (aevalM false H σ _).tt = true := AVal.mem_tt (aeval_sound hσ hB hc)
+    have htt : (aevalM false false H σ _).tt = true := AVal.mem_tt (aeval_sound hσ hB hc)
     obtain ⟨σt, hst, hdt⟩ := σ.assume_sound hσ hc
     have hft := iht (H := H) hdt (AEnv.assume_bound hB hst) hr
     simp [mayFail, mayFailM, htt, hst, hft]
   | ifF hc _ _ ihe =>
     intro H σ k hσ hB hr
-    have hff : (aevalM false H σ _).ff = true := AVal.mem_ff (aeval_sound hσ hB hc)
+    have hff : (aevalM false false H σ _).ff = true := AVal.mem_ff (aeval_sound hσ hB hc)
     obtain ⟨σe, hse, hde⟩ := σ.assume_sound hσ hc
     have hfe := ihe (H := H) hde (AEnv.assume_bound hB hse) hr
     simp [mayFail, mayFailM, hff, hse, hfe]
@@ -258,7 +258,7 @@ theorem mayFail_sound_aux {ρ : Env} {μ μ' : Store} {e : Expr} {r : Outcome}
   | matchNil hs _ _ ihn =>
     intro H σ k hσ hB hr
     -- the list is `[]`, so the `[]` branch can be taken, and it fails
-    have hnil : (aevalM false H σ _).mayBeNil = true :=
+    have hnil : (aevalM false false H σ _).mayBeNil = true :=
       AVal.mayBeNil_of_mem (aeval_sound hσ hB hs)
     have hfn := ihn (H := H) hσ hB hr
     simp [mayFail, mayFailM, hnil, hfn]
@@ -266,7 +266,7 @@ theorem mayFail_sound_aux {ρ : Env} {μ μ' : Store} {e : Expr} {r : Outcome}
     intro H σ k hσ hB hr
     -- the list has a first element, so the `::` branch can be taken, and it fails
     have hv := aeval_sound (H := H) hσ hB hs
-    have hcons : (aevalM false H σ _).heads.leq Flat.bot = false := AVal.heads_not_bot hv
+    have hcons : (aevalM false false H σ _).heads.leq Flat.bot = false := AVal.heads_not_bot hv
     -- `x` is in the heads of the list, and `xs` in its tails
     have hd := (hσ.cons (x := x) (AVal.mem_ofFlat (AVal.mem_heads hv))).cons (x := xs)
       (AVal.mem_tails hv)

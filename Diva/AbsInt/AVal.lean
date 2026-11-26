@@ -32,6 +32,11 @@ structure Flat (A : Type) where
   fn   : Bool   -- may be a closure
   loc  : Bool   -- may be an array or a ref
   exn  : Bool   -- may be an exception
+  /-- The allocation sites of the refs it may be, for the analysis of the store (see
+      `aevalM`). `mem` doesn't use them: `loc` gives the arrays and refs it may be. -/
+  refs : List Nat := []
+  /-- The allocation sites of the arrays it may be, as `refs`. -/
+  arrs : List Nat := []
   deriving Inhabited
 
 namespace Flat
@@ -39,10 +44,10 @@ namespace Flat
 variable {A : Type} [NumDomain A]
 
 /-- No value at all. -/
-def bot : Flat A := ⟨AbsDomain.bot, false, false, false, false, false, false, false⟩
+def bot : Flat A := ⟨AbsDomain.bot, false, false, false, false, false, false, false, [], []⟩
 
 /-- Any value. -/
-def top : Flat A := ⟨AbsDomain.top, true, true, true, true, true, true, true⟩
+def top : Flat A := ⟨AbsDomain.top, true, true, true, true, true, true, true, [], []⟩
 
 def ofInt (i : A) : Flat A := { (bot : Flat A) with int := i }
 /-- A boolean that may be `true` (`t`) or `false` (`f`). -/
@@ -54,16 +59,19 @@ def exnV : Flat A := { (bot : Flat A) with exn := true }
 
 def join (a b : Flat A) : Flat A :=
   ⟨AbsDomain.join a.int b.int, a.tt || b.tt, a.ff || b.ff, a.unit || b.unit,
-   a.list || b.list, a.fn || b.fn, a.loc || b.loc, a.exn || b.exn⟩
+   a.list || b.list, a.fn || b.fn, a.loc || b.loc, a.exn || b.exn,
+   (a.refs ++ b.refs).eraseDups, (a.arrs ++ b.arrs).eraseDups⟩
 
 /-- The values that both `a` and `b` describe. -/
 def meet (a b : Flat A) : Flat A :=
   ⟨AbsDomain.meet a.int b.int, a.tt && b.tt, a.ff && b.ff, a.unit && b.unit,
-   a.list && b.list, a.fn && b.fn, a.loc && b.loc, a.exn && b.exn⟩
+   a.list && b.list, a.fn && b.fn, a.loc && b.loc, a.exn && b.exn,
+   a.refs.filter b.refs.contains, a.arrs.filter b.arrs.contains⟩
 
 def leq (a b : Flat A) : Bool :=
   AbsDomain.leq a.int b.int && (!a.tt || b.tt) && (!a.ff || b.ff) && (!a.unit || b.unit) &&
-  (!a.list || b.list) && (!a.fn || b.fn) && (!a.loc || b.loc) && (!a.exn || b.exn)
+  (!a.list || b.list) && (!a.fn || b.fn) && (!a.loc || b.loc) && (!a.exn || b.exn) &&
+  a.refs.all b.refs.contains && a.arrs.all b.arrs.contains
 
 /-- Concretisation: the values `a` describes. -/
 def mem (a : Flat A) : Value → Prop
@@ -104,7 +112,7 @@ theorem mem_join_r {a b : Flat A} {v : Value} (h : b.mem v) : (a.join b).mem v :
 theorem mem_leq {a b : Flat A} {v : Value} (h : a.mem v) (hl : a.leq b = true) : b.mem v := by
   simp only [leq, Bool.and_eq_true, Bool.or_eq_true, Bool.not_eq_true'] at hl
   cases v
-  case int n => exact leq_sound h hl.1.1.1.1.1.1.1
+  case int n => exact leq_sound h hl.1.1.1.1.1.1.1.1.1
   case bool c => cases c <;> simp_all [mem]
   all_goals simp_all [mem]
 
@@ -172,7 +180,8 @@ instance [ToString A] : ToString (Flat A) where
         | false, true => ["false"] | false, false => []) ++
       (if a.unit then ["()"] else []) ++ (if a.list then ["list"] else []) ++
       (if a.fn then ["fun"] else []) ++ (if a.loc then ["loc"] else []) ++
-      (if a.exn then ["exn"] else [])
+      (if a.exn then ["exn"] else []) ++
+      a.refs.map (s!"ref !{·}") ++ a.arrs.map (s!"array !{·}")
     if parts.isEmpty then "⊥" else " | ".intercalate parts
 
 end Flat
