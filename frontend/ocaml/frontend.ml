@@ -62,6 +62,13 @@ let ite loc c t e = node loc "ite" [ c; t; e ]
 let binop loc op a b = node loc "binop" [ Atom op; a; b ]
 let app loc f a = node loc "app" [ f; a ]
 
+(* [s], an integer of [bits] bits: DIVA checks that its value fits, if it may not
+   ([Overflow.wrap] in [Diva/Sexp.lean]). *)
+let overflow loc bits s = node loc "overflow" [ Atom (string_of_int bits); s ]
+
+(* [a op b] on integers of [bits] bits. *)
+let arith loc bits op a b = overflow loc bits (binop loc op a b)
+
 (* A new name. Names that start with [%] can't be written in OCaml, so they hide no
    name of the program. *)
 let fresh =
@@ -72,12 +79,18 @@ let fresh =
 
 (* ---------- Types ---------- *)
 
-(* The type [ty] is [int] or [char] ([`Int]), [bool], [unit], a type variable such as
-   ['a], or another one. *)
+(* The type [ty] is [int], [char], [Int32.t] or [Int64.t] ([`Int]), [bool], [unit], a
+   type variable such as ['a], or another one. *)
 let kind env ty =
   match Types.get_desc (Ctype.expand_head env ty) with
   | Tconstr (p, [], _)
-    when Path.same p Predef.path_int || Path.same p Predef.path_char ->
+    when List.exists (Path.same p)
+           [
+             Predef.path_int;
+             Predef.path_char;
+             Predef.path_int32;
+             Predef.path_int64;
+           ] ->
       `Int
   | Tconstr (p, [], _) when Path.same p Predef.path_bool -> `Bool
   | Tconstr (p, [], _) when Path.same p Predef.path_unit -> `Unit
@@ -106,6 +119,49 @@ let binops =
     ("Stdlib.>=", "ge");
   ]
 
+(* The integer constants of the library. *)
+let constants =
+  [
+    ("Stdlib.max_int", string_of_int max_int);
+    ("Stdlib.min_int", string_of_int min_int);
+    ("Stdlib.Int32.zero", "0");
+    ("Stdlib.Int32.one", "1");
+    ("Stdlib.Int32.minus_one", "-1");
+    ("Stdlib.Int32.max_int", Int32.to_string Int32.max_int);
+    ("Stdlib.Int32.min_int", Int32.to_string Int32.min_int);
+    ("Stdlib.Int64.zero", "0");
+    ("Stdlib.Int64.one", "1");
+    ("Stdlib.Int64.minus_one", "-1");
+    ("Stdlib.Int64.max_int", Int64.to_string Int64.max_int);
+    ("Stdlib.Int64.min_int", Int64.to_string Int64.min_int);
+  ]
+
+(* The modules of integers with a fixed number of bits other than [int]'s 63, and
+   their functions: [Int32.add], ... *)
+let int_modules = [ ("Stdlib.Int32.", 32); ("Stdlib.Int64.", 64) ]
+
+let int_functions =
+  [
+    ("add", "add");
+    ("sub", "sub");
+    ("mul", "mul");
+    ("div", "div");
+    ("rem", "mod");
+  ]
+
+(* The module of [p] in [int_modules], with its number of bits, and the name of [p] in
+   it: [Stdlib.Int32.add] gives [32] and [add]. *)
+let int_module p =
+  List.find_map
+    (fun (m, bits) ->
+      if String.starts_with ~prefix:m p then
+        Some
+          ( bits,
+            String.sub p (String.length m) (String.length p - String.length m)
+          )
+      else None)
+    int_modules
+
 let output_functions =
   [
     "Stdlib.print_int";
@@ -121,11 +177,14 @@ let library f =
   | Texp_ident ((Path.Pdot _ as p), _, _) -> Some (Path.name p)
   | _ -> None
 
-(* The library functions that can't fail on integers: [/] and [mod] fail on [0]. *)
+(* The library functions that can fail on integers only by overflow: [/] and [mod]
+   also fail on [0]. An overflow is a failed check, a fatal error. *)
 let total = [ "Stdlib.+"; "Stdlib.-"; "Stdlib.*"; "Stdlib.~-" ]
 
-(* [e] is computed without any effect: no error, no read or change of the store, and
-   it finishes. So it can be computed earlier or later. *)
+(* [e] is computed without any effect: no error but an overflow, no read or change of
+   the store, and it finishes. So it can be computed earlier or later: if two parts
+   overflow, both orders give the same error. In a program that DIVA proves never
+   fails, nothing overflows. *)
 let rec trivial e =
   match e.exp_desc with
   | Texp_ident (Path.Pident _, _, _) | Texp_constant _ | Texp_function _ -> true
@@ -159,10 +218,14 @@ let rec expr (e : expression) : sexp =
   let loc = e.exp_loc in
   match e.exp_desc with
   | Texp_ident (Path.Pident id, _, _) -> var loc (Ident.name id)
+  | Texp_ident (p, _, _) when List.mem_assoc (Path.name p) constants ->
+      node loc "int" [ Atom (List.assoc (Path.name p) constants) ]
   | Texp_ident (p, _, _) ->
       unsupported loc "the library function `%s`, except when it is called"
         (Path.name p)
   | Texp_constant (Const_int n) -> int loc n
+  | Texp_constant (Const_int32 n) -> node loc "int" [ Atom (Int32.to_string n) ]
+  | Texp_constant (Const_int64 n) -> node loc "int" [ Atom (Int64.to_string n) ]
   | Texp_constant (Const_char c) -> int loc (Char.code c)
   | Texp_constant _ ->
       unsupported loc "this constant (only integers and characters)"
@@ -335,7 +398,7 @@ and apply loc f args =
       (match (op, kind a.exp_env a.exp_type) with
       | _, (`Int | `Var) | ("eq" | "ne"), (`Bool | `Unit) -> ()
       | _ -> unsupported loc "`%s` on this type" p);
-      two a b (binop loc op)
+      two a b (fun a b -> arith loc 63 op a b)
   | Some "Stdlib.&&", [ a; b ] ->
       let a = expr a in
       ite loc a (expr b) (bool loc false)
@@ -344,7 +407,8 @@ and apply loc f args =
       ite loc a (bool loc true) (expr b)
   | Some "Stdlib.not", [ a ] ->
       ite loc (expr a) (bool loc false) (bool loc true)
-  | Some "Stdlib.~-", [ a ] -> binop loc "sub" (int loc 0) (expr a)
+  | Some "Stdlib.~-", [ a ] ->
+      overflow loc 63 (binop loc "sub" (int loc 0) (expr a))
   | Some "Stdlib.ref", [ v ] -> node loc "ref" [ expr v ]
   | Some "Stdlib.!", [ r ] -> node loc "deref" [ expr r ]
   | Some "Stdlib.:=", [ r; v ] ->
@@ -353,7 +417,11 @@ and apply loc f args =
       let op = if p = "Stdlib.incr" then "add" else "sub" in
       with_name loc r (fun r ->
           node loc "assign"
-            [ r; binop loc op (node loc "deref" [ r ]) (int loc 1) ])
+            [
+              r;
+              overflow loc 63
+                (binop loc op (node loc "deref" [ r ]) (int loc 1));
+            ])
   | Some "Stdlib.raise", [ v ] -> node loc "raise" [ expr v ]
   | Some "Stdlib.failwith", [ s ] ->
       node loc "raise" [ node loc "exn" [ Str "Failure"; arg s ] ]
@@ -362,6 +430,19 @@ and apply loc f args =
   | Some "Stdlib.ignore", [ a ] -> seq loc (expr a) (unit loc)
   | Some p, [ a ] when List.mem p output_functions -> seq loc (arg a) (unit loc)
   | Some "Stdlib.Char.code", [ a ] -> expr a
+  | Some p, _ when Option.is_some (int_module p) -> (
+      let bits, name = Option.get (int_module p) in
+      match (name, args) with
+      | n, [ a; b ] when List.mem_assoc n int_functions ->
+          two a b (fun a b -> arith loc bits (List.assoc n int_functions) a b)
+      | "neg", [ a ] -> overflow loc bits (binop loc "sub" (int loc 0) (expr a))
+      (* [Int32.of_int] wraps an [int] that doesn't fit in 32 bits *)
+      | "of_int", [ a ] ->
+          if bits < 63 then overflow loc bits (expr a) else expr a
+      (* [Int64.to_int] wraps an [Int64.t] that doesn't fit in 63 bits *)
+      | "to_int", [ a ] ->
+          if bits > 63 then overflow loc 63 (expr a) else expr a
+      | _ -> unsupported loc "the library function `%s`" p)
   | Some "Stdlib.Array.make", [ n; v ] ->
       two n v (fun n v -> node loc "alloc" [ n; v ])
   | Some "Stdlib.Array.length", [ a ] -> node loc "len" [ expr a ]

@@ -1,0 +1,37 @@
+$ diva ocaml run overflow.ml
+runtime error: assertion failed
+[exit 1]
+
+$ diva ocaml check overflow.ml
+overflow.ml:6:38-53: `n + sum (n - 1)`: may overflow 63-bit integers (result: [1, +∞])
+overflow.ml:11:25-39: `Int32.add x 1l`: may overflow 32-bit integers (result: 2147483648)
+overflow.ml:13:25-47: `(next32 Int32.max_int)`: the function called may fail
+overflow.ml:13:3-9: `sum 10`: the function called may fail
+overflow.ml:13:3-47: `sum 10 + Int32.to_int (next32 Int32.max_int)`: may overflow 63-bit integers (result: [2147483648, +∞])
+[exit 1]
+
+$ diva ocaml opt overflow.ml
+(let rec sum n = (let _ = (assert (if (0 <= n) then (n <= 1000) else false)) in (if (n <= 0) then 0 else (let %r = (n + (sum (let %r = (n - 1) in (let _ = (assert (%r <= 4611686018427387903)) in %r)))) in (let _ = (assert (if (-4611686018427387904 <= %r) then (%r <= 4611686018427387903) else false)) in %r)))) in (let next32 = (fun x -> (let %r = (x + 1) in (let _ = (assert (if (-2147483648 <= %r) then (%r <= 2147483647) else false)) in %r))) in (let %t2 = (next32 2147483647) in (let %t1 = (sum 10) in (let %r = (%t1 + 2147483648) in (let _ = (assert (%r <= 4611686018427387903)) in %r))))))
+[exit 0]
+
+$ diva ocaml hints overflow.ml
+n#1 : [0, 10]
+$sum#0 : [0, +∞]
+x#2 : 2147483647
+[exit 0]
+
+$ diva ocaml cert --check overflow.ml
+the program may fail, so there is no certificate (see `diva check`)
+[exit 1]
+
+$ diva ocaml prove --check -o prove.lean overflow.ml
+[diva] running Lean on prove.lean
+wrote prove.lean
+prove.lean:45:12: error: omega could not prove the goal:
+No usable constraints found. You may need to unfold definitions so `omega` can see linear arithmetic facts about `Nat` and `Int`, which may also involve multiplication, division, and modular remainder by constants.
+[exit 1]
+
+$ diva ocaml print overflow.ml
+(let rec sum n = (let _ = (assert (if (0 <= n) then (n <= 1000) else false)) in (if (n <= 0) then 0 else (let %r = (n + (sum (let %r = (n - 1) in (let _ = (assert (if (-4611686018427387904 <= %r) then (%r <= 4611686018427387903) else false)) in %r)))) in (let _ = (assert (if (-4611686018427387904 <= %r) then (%r <= 4611686018427387903) else false)) in %r)))) in (let next32 = (fun x -> (let %r = (x + 1) in (let _ = (assert (if (-2147483648 <= %r) then (%r <= 2147483647) else false)) in %r))) in (let %t2 = (next32 2147483647) in (let %t1 = (sum 10) in (let %r = (%t1 + %t2) in (let _ = (assert (if (-4611686018427387904 <= %r) then (%r <= 4611686018427387903) else false)) in %r))))))
+[exit 0]
+

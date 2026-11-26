@@ -44,3 +44,10 @@ private def err (s : String) : String :=
 -- the position of an error in a contract is in its text: the front end puts spaces and
 -- newlines before the comment, so that the position is the one in the file
 #guard err "(program (let \"f\" (int 0 1 2) \"(*@ requires *)\"))" == "1:4: parse error"
+
+-- `(overflow START STOP BITS E)`: the front end checks that `E` fits in `BITS` bits
+#guard (check "" (read := read "(program
+  (expr (overflow 0 5 8 (binop 0 5 add (int 0 3 127) (int 4 5 1)))))")).out ==
+  ["`(127 + 1)`: may overflow 8-bit integers (result: 128)"]
+#guard run "" (read := read "(program
+  (expr (overflow 0 5 8 (binop 0 5 add (int 0 3 126) (int 4 5 1)))))") == { out := ["127"] }

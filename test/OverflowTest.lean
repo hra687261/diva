@@ -35,3 +35,11 @@ def checked (bits : Nat) (s : String) : String :=
   ["`x / y`: may overflow 4-bit integers (result: 8)"]
 -- once the analysis proves the checks, `opt` erases them
 #guard (opt "let x = 3 in x * x" (read := bitsReader 63)).out == ["9"]
+
+-- an integer literal that doesn't fit is an error, with its position
+#guard check "1 +\n  4611686018427387904" (read := bitsReader 63) ==
+  { err := ["2:2: the integer 4611686018427387904 doesn't fit in 63-bit integers"], code := 1 }
+#guard (check "-9" (read := bitsReader 4)).err ==
+  ["1:1: the integer 9 doesn't fit in 4-bit integers"]
+-- `-n` may be the smallest integer: `-8` fits in 4 bits
+#guard (check "-8" (read := bitsReader 4)).out == ["no runtime error is possible"]

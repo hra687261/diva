@@ -35,6 +35,10 @@ OP ::= add | sub | mul | div | mod | eq | ne | lt | le | gt | ge
 ```
 
 `alloc` and `ref` have no allocation site: `resolve` numbers them.
+
+`(overflow START STOP BITS E)` says that `E` computes an integer of `BITS` bits. It is `E`,
+followed by the check that its value fits (`Overflow.wrap`), if it may not: an operation
+that can't overflow (`Overflow.mayOverflow`), such as `mod`, isn't checked.
 -/
 
 namespace Diva
@@ -214,6 +218,13 @@ partial def expr (x : Sexp) : Except String LExpr := do
     let h ← expr h
     let m ← expr m
     return node (.exnCase s.expr (← name c) (← name y) h.expr m.expr) [s, h, m]
+  | "overflow", [bits, e] =>
+    let e ← expr e
+    let t : IntType := ⟨← nat bits⟩
+    -- an operation whose result always fits, such as `mod` or a comparison, isn't checked
+    return match e.expr with
+      | .binop op _ _ => if Overflow.mayOverflow op then Overflow.wrap t e span else e
+      | _ => Overflow.wrap t e span
   | _, _ => .error s!"`{x.text}` is not an expression"
 
 /-- The contract of a declaration, if it has one. -/

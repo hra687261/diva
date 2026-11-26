@@ -652,9 +652,10 @@ def parseItemsLoc : Reader := fun s =>
   | .error err => .error (errorAt s err.pos.byteIdx)
 
 /-- The reader `r`, where each operation that may overflow the integer type `intTy` is
-    checked (`Overflow.items`). Without `intTy`, `r` itself. -/
+    checked (`Overflow.items`). Without `intTy`, `r` itself. An integer literal that
+    doesn't fit in `intTy` is an error. -/
 def Reader.withIntTy (intTy : Option IntType) (r : Reader) : Reader := fun s =>
-  (r s).map (Overflow.items intTy)
+  (r s).bind (Overflow.items intTy s)
 
 /-- The program read by `r`, as one expression, with its positions. `resolve` keeps
     the shape of the expression, so the positions stay valid. -/
