@@ -31,9 +31,14 @@ def clean (s : String) : String :=
   | [] => ""
   | p :: ps => p ++ String.join (ps.map fun q => String.ofList (q.toList.dropWhile Char.isDigit))
 
-/-- `e`, short, in backquotes. -/
-def snippet (e : Expr) : String :=
-  let s := clean (ppExpr e)
+/-- The code that a message is about, in backquotes, cut to 60 characters. It is the
+    text of the file at the span of `l`, as the user wrote it (`code` gives it). If the
+    file has no text there, for example for a check that DIVA added, it is the
+    expression `e`, printed. -/
+def snippet (code : Span → String) (e : Expr) (l : Loc) : String :=
+  let s := match code l.span with
+    | "" => clean (ppExpr e)
+    | s => s
   if s.length ≤ 60 then s!"`{s}`" else s!"`{s.take 57}...`"
 
 /-- Why a call of `af` on `aa` may fail (when `callMayFail` says so). -/
@@ -62,36 +67,39 @@ def opReason (op : BinOp) (a b : AVal A) : String :=
   | _ => s!"the operands may not be integers ({a} and {b})"
 
 /-- The messages for `e`, analysed in `σ` with the hints `H`. `l` has the positions of
-    `e`, and `place` prints a span (`""` for none). -/
-def diagnose (H : Hints A) (place : Span → String) : AEnv A → Expr → Loc → List String
+    `e`, `place` prints a span (`""` for none), and `code` gives the source text of a
+    span (`""` for none). -/
+def diagnose (H : Hints A) (place code : Span → String) :
+    AEnv A → Expr → Loc → List String
   | _, .int _, _ | _, .bool _, _ | _, .unit, _ | _, .nil, _ => []
   | σ, .var x, l => if (σ.lookup x).isNone then [msg l s!"`{clean x}` may be unbound"] else []
   | σ, e@(.binop op a b), l =>
     let va := aeval H σ a
     let vb := aeval H σ b
-    diagnose H place σ a (l.kid 0) ++ diagnose H place σ b (l.kid 1) ++
-      (if opMayFail op va vb then [msg l s!"{snippet e}: {opReason op va vb}"] else [])
+    diagnose H place code σ a (l.kid 0) ++ diagnose H place code σ b (l.kid 1) ++
+      (if opMayFail op va vb then [msg l s!"{snippet code e l}: {opReason op va vb}"] else [])
   | σ, e@(.cons a b), l =>
     let vb := aeval H σ b
-    diagnose H place σ a (l.kid 0) ++ diagnose H place σ b (l.kid 1) ++
+    diagnose H place code σ a (l.kid 0) ++ diagnose H place code σ b (l.kid 1) ++
       (if vb.within Flat.listV then []
-       else [msg l s!"{snippet e}: the tail may not be a list ({vb})"])
+       else [msg l s!"{snippet code e l}: the tail may not be a list ({vb})"])
   | σ, e@(.letin x e1 e2), l =>
     let v1 := aeval H σ e1
     match Overflow.bits? e with
     -- a check that `Overflow.check` adds: its message is about the operation `e1`
     | some bits =>
-      diagnose H place σ e1 (l.kid 0) ++
+      diagnose H place code σ e1 (l.kid 0) ++
         (if mayFail H ((x, v1) :: σ) e2 then
-           [msg l s!"{snippet e1}: may overflow {bits}-bit integers (result: {v1})"]
+           [msg l s!"{snippet code e1 (l.kid 0)}: may overflow {bits}-bit integers (result: {v1})"]
          else [])
-    | none => diagnose H place σ e1 (l.kid 0) ++ diagnose H place ((x, v1) :: σ) e2 (l.kid 1)
-  | σ, .lam x b, l => diagnose H place ((x, AVal.ofFlat (H.param x)) :: σ) b (l.kid 0)
+    | none =>
+      diagnose H place code σ e1 (l.kid 0) ++ diagnose H place code ((x, v1) :: σ) e2 (l.kid 1)
+  | σ, .lam x b, l => diagnose H place code ((x, AVal.ofFlat (H.param x)) :: σ) b (l.kid 0)
   | σ, e@(.app f a), l =>
     let vf := aeval H σ f
     let va := aeval H σ a
-    diagnose H place σ f (l.kid 0) ++ diagnose H place σ a (l.kid 1) ++
-      (if callMayFail vf va then [msg l s!"{snippet e}: {callReason vf va}"] else [])
+    diagnose H place code σ f (l.kid 0) ++ diagnose H place code σ a (l.kid 1) ++
+      (if callMayFail vf va then [msg l s!"{snippet code e l}: {callReason vf va}"] else [])
   | σ, .letrec f x b e2, l =>
     -- the body, assuming that the recursive calls don't fail (as in `mayFail`)
     let P := H.param x
@@ -102,32 +110,32 @@ def diagnose (H : Hints A) (place : Span → String) : AEnv A → Expr → Loc �
         [msg l s!"`{clean f}`: the result of its body is not in the claimed result \
           ({H.result f}), so its calls are unknown"]
       else []
-    diagnose H place ((x, AVal.ofFlat P) :: (f, AVal.summary S) :: σ) b (l.kid 0) ++ rejected ++
-      diagnose H place ((f, vf) :: σ) e2 (l.kid 1)
+    diagnose H place code ((x, AVal.ofFlat P) :: (f, AVal.summary S) :: σ) b (l.kid 0) ++ rejected ++
+      diagnose H place code ((f, vf) :: σ) e2 (l.kid 1)
   | σ, .ite c t e, l =>
     let vc := aeval H σ c
-    diagnose H place σ c (l.kid 0) ++
+    diagnose H place code σ c (l.kid 0) ++
       (if vc.within Flat.anyBool then []
-       else [msg (l.kid 0) s!"{snippet c} may not be a boolean ({vc})"]) ++
-      (if vc.tt then ((σ.assume c true).map (diagnose H place · t (l.kid 1))).getD [] else []) ++
-      (if vc.ff then ((σ.assume c false).map (diagnose H place · e (l.kid 2))).getD [] else [])
+       else [msg (l.kid 0) s!"{snippet code c (l.kid 0)} may not be a boolean ({vc})"]) ++
+      (if vc.tt then ((σ.assume c true).map (diagnose H place code · t (l.kid 1))).getD [] else []) ++
+      (if vc.ff then ((σ.assume c false).map (diagnose H place code · e (l.kid 2))).getD [] else [])
   | σ, e@(.assert c), l =>
     let vc := aeval H σ c
-    diagnose H place σ c (l.kid 0) ++
+    diagnose H place code σ c (l.kid 0) ++
       (if !vc.within Flat.anyBool then
-         [msg l s!"{snippet e}: the condition may not be a boolean ({vc})"]
-       else if vc.ff then [msg l s!"{snippet e} may fail"]
+         [msg l s!"{snippet code e l}: the condition may not be a boolean ({vc})"]
+       else if vc.ff then [msg l s!"{snippet code e l} may fail"]
        else [])
   | σ, e@(.matchList s n x xs c), l =>
     let vs := aeval H σ s
-    diagnose H place σ s (l.kid 0) ++
-      (if vs.within Flat.listV then [] else [msg l s!"{snippet e}: may not match a list ({vs})"]) ++
-      (if vs.mayBeNil then diagnose H place σ n (l.kid 1) else []) ++
+    diagnose H place code σ s (l.kid 0) ++
+      (if vs.within Flat.listV then [] else [msg l s!"{snippet code e l}: may not match a list ({vs})"]) ++
+      (if vs.mayBeNil then diagnose H place code σ n (l.kid 1) else []) ++
       (if vs.heads.leq Flat.bot then []
-       else diagnose H place ((xs, vs.tails) :: (x, AVal.ofFlat vs.heads) :: σ) c (l.kid 2))
-  | σ, .exn _ a, l => diagnose H place σ a (l.kid 0)
+       else diagnose H place code ((xs, vs.tails) :: (x, AVal.ofFlat vs.heads) :: σ) c (l.kid 2))
+  | σ, .exn _ a, l => diagnose H place code σ a (l.kid 0)
   -- `raise`, `try`, arrays and refs (`mayFail` says `true`)
-  | _, e, l => [msg l s!"{snippet e}: not analysed yet, so it may fail"]
+  | _, e, l => [msg l s!"{snippet code e l}: not analysed yet, so it may fail"]
 where
   /-- `m`, after the position of `l` if `place` prints one. -/
   msg (l : Loc) (m : String) : String :=
@@ -138,12 +146,14 @@ where
     can't fail. `σ` gives the values of the variables that `e` uses without
     defining them (`[]` for a complete program). `inferHints` infers the hints, but
     uses the hints of `fixed` unchanged. The report still checks the hints of
-    `fixed`. `l` has the positions of `e`, and `place` prints a span (`""` for none). -/
+    `fixed`. `l` has the positions of `e`, `place` prints a span (`""` for none), and
+    `code` gives the source text of a span (`""` for none). -/
 def report (σ : AEnv A) (e : Expr) (fixed : Hints A := []) (l : Loc := default)
-    (place : Span → String := fun _ => "") : List String :=
+    (place : Span → String := fun _ => "") (code : Span → String := fun _ => "") :
+    List String :=
   let H := inferHints σ e fixed
   if mayFail H σ e then
-    match diagnose H place σ e l with
+    match diagnose H place code σ e l with
     | [] => ["may fail"]   -- not expected: `diagnose` follows `mayFail`
     | ds => ds
   else ["no runtime error is possible"]

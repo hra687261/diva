@@ -45,7 +45,7 @@ def always (answer : String) : String → Id String := fun _ => answer
 -- no fact: the oracle is asked once
 #guard (Commands.checkOracle (always (facts [])) 3 src).out ==
   ["round 1: the oracle proposes", "  nothing", "rejected",
-   "`(10 / (f 0))`: possible division by zero (divisor: [-5, +∞])"]
+   "`10 / f 0`: possible division by zero (divisor: [-5, +∞])"]
 -- a safe program: the oracle isn't asked
 #guard (Commands.checkOracle (always "") 3 "10 / 2").out == ["no runtime error is possible"]
 
@@ -57,5 +57,5 @@ def always (answer : String) : String → Id String := fun _ => answer
   | .ok ⟨e, l⟩ =>
     let lines := (prompt ([] : AEnv Itv) e [] none (some ⟨"f.ml", src, l⟩)).splitOn "\n"
     lines.contains "  ;; 10 / f 0" &&
-      lines.contains "  f.ml:2:3-11: `(10 / (f 0))`: possible division by zero (divisor: [-5, +∞])"
+      lines.contains "  f.ml:2:3-11: `10 / f 0`: possible division by zero (divisor: [-5, +∞])"
   | .error _ => false

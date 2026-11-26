@@ -3,10 +3,10 @@ $ diva ocaml run order.ml
 [exit 0]
 
 $ diva ocaml check order.ml
-order.ml:7:17-24: `(raise A)`: not analysed yet, so it may fail
-order.ml:8:17-24: `(raise B)`: not analysed yet, so it may fail
-order.ml:9:14-19: `(a - b)`: the operands may not be integers (⊤ and ⊤)
-order.ml:11:3-45: `(try (let %t2 = (g ()) in (let %t1 = (f ()) in ((sub %t1)...`: not analysed yet, so it may fail
+order.ml:7:17-24: `raise A`: not analysed yet, so it may fail
+order.ml:8:17-24: `raise B`: not analysed yet, so it may fail
+order.ml:9:14-19: `a - b`: the operands may not be integers (⊤ and ⊤)
+order.ml:11:3-45: `try sub (f ()) (g ()) with A -> 1 | B -> 2`: not analysed yet, so it may fail
 [exit 1]
 
 $ diva ocaml opt order.ml

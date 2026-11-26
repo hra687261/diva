@@ -3,8 +3,8 @@ runtime error: assertion failed
 [exit 1]
 
 $ diva check synth.ml
-synth.ml:3:12-24: `(assert false)` may fail
-synth.ml:7:3-14: `(abs (0 - 7))`: the function called may fail
+synth.ml:3:12-24: `assert false` may fail
+synth.ml:7:3-14: `abs (0 - 7)`: the function called may fail
 [exit 1]
 
 $ diva opt synth.ml

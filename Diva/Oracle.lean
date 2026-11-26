@@ -79,6 +79,9 @@ def prompt (σ : AEnv A) (e : Expr) (fixed : Hints A) (rejected : Option String)
   let place (sp : Span) : String := match src with
     | none => ""
     | some s => sp.format s.text s.file
+  let code (sp : Span) : String := match src with
+    | none => ""
+    | some s => sp.text s.text
   let loc := (src.map (·.loc)).getD default
   let positions := if src.isSome then " (`file:line:col-col`, lines from 1, columns from 0)" else ""
   s!"DIVA, a verifier for a small ML-like language, can't prove that this program never
@@ -91,7 +94,7 @@ unique name):
 
 Where it may fail{positions}:
 
-{"\n".intercalate ((Report.report σ e fixed loc place).map ("  " ++ ·))}
+{"\n".intercalate ((Report.report σ e fixed loc place code).map ("  " ++ ·))}
 
 What DIVA knows about the values (`x` is the parameter `x`, `$f` is the result of the
 function `f`):

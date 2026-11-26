@@ -94,6 +94,17 @@ def trimEnd (src : String) (start stop : Nat) : Nat := Id.run do
     prev := c
   return max start last
 
+/-- The text of `src` in the span `s`, on one line: each run of spaces and newlines
+    becomes one space. `""` if `s` isn't a part of `src`. -/
+def Span.text (src : String) (s : Span) : String :=
+  let stop := trimEnd src s.start s.stop
+  let t := (String.fromUTF8? (src.toUTF8.extract s.start stop)).getD ""
+  -- `space`: a space comes before the next character
+  let (out, _) := t.toList.foldl (init := ("", false)) fun (acc, space) c =>
+    if c.isWhitespace then (acc, true)
+    else ((if space && !acc.isEmpty then acc.push ' ' else acc).push c, false)
+  out
+
 /-- `s` as `file:line:col-col`, or `file:line:col-line:col` if it spans several lines,
     as in Lean's messages: lines from 1, columns from 0. -/
 def Span.format (src file : String) (s : Span) : String :=

@@ -60,12 +60,14 @@ def insideLamsLoc (kl : Loc → Loc) : Expr → Loc → Loc
   | _, l => kl l
 
 /-- The positions of `b.withRequires sp`, from the positions `l` of the expression
-    bound by `b`. The checks get the span of the body. -/
+    bound by `b`. The checks get an empty span at the start of the body: they are added
+    there, and have no source text. -/
 def Binding.withRequiresLoc (b : Binding) (l : Loc) : Option Spec → Loc
   | none => l
   | some sp =>
     let check (bl : Loc) : Loc :=
-      sp.requires.foldr (fun _ r => .node bl.span [.node bl.span [.leaf bl.span], r]) bl
+      let start : Span := ⟨bl.span.start, bl.span.start⟩
+      sp.requires.foldr (fun _ r => .node bl.span [.node start [.leaf start], r]) bl
     match b with
     | .val _ e | .recFn _ _ e => insideLamsLoc check e l
 
