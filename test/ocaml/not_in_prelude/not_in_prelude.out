@@ -1,0 +1,42 @@
+$ diva ocaml run not_in_prelude.ml
+error: File "not_in_prelude.ml", line 2, characters 8-37:
+2 | let l = List.sort compare [ 3; 1; 2 ]
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Error: DIVA doesn't support the library function `Stdlib.List.sort`
+[exit 1]
+
+$ diva ocaml check not_in_prelude.ml
+error: File "not_in_prelude.ml", line 2, characters 8-37:
+2 | let l = List.sort compare [ 3; 1; 2 ]
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Error: DIVA doesn't support the library function `Stdlib.List.sort`
+[exit 1]
+
+$ diva ocaml opt not_in_prelude.ml
+error: File "not_in_prelude.ml", line 2, characters 8-37:
+2 | let l = List.sort compare [ 3; 1; 2 ]
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Error: DIVA doesn't support the library function `Stdlib.List.sort`
+[exit 1]
+
+$ diva ocaml hints not_in_prelude.ml
+error: File "not_in_prelude.ml", line 2, characters 8-37:
+2 | let l = List.sort compare [ 3; 1; 2 ]
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Error: DIVA doesn't support the library function `Stdlib.List.sort`
+[exit 1]
+
+$ diva ocaml cert --check not_in_prelude.ml
+error: File "not_in_prelude.ml", line 2, characters 8-37:
+2 | let l = List.sort compare [ 3; 1; 2 ]
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Error: DIVA doesn't support the library function `Stdlib.List.sort`
+[exit 1]
+
+$ diva ocaml prove --check -o prove.lean not_in_prelude.ml
+error: File "not_in_prelude.ml", line 2, characters 8-37:
+2 | let l = List.sort compare [ 3; 1; 2 ]
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Error: DIVA doesn't support the library function `Stdlib.List.sort`
+[exit 1]
+

@@ -94,9 +94,18 @@ def trimEnd (src : String) (start stop : Nat) : Nat := Id.run do
     prev := c
   return max start last
 
+/-- The span of code that isn't in the file: the code of the prelude of the OCaml
+    frontend (`frontend/ocaml/prelude.ml`). Its `stop` is before its `start`, so it
+    can't be confused with a span of the file. -/
+def Span.prelude : Span := ⟨1, 0⟩
+
+/-- `s` is the span of code that isn't in the file (`Span.prelude`). -/
+def Span.inPrelude (s : Span) : Bool := s.stop < s.start
+
 /-- The text of `src` in the span `s`, on one line: each run of spaces and newlines
     becomes one space. `""` if `s` isn't a part of `src`. -/
 def Span.text (src : String) (s : Span) : String :=
+  if s.inPrelude then "" else
   let stop := trimEnd src s.start s.stop
   let t := (String.fromUTF8? (src.toUTF8.extract s.start stop)).getD ""
   -- `space`: a space comes before the next character
@@ -106,8 +115,9 @@ def Span.text (src : String) (s : Span) : String :=
   out
 
 /-- `s` as `file:line:col-col`, or `file:line:col-line:col` if it spans several lines,
-    as in Lean's messages: lines from 1, columns from 0. -/
+    as in Lean's messages: lines from 1, columns from 0. Code of the prelude is `prelude`. -/
 def Span.format (src file : String) (s : Span) : String :=
+  if s.inPrelude then "prelude" else
   let (l1, c1) := lineCol src s.start
   let (l2, c2) := lineCol src (trimEnd src s.start s.stop)
   if l1 == l2 then s!"{file}:{l1}:{c1}-{c2}" else s!"{file}:{l1}:{c1}-{l2}:{c2}"

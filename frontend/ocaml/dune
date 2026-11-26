@@ -3,4 +3,14 @@
 
 (executable
  (name frontend)
+ (modules frontend prelude_text)
  (libraries compiler-libs.common))
+
+; the text of the prelude, as the string `Prelude_text.text`
+(rule
+ (with-stdout-to
+  prelude_text.ml
+  (progn
+   (echo "let text = {diva|")
+   (cat prelude.ml)
+   (echo "|diva}\n"))))

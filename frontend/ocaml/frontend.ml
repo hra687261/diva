@@ -11,6 +11,10 @@
    recursive function, ... So on a program in DIVA's syntax, [diva ocaml print] and
    [diva print] give almost the same program.
 
+   The library functions that the program uses and that DIVA doesn't have are written in
+   OCaml, in the prelude ([prelude.ml]). The frontend translates the prelude, and adds the
+   functions of the prelude that the program uses before the program.
+
    Build: frontend/ocaml/build.sh *)
 
 open Typedtree
@@ -82,6 +86,81 @@ let op_name = function
   | Gt -> "gt"
   | Ge -> "ge"
 
+(* A function of the prelude. *)
+type prelude_fn = {
+  id : Ident.t;  (** its name in the prelude's code *)
+  name : string;
+      (** its name in DIVA: the name of the library function it replaces, such
+          as [Stdlib.List.length] *)
+  item : item;
+  deps : prelude_fn list;  (** the functions of the prelude that it uses *)
+  inline : (string list * expr) option;
+      (** [[@diva.inline]]: its parameters and its body, copied at each call *)
+}
+(* TODO: a smarter data structure to represent the prelude functions it uses *)
+
+(* A library function that the translation knows. *)
+type library_fn =
+  | Op of op  (** [+], [=], ... *)
+  | Const of int64  (** [max_int], [Int32.zero], ... *)
+  | And
+  | Or
+  | Not
+  | Neg  (** [~-] *)
+  | Ref
+  | Deref
+  | Assign
+  | Incr
+  | Decr
+  | Raise
+  | Failwith
+  | Invalid_arg
+  | Ignore
+  | Output
+      (** [print_int], ...: DIVA computes the argument and prints nothing *)
+  | Char_code
+  | Int_op of int * op
+      (** [Int32.add], ...: an operation on integers of [bits] bits *)
+  | Int_neg of int
+  | Of_int of int
+      (** [Int32.of_int]: from an [int] to integers of [bits] bits *)
+  | To_int of int
+      (** [Int64.to_int]: from integers of [bits] bits to an [int] *)
+  | Array_make
+  | Array_length
+  | Array_get
+  | Array_set
+  | Prelude of prelude_fn
+
+(**** State ****)
+
+(* The mutable values of the translation. *)
+
+(* The code being translated is the prelude, which isn't in the file. *)
+let in_prelude = ref false
+
+(* The library functions that the translation knows, by their path. The functions of
+   the prelude are added when the prelude is translated. *)
+let library_paths : library_fn Path.Map.t ref = ref Path.Map.empty
+
+(* The functions of the prelude translated so far, by their [Ident.t]. *)
+let prelude_fns : prelude_fn Ident.Tbl.t = Ident.Tbl.create 64
+
+(* The DIVA names of the functions of the prelude, by their [Ident.t]. A function's name
+   is recorded before its code is translated: a recursive function uses its own name. *)
+let prelude_names : string Ident.Tbl.t = Ident.Tbl.create 64
+
+(* The modules of the prelude, such as [List], with their functions. *)
+let prelude_modules : prelude_fn list Ident.Tbl.t = Ident.Tbl.create 4
+
+(* The functions of the prelude that the code translated so far uses. *)
+let used : prelude_fn list ref = ref []
+
+(* The constructors seen so far, by name: an exception or the type of the variant. *)
+let ctors : (string, string) Hashtbl.t = Hashtbl.create 16
+
+(* TODO: maybe use a record to represent the state *)
+
 (**** S-expressions ****)
 
 type sexp = Atom of string | Str of string | List of sexp list
@@ -105,13 +184,19 @@ let rec print buf = function
         xs;
       Buffer.add_char buf ')'
 
-(* [e] as [(KIND START STOP args...)], for its part of the file. *)
+(* [e] as [(KIND START STOP args...)], for its part of the file. Code of the prelude has
+   no location ([Location.none]) and gets the span [1 0], which DIVA reads as "not in
+   the file" ([Span.prelude]). *)
 let rec to_sexp (e : expr) =
+  let start, stop =
+    if e.loc = Location.none then (1, 0)
+    else (e.loc.loc_start.pos_cnum, e.loc.loc_end.pos_cnum)
+  in
   let node kind args =
     List
       (Atom kind
-      :: Atom (string_of_int e.loc.loc_start.pos_cnum)
-      :: Atom (string_of_int e.loc.loc_end.pos_cnum)
+      :: Atom (string_of_int start)
+      :: Atom (string_of_int stop)
       :: args)
   in
   let s = to_sexp in
@@ -155,7 +240,9 @@ let item_to_sexp = function
 
 (**** Building expressions ****)
 
-let mk loc desc = { loc; desc }
+(* The expression [desc], from the part [loc] of the file. Code of the prelude gets no
+   location. *)
+let mk loc desc = { loc = (if !in_prelude then Location.none else loc); desc }
 let var loc x = mk loc (Var x)
 let int loc n = mk loc (Int (Int64.of_int n))
 let bool loc b = mk loc (Bool b)
@@ -171,12 +258,16 @@ let overflow loc bits e = mk loc (Overflow (bits, e))
 let arith loc bits op a b = overflow loc bits (binop loc op a b)
 
 (* A new name. Names that start with [%] can't be written in OCaml, so they hide no
-   name of the program. *)
+   name of the program. The new names of the prelude's code are [%pN], and those of the
+   program are [%tN]. So the copies of the prelude's code in the program
+   ([[@diva.inline]]) hide no new name of the program. *)
 let fresh =
-  let n = ref 0 in
+  let t = ref 0 in
+  let p = ref 0 in
   fun () ->
+    let n = if !in_prelude then p else t in
     incr n;
-    Printf.sprintf "%%t%d" !n
+    Printf.sprintf (if !in_prelude then "%%p%d" else "%%t%d") !n
 
 (**** Types ****)
 
@@ -198,73 +289,88 @@ let kind env ty =
   | Tvar _ -> `Var
   | _ -> `Other
 
-(**** Expressions ****)
+(**** Library functions ****)
 
-(* The operators of DIVA. DIVA's [=] and [<>] work on integers, booleans and [()], and
-   its other comparisons only on integers. On other values, they stop the program with a
-   type error. So a comparison on another type is rejected: it would always fail. On a
-   type variable ['a], it is accepted: DIVA's result is OCaml's, or a failure that DIVA
-   reports. *)
-let binops =
+(* The library functions that the translation knows, other than the functions of the
+   prelude, by their names in [Stdlib]. DIVA's [=] and [<>] work on integers, booleans
+   and [()], and its other comparisons only on integers. *)
+let library_names =
+  let int_module (m, bits, min, max) =
+    [
+      (m ^ ".add", Int_op (bits, Add));
+      (m ^ ".sub", Int_op (bits, Sub));
+      (m ^ ".mul", Int_op (bits, Mul));
+      (m ^ ".div", Int_op (bits, Div));
+      (m ^ ".rem", Int_op (bits, Mod));
+      (m ^ ".neg", Int_neg bits);
+      (m ^ ".of_int", Of_int bits);
+      (m ^ ".to_int", To_int bits);
+      (m ^ ".zero", Const 0L);
+      (m ^ ".one", Const 1L);
+      (m ^ ".minus_one", Const (-1L));
+      (m ^ ".max_int", Const max);
+      (m ^ ".min_int", Const min);
+    ]
+  in
   [
-    ("Stdlib.+", Add);
-    ("Stdlib.-", Sub);
-    ("Stdlib.*", Mul);
-    ("Stdlib./", Div);
-    ("Stdlib.mod", Mod);
-    ("Stdlib.=", Eq);
-    ("Stdlib.<>", Ne);
-    ("Stdlib.<", Lt);
-    ("Stdlib.<=", Le);
-    ("Stdlib.>", Gt);
-    ("Stdlib.>=", Ge);
+    ("+", Op Add);
+    ("-", Op Sub);
+    ("*", Op Mul);
+    ("/", Op Div);
+    ("mod", Op Mod);
+    ("=", Op Eq);
+    ("<>", Op Ne);
+    ("<", Op Lt);
+    ("<=", Op Le);
+    (">", Op Gt);
+    (">=", Op Ge);
+    ("max_int", Const (Int64.of_int max_int));
+    ("min_int", Const (Int64.of_int min_int));
+    ("&&", And);
+    ("||", Or);
+    ("not", Not);
+    ("~-", Neg);
+    ("ref", Ref);
+    ("!", Deref);
+    (":=", Assign);
+    ("incr", Incr);
+    ("decr", Decr);
+    ("raise", Raise);
+    ("failwith", Failwith);
+    ("invalid_arg", Invalid_arg);
+    ("ignore", Ignore);
+    ("print_int", Output);
+    ("print_string", Output);
+    ("print_endline", Output);
+    ("print_newline", Output);
+    ("print_char", Output);
+    ("Char.code", Char_code);
+    ("Array.make", Array_make);
+    ("Array.length", Array_length);
+    ("Array.get", Array_get);
+    ("Array.set", Array_set);
   ]
+  @ int_module
+      ("Int32", 32, Int64.of_int32 Int32.min_int, Int64.of_int32 Int32.max_int)
+  @ int_module ("Int64", 64, Int64.min_int, Int64.max_int)
 
-(* The integer constants of the library. *)
-let constants =
-  [
-    ("Stdlib.max_int", Int64.of_int max_int);
-    ("Stdlib.min_int", Int64.of_int min_int);
-    ("Stdlib.Int32.zero", 0L);
-    ("Stdlib.Int32.one", 1L);
-    ("Stdlib.Int32.minus_one", -1L);
-    ("Stdlib.Int32.max_int", Int64.of_int32 Int32.max_int);
-    ("Stdlib.Int32.min_int", Int64.of_int32 Int32.min_int);
-    ("Stdlib.Int64.zero", 0L);
-    ("Stdlib.Int64.one", 1L);
-    ("Stdlib.Int64.minus_one", -1L);
-    ("Stdlib.Int64.max_int", Int64.max_int);
-    ("Stdlib.Int64.min_int", Int64.min_int);
-  ]
+(* The path of the value [Stdlib.parts] in [env], if there is one. *)
+let stdlib_path env parts =
+  match Longident.unflatten ("Stdlib" :: parts) with
+  | Some lid -> (
+      match Env.find_value_by_name lid env with
+      | p, _ -> Some p
+      | exception Not_found -> None)
+  | None -> None
 
-(* The modules of integers with a fixed number of bits other than [int]'s 63, and
-   their functions: [Int32.add], ... *)
-let int_modules = [ ("Stdlib.Int32.", 32); ("Stdlib.Int64.", 64) ]
-
-let int_functions =
-  [ ("add", Add); ("sub", Sub); ("mul", Mul); ("div", Div); ("rem", Mod) ]
-
-(* The module of [p] in [int_modules], with its number of bits, and the name of [p] in
-   it: [Stdlib.Int32.add] gives [32] and [add]. *)
-let int_module p =
-  List.find_map
-    (fun (m, bits) ->
-      if String.starts_with ~prefix:m p then
-        Some
-          ( bits,
-            String.sub p (String.length m) (String.length p - String.length m)
-          )
-      else None)
-    int_modules
-
-let output_functions =
-  [
-    "Stdlib.print_int";
-    "Stdlib.print_string";
-    "Stdlib.print_endline";
-    "Stdlib.print_newline";
-    "Stdlib.print_char";
-  ]
+(* Fill [library_paths] with [library_names]. *)
+let init_library env =
+  List.iter
+    (fun (name, f) ->
+      match stdlib_path env (String.split_on_char '.' name) with
+      | Some p -> library_paths := Path.Map.add p f !library_paths
+      | None -> failwith ("no library function Stdlib." ^ name))
+    library_names
 
 (* The name of [p], such as [Stdlib.mod], from its parts. [Path.name] writes a keyword
    used as a name after [\#]: [Stdlib.\#mod]. *)
@@ -273,33 +379,67 @@ let path_name p =
   | `Ok (id, parts) -> String.concat "." (Ident.name id :: parts)
   | `Contains_apply -> Path.name p
 
-(* The name of the library function [f], if [f] is one, such as [Stdlib.+]. *)
-let library f =
-  match f.exp_desc with
-  | Texp_ident ((Path.Pdot _ as p), _, _) -> Some (path_name p)
-  | _ -> None
+(**** The prelude ****)
 
-(* The library functions that can fail on integers only by overflow: [/] and [mod]
-   also fail on [0]. An overflow is a failed check, a fatal error. *)
-let total = [ "Stdlib.+"; "Stdlib.-"; "Stdlib.*"; "Stdlib.~-" ]
+(* A function of the prelude has the name of the library function it replaces:
+   [Stdlib.List.length]. The program can't define such a name, so it hides no function
+   of the prelude. *)
+
+(* The name of [id] in DIVA: its name in [prelude_names], or its name in OCaml. *)
+let local_name id =
+  match Ident.Tbl.find_opt prelude_names id with
+  | Some n -> n
+  | None -> Ident.name id
+
+(* The library function [p], if the translation knows it. In the prelude's code, a
+   function of a module [M] of the prelude is [M.f]: a [Path.Pdot] on [M], with the name
+   [f]. *)
+let known p =
+  match p with
+  | Path.Pident id ->
+      Option.map (fun f -> Prelude f) (Ident.Tbl.find_opt prelude_fns id)
+  | Path.Pdot (Path.Pident m, x) when Ident.Tbl.mem prelude_modules m ->
+      List.find_opt
+        (fun f -> Ident.name f.id = x)
+        (Ident.Tbl.find prelude_modules m)
+      |> Option.map (fun f -> Prelude f)
+  | p -> Path.Map.find_opt p !library_paths
+
+(* The name of [f], recorded in [used]. *)
+let use f =
+  if not (List.memq f !used) then used := f :: !used;
+  f.name
+
+(* The expression or the binding has the attribute [[@name]]. *)
+let has_attribute name (attrs : Parsetree.attributes) =
+  List.exists (fun (a : Parsetree.attribute) -> a.attr_name.txt = name) attrs
+
+(* The library function [f], if [f] is one that the translation knows. *)
+let library f =
+  match f.exp_desc with Texp_ident (p, _, _) -> known p | _ -> None
 
 (* [e] is computed without any effect: no error but an overflow, no read or change of
    the store, and it finishes. So it can be computed earlier or later: if two parts
    overflow, both orders give the same error. In a program that DIVA proves never
-   fails, nothing overflows. *)
+   fails, nothing overflows. [+], [-], [*] and [~-] can fail only by overflow, which is
+   a failed check, a fatal error. [/] and [mod] also fail on [0]. *)
 let rec trivial e =
   match e.exp_desc with
   | Texp_ident (Path.Pident _, _, _) | Texp_constant _ | Texp_function _ -> true
+  | Texp_ident (p, _, _) -> (
+      match known p with Some (Prelude _) -> true | _ -> false)
   | Texp_construct (_, _, args) -> List.for_all trivial args
   | Texp_tuple es -> List.for_all (fun (_, e) -> trivial e) es
   | Texp_apply (f, args) -> (
       match library f with
-      | Some p when List.mem p total ->
+      | Some (Op (Add | Sub | Mul) | Neg) ->
           List.for_all
             (function Asttypes.Nolabel, Arg a -> trivial a | _ -> false)
             args
       | _ -> false)
   | _ -> false
+
+(**** Expressions ****)
 
 (* The name bound by the pattern [p], if [p] is a name, [_] or [()]. *)
 let simple_name (p : pattern) =
@@ -321,9 +461,6 @@ let pat_name (p : pattern) =
 (* A value of a variant type, such as [option], and an exception are constructors applied
    to an argument: [C] is [Ctor ("C", unit)], [C a] is [Ctor ("C", a)], and [C (a, b)] is
    [Ctor ("C", (a, b))]. A tuple [(a, b)] is [Ctor ("%2", [a; b])]. *)
-
-(* The constructors seen so far, by name: an exception or the type of the variant. *)
-let ctors : (string, string) Hashtbl.t = Hashtbl.create 16
 
 (* The name of the constructor [cd]. DIVA tells constructors apart by their name
    only, so two constructors with the same name are rejected. *)
@@ -369,12 +506,19 @@ let match_failure loc =
 let rec expr (e : expression) : expr =
   let loc = e.exp_loc in
   match e.exp_desc with
-  | Texp_ident (Path.Pident id, _, _) -> var loc (Ident.name id)
-  | Texp_ident (p, _, _) when List.mem_assoc (path_name p) constants ->
-      mk loc (Int (List.assoc (path_name p) constants))
-  | Texp_ident (p, _, _) ->
-      unsupported loc "the library function `%s`, except when it is called"
-        (path_name p)
+  | Texp_ident (p, _, _) -> (
+      match (p, known p) with
+      | _, Some (Prelude f) -> var loc (use f)
+      | Path.Pident id, _ -> var loc (local_name id)
+      (* an operator that isn't called, such as [( + )]: [fun a -> fun b -> a + b] *)
+      | _, Some (Op op) ->
+          let a = fresh () and b = fresh () in
+          mk loc
+            (Lam (a, mk loc (Lam (b, arith loc 63 op (var loc a) (var loc b)))))
+      | _, Some (Const n) -> mk loc (Int n)
+      | _ ->
+          unsupported loc "the library function `%s`, except when it is called"
+            (path_name p))
   | Texp_constant (Const_int n) -> int loc n
   | Texp_constant (Const_int32 n) -> mk loc (Int (Int64.of_int32 n))
   | Texp_constant (Const_int64 n) -> mk loc (Int n)
@@ -399,7 +543,9 @@ let rec expr (e : expression) : expr =
         | Asttypes.Nolabel, Arg a -> a
         | _ -> unsupported loc "labelled and optional arguments"
       in
-      apply loc f (List.map arg args)
+      (* [[@diva.unchecked]]: no overflow check (in the prelude) *)
+      let checked = not (has_attribute "diva.unchecked" e.exp_attributes) in
+      apply ~checked loc f (List.map arg args)
   | Texp_ifthenelse (c, t, f) ->
       let c = expr c in
       let t = expr t in
@@ -515,7 +661,11 @@ and lams loc params body =
 
 (* [let rec f x = b]: the name of the function, its first parameter, and the rest. *)
 and rec_fun vb =
-  let f = pat_name vb.vb_pat in
+  let f =
+    match vb.vb_pat.pat_desc with
+    | Tpat_var (id, _, _) -> local_name id
+    | _ -> pat_name vb.vb_pat
+  in
   match vb.vb_expr.exp_desc with
   | Texp_function _ -> (
       match expr vb.vb_expr with
@@ -555,70 +705,91 @@ and with_name loc e k =
     let x = fresh () in
     letin loc x (expr e) (k (var loc x))
 
-(* The call [f args]. *)
-and apply loc f args =
+(* The call [f args]. Its operations on integers are checked for overflow if [checked]. *)
+and apply ?(checked = true) loc f args =
   let two a b k =
     ordered loc [ a; b ] (function [ a; b ] -> k a b | _ -> assert false)
   in
+  let call () =
+    ordered loc (f :: args) (function
+      | f :: args -> List.fold_left (app loc) f args
+      | [] -> assert false)
+  in
+  (* the name of the library function [f], for the errors *)
+  let name () =
+    match f.exp_desc with Texp_ident (p, _, _) -> path_name p | _ -> "?"
+  in
   match (library f, args) with
-  | Some p, [ a; b ] when List.mem_assoc p binops ->
-      let op = List.assoc p binops in
+  | Some (Op op), [ a; b ] ->
+      (* On other values than these, DIVA's operators stop the program with a type
+         error, so the operation is rejected: it would always fail. On a type
+         variable ['a], it is accepted: DIVA's result is OCaml's, or a failure that
+         DIVA reports. *)
       (match (op, kind a.exp_env a.exp_type) with
       | _, (`Int | `Var) | (Eq | Ne), (`Bool | `Unit) -> ()
-      | _ -> unsupported loc "`%s` on this type" p);
-      two a b (fun a b -> arith loc 63 op a b)
-  | Some "Stdlib.&&", [ a; b ] ->
+      | _ -> unsupported loc "`%s` on this type" (name ()));
+      two a b (fun a b ->
+          if checked then arith loc 63 op a b else binop loc op a b)
+  | Some And, [ a; b ] ->
       let a = expr a in
       ite loc a (expr b) (bool loc false)
-  | Some "Stdlib.||", [ a; b ] ->
+  | Some Or, [ a; b ] ->
       let a = expr a in
       ite loc a (bool loc true) (expr b)
-  | Some "Stdlib.not", [ a ] ->
-      ite loc (expr a) (bool loc false) (bool loc true)
-  | Some "Stdlib.~-", [ a ] ->
-      overflow loc 63 (binop loc Sub (int loc 0) (expr a))
-  | Some "Stdlib.ref", [ v ] -> mk loc (Ref (expr v))
-  | Some "Stdlib.!", [ r ] -> mk loc (Deref (expr r))
-  | Some "Stdlib.:=", [ r; v ] -> two r v (fun r v -> mk loc (Assign (r, v)))
-  | Some (("Stdlib.incr" | "Stdlib.decr") as p), [ r ] ->
-      let op = if p = "Stdlib.incr" then Add else Sub in
+  | Some Not, [ a ] -> ite loc (expr a) (bool loc false) (bool loc true)
+  | Some Neg, [ a ] -> overflow loc 63 (binop loc Sub (int loc 0) (expr a))
+  | Some Ref, [ v ] -> mk loc (Ref (expr v))
+  | Some Deref, [ r ] -> mk loc (Deref (expr r))
+  | Some Assign, [ r; v ] -> two r v (fun r v -> mk loc (Assign (r, v)))
+  | Some ((Incr | Decr) as g), [ r ] ->
+      let op = if g = Incr then Add else Sub in
       with_name loc r (fun r ->
           mk loc (Assign (r, arith loc 63 op (mk loc (Deref r)) (int loc 1))))
-  | Some "Stdlib.raise", [ v ] -> mk loc (Raise (expr v))
-  | Some "Stdlib.failwith", [ s ] ->
-      mk loc (Raise (mk loc (Ctor ("Failure", arg s))))
-  | Some "Stdlib.invalid_arg", [ s ] ->
+  | Some Raise, [ v ] -> mk loc (Raise (expr v))
+  | Some Failwith, [ s ] -> mk loc (Raise (mk loc (Ctor ("Failure", arg s))))
+  | Some Invalid_arg, [ s ] ->
       mk loc (Raise (mk loc (Ctor ("Invalid_argument", arg s))))
-  | Some "Stdlib.ignore", [ a ] -> seq loc (expr a) (unit loc)
-  | Some p, [ a ] when List.mem p output_functions -> seq loc (arg a) (unit loc)
-  | Some "Stdlib.Char.code", [ a ] -> expr a
-  | Some p, _ when Option.is_some (int_module p) -> (
-      let bits, name = Option.get (int_module p) in
-      match (name, args) with
-      | n, [ a; b ] when List.mem_assoc n int_functions ->
-          two a b (fun a b -> arith loc bits (List.assoc n int_functions) a b)
-      | "neg", [ a ] -> overflow loc bits (binop loc Sub (int loc 0) (expr a))
-      (* [Int32.of_int] wraps an [int] that doesn't fit in 32 bits *)
-      | "of_int", [ a ] ->
-          if bits < 63 then overflow loc bits (expr a) else expr a
-      (* [Int64.to_int] wraps an [Int64.t] that doesn't fit in 63 bits *)
-      | "to_int", [ a ] ->
-          if bits > 63 then overflow loc 63 (expr a) else expr a
-      | _ -> unsupported loc "the library function `%s`" p)
-  | Some "Stdlib.Array.make", [ n; v ] ->
-      two n v (fun n v -> mk loc (Alloc (n, v)))
-  | Some "Stdlib.Array.length", [ a ] -> mk loc (Len (expr a))
-  | Some "Stdlib.Array.get", [ a; i ] ->
-      two a i (fun a i -> mk loc (Get (a, i)))
-  | Some "Stdlib.Array.set", [ a; i; v ] ->
+  | Some Ignore, [ a ] -> seq loc (expr a) (unit loc)
+  | Some Output, [ a ] -> seq loc (arg a) (unit loc)
+  | Some Char_code, [ a ] -> expr a
+  | Some (Int_op (bits, op)), [ a; b ] ->
+      two a b (fun a b -> arith loc bits op a b)
+  | Some (Int_neg bits), [ a ] ->
+      overflow loc bits (binop loc Sub (int loc 0) (expr a))
+  (* [Int32.of_int] wraps an [int] that doesn't fit in 32 bits *)
+  | Some (Of_int bits), [ a ] ->
+      if bits < 63 then overflow loc bits (expr a) else expr a
+  (* [Int64.to_int] wraps an [Int64.t] that doesn't fit in 63 bits *)
+  | Some (To_int bits), [ a ] ->
+      if bits > 63 then overflow loc 63 (expr a) else expr a
+  | Some Array_make, [ n; v ] -> two n v (fun n v -> mk loc (Alloc (n, v)))
+  | Some Array_length, [ a ] -> mk loc (Len (expr a))
+  | Some Array_get, [ a; i ] -> two a i (fun a i -> mk loc (Get (a, i)))
+  | Some Array_set, [ a; i; v ] ->
       ordered loc [ a; i; v ] (function
         | [ a; i; v ] -> mk loc (Set (a, i, v))
         | _ -> assert false)
-  | Some p, _ -> unsupported loc "the library function `%s`" p
-  | None, _ ->
-      ordered loc (f :: args) (function
-        | f :: args -> List.fold_left (app loc) f args
-        | [] -> assert false)
+  | Some (Prelude { inline = Some (ps, body); deps; _ }), _
+    when List.length ps = List.length args ->
+      (* a copy of the code of the function. Each argument gets a new name, and the
+         arguments are computed from the last to the first, as in OCaml. Then each
+         parameter is defined as its argument. *)
+      List.iter (fun g -> ignore (use g)) deps;
+      let args = List.map (fun a -> (fresh (), expr a)) args in
+      let body =
+        List.fold_right2
+          (fun p (x, _) b -> letin loc p (var loc x) b)
+          ps args body
+      in
+      List.fold_left (fun b (x, a) -> letin loc x a b) body args
+  | Some (Prelude _), _ -> call ()
+  (* a known library function with other arguments, or another one *)
+  | Some _, _ -> unsupported loc "the library function `%s`" (name ())
+  | None, _ -> (
+      match f.exp_desc with
+      | Texp_ident (Path.Pdot _, _, _) ->
+          unsupported loc "the library function `%s`" (name ())
+      | _ -> call ())
 
 (* [match s with cases]. *)
 and match_ loc s cases =
@@ -856,7 +1027,79 @@ let item src comments next (si : structure_item) =
   | Tstr_exception _ | Tstr_type _ | Tstr_attribute _ -> []
   | _ -> unsupported si.str_loc "this declaration"
 
-let program src comments (str : structure) =
+(* The functions of the prelude [str], in order. [env] is the environment of the
+   program: each function that replaces a library function is added to [library_paths],
+   with the path of the library function in [env]. *)
+let prelude_fns_of env (str : structure) =
+  (* [fun x1 -> ... -> fun xn -> body]: the parameters [x1 ... xn] and [body] *)
+  let rec params e =
+    match e.desc with
+    | Lam (x, b) ->
+        let xs, body = params b in
+        (x :: xs, body)
+    | _ -> ([], e)
+  in
+  (* [path]: the modules of the prelude that contain [str], such as [["List"]] *)
+  let rec items path (str : structure) =
+    List.concat_map
+      (fun si ->
+        match si.str_desc with
+        | Tstr_value
+            ( flag,
+              [ ({ vb_pat = { pat_desc = Tpat_var (id, _, _); _ }; _ } as vb) ]
+            ) ->
+            let parts = path @ [ Ident.name id ] in
+            let name = String.concat "." ("Stdlib" :: parts) in
+            Ident.Tbl.replace prelude_names id name;
+            used := [];
+            let item =
+              match flag with
+              | Nonrecursive -> Let_item (name, expr vb.vb_expr, None)
+              | Recursive ->
+                  let _, x, b = rec_fun vb in
+                  Letrec_item (name, x, b, None)
+            in
+            let inline =
+              if has_attribute "diva.inline" vb.vb_attributes then
+                match item with
+                | Let_item (_, e, _) -> Some (params e)
+                | _ ->
+                    failwith "the prelude has a `let rec` with [@diva.inline]"
+              else None
+            in
+            let f = { id; name; item; deps = !used; inline } in
+            Ident.Tbl.replace prelude_fns id f;
+            (match stdlib_path env parts with
+            | Some p ->
+                library_paths := Path.Map.add p (Prelude f) !library_paths
+            | None -> ());
+            [ f ]
+        | Tstr_module
+            { mb_id = Some m; mb_expr = { mod_desc = Tmod_structure s; _ }; _ }
+          ->
+            let fs = items (path @ [ Ident.name m ]) s in
+            Ident.Tbl.replace prelude_modules m fs;
+            fs
+        | _ -> failwith "the prelude has only `let`s of names and modules")
+      str.str_items
+  in
+  in_prelude := true;
+  let fs = items [] str in
+  in_prelude := false;
+  fs
+
+(* The items of the functions of the prelude [prelude] that [fs] use, and those that
+   these use, in order. *)
+let needed prelude fs =
+  let rec add need f =
+    if List.memq f need then need else List.fold_left add (f :: need) f.deps
+  in
+  let need = List.fold_left add [] fs in
+  List.filter_map
+    (fun f -> if List.memq f need then Some f.item else None)
+    prelude
+
+let program src comments prelude (str : structure) =
   let rec go = function
     | [] -> []
     | si :: rest ->
@@ -868,13 +1111,16 @@ let program src comments (str : structure) =
         let items = item src comments next si in
         items @ go rest
   in
+  used := [];
+  let items = go str.str_items in
+  let prelude = needed prelude !used in
   let buf = Buffer.create 4096 in
   Buffer.add_string buf "(program";
   List.iter
     (fun x ->
       Buffer.add_string buf "\n  ";
       print buf (item_to_sexp x))
-    (go str.str_items);
+    (prelude @ items);
   Buffer.add_string buf ")\n";
   Buffer.contents buf
 
@@ -885,8 +1131,18 @@ let () =
   end;
   let file = Sys.argv.(1) in
   Compmisc.init_path ();
-  Location.input_name := file;
   let env = Compmisc.initial_env () in
+  init_library env;
+  (* the prelude, in the same environment as the program: OCaml's standard library *)
+  let prelude =
+    let lexbuf = Lexing.from_string Prelude_text.text in
+    Lexing.set_filename lexbuf "prelude.ml";
+    let str, _, _, _, _ =
+      Typemod.type_structure env (Parse.implementation lexbuf)
+    in
+    prelude_fns_of env str
+  in
+  Location.input_name := file;
   match
     let ast = Pparse.parse_implementation ~tool_name:"ocaml-frontend" file in
     let comments = Lexer.comments () in
@@ -898,7 +1154,7 @@ let () =
       exit 2
   | str, comments -> (
       let src = In_channel.with_open_bin file In_channel.input_all in
-      match program src comments str with
+      match program src comments prelude str with
       | out -> print_string out
       | exception Unsupported (loc, msg) ->
           Location.print_report Format.err_formatter
