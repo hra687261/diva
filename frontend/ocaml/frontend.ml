@@ -291,6 +291,7 @@ let rec trivial e =
   match e.exp_desc with
   | Texp_ident (Path.Pident _, _, _) | Texp_constant _ | Texp_function _ -> true
   | Texp_construct (_, _, args) -> List.for_all trivial args
+  | Texp_tuple es -> List.for_all (fun (_, e) -> trivial e) es
   | Texp_apply (f, args) -> (
       match library f with
       | Some p when List.mem p total ->
@@ -300,18 +301,67 @@ let rec trivial e =
       | _ -> false)
   | _ -> false
 
-(* The name bound by the pattern [p]: a name, [_] or [()]. *)
-let pat_name (p : pattern) =
+(* The name bound by the pattern [p], if [p] is a name, [_] or [()]. *)
+let simple_name (p : pattern) =
   match p.pat_desc with
-  | Tpat_var (id, _, _) -> Ident.name id
+  | Tpat_var (id, _, _) -> Some (Ident.name id)
   (* [(x : t)] is [(_ : t) as x] *)
-  | Tpat_alias ({ pat_desc = Tpat_any; _ }, id, _, _, _) -> Ident.name id
-  | Tpat_any -> "_"
-  | Tpat_construct (_, cd, [], _) when cd.cstr_name = "()" -> "_"
-  | _ -> unsupported p.pat_loc "this pattern (only a name, `_` or `()` for now)"
+  | Tpat_alias ({ pat_desc = Tpat_any; _ }, id, _, _, _) -> Some (Ident.name id)
+  | Tpat_any -> Some "_"
+  | Tpat_construct (_, cd, [], _) when cd.cstr_name = "()" -> Some "_"
+  | _ -> None
 
-let is_exception (cd : Data_types.constructor_description) =
-  match cd.cstr_tag with Cstr_extension _ -> true | _ -> false
+let pat_name (p : pattern) =
+  match simple_name p with
+  | Some x -> x
+  | None -> unsupported p.pat_loc "this pattern here (only a name, `_` or `()`)"
+
+(**** Constructors and tuples ****)
+
+(* A value of a variant type, such as [option], is a tagged value, as an exception:
+   [C] is [exn "C" ()], [C a] is [exn "C" a], and [C (a, b)] is [exn "C" (a, b)]. A tuple
+   [(a, b)] is [exn "%2" [a; b]]. *)
+
+(* The constructors seen so far, by name: an exception or the type of the variant. *)
+let tags : (string, string) Hashtbl.t = Hashtbl.create 16
+
+(* The tag of the constructor [cd]: its name. DIVA tells tagged values apart by their tag
+   only, so two constructors with the same name are rejected. *)
+let tag loc (cd : Data_types.constructor_description) =
+  if cd.cstr_generalized || cd.cstr_existentials <> [] then
+    unsupported loc "GADTs";
+  if cd.cstr_inlined <> None then unsupported loc "records (for now)";
+  let unique = function
+    | Path.Pident id -> Ident.unique_name id
+    | p -> Path.name p
+  in
+  let owner =
+    match cd.cstr_tag with
+    | Cstr_extension (p, _) -> "the exception " ^ unique p
+    | _ -> "the type " ^ unique (Data_types.cstr_res_type_path cd)
+  in
+  (match Hashtbl.find_opt tags cd.cstr_name with
+  | Some o when o <> owner ->
+      unsupported loc
+        "two constructors named `%s`: it tells constructors apart by their \
+         names only"
+        cd.cstr_name
+  | _ -> Hashtbl.replace tags cd.cstr_name owner);
+  cd.cstr_name
+
+(* The tag of the tuples of [n] components. *)
+let tuple_tag n = Printf.sprintf "%%%d" n
+
+(* The list [[a1; ...; an]]. *)
+let list loc es =
+  List.fold_right (fun e l -> mk loc (Cons (e, l))) es (mk loc Nil)
+
+(* The tuple [(a1, ..., an)]. *)
+let tuple loc es = mk loc (Exn (tuple_tag (List.length es), list loc es))
+
+(* What happens when no case of a [match] matches: OCaml raises [Match_failure]. *)
+let match_failure loc =
+  mk loc (Raise (mk loc (Exn ("Match_failure", unit loc))))
 
 (* The translation of [e]. The sub-expressions are translated from the first to the
    last, with [let]: OCaml computes the arguments of a function from the last to the
@@ -332,10 +382,13 @@ let rec expr (e : expression) : expr =
   | Texp_constant _ ->
       unsupported loc "this constant (only integers and characters)"
   | Texp_construct (_, cd, args) -> construct loc cd args
-  | Texp_let (Nonrecursive, [ vb ], body) ->
-      let x = pat_name vb.vb_pat in
+  | Texp_let (Nonrecursive, [ vb ], body) -> (
       let a = expr vb.vb_expr in
-      letin loc x a (expr body)
+      match simple_name vb.vb_pat with
+      | Some x -> letin loc x a (expr body)
+      | None ->
+          let v = fresh () in
+          letin loc v a (pattern vb.vb_pat v (expr body) (match_failure loc)))
   | Texp_let (Recursive, [ vb ], body) ->
       let f, x, b = rec_fun vb in
       mk loc (Letrec (f, x, b, expr body))
@@ -365,7 +418,7 @@ let rec expr (e : expression) : expr =
   | Texp_try (a, cases, []) ->
       let k = "%exn" in
       let a = expr a in
-      mk loc (Try (a, k, handlers loc (var loc k) cases (Some k)))
+      mk loc (Try (a, k, match_cases loc k cases (mk loc (Raise (var loc k)))))
   | Texp_while (c, b) ->
       (* as DIVA's parser: [let rec %while _ = if c then (b; %while ()) else () in
        %while ()] *)
@@ -398,7 +451,14 @@ let rec expr (e : expression) : expr =
                app loc (var loc "%for") (var loc "%lo") ))
       in
       letin loc "%lo" lo (letin loc "%hi" hi loop)
-  | Texp_tuple _ -> unsupported loc "tuples (for now)"
+  | Texp_tuple es ->
+      let es =
+        List.map
+          (function
+            | None, e -> e | Some _, _ -> unsupported loc "labelled tuples")
+          es
+      in
+      ordered loc es (tuple loc)
   | Texp_record _ | Texp_field _ | Texp_setfield _ ->
       unsupported loc "records (for now)"
   | Texp_array _ -> unsupported loc "array literals (for now)"
@@ -415,11 +475,13 @@ and construct loc cd args =
       ordered loc [ a; b ] (function
         | [ a; b ] -> mk loc (Cons (a, b))
         | _ -> assert false)
-  | c, [] when is_exception cd -> mk loc (Exn (c, unit loc))
-  | c, [ a ] when is_exception cd -> mk loc (Exn (c, arg a))
-  | c, _ ->
-      unsupported loc
-        "the constructor `%s` (only exceptions with at most one argument)" c
+  | _, [] -> mk loc (Exn (tag loc cd, unit loc))
+  | _, [ a ] ->
+      let c = tag loc cd in
+      mk loc (Exn (c, arg a))
+  | _, args ->
+      let c = tag loc cd in
+      ordered loc args (fun l -> mk loc (Exn (c, tuple loc l)))
 
 (* An argument of an exception or of an output function. A string is [()]: DIVA has
    no strings. *)
@@ -431,19 +493,25 @@ and arg a =
 (* [fun x1 -> ... -> body]. [function cases] adds a parameter, matched by the cases. *)
 and lams loc params body =
   match params with
-  | p :: ps ->
-      let x =
-        match (p.fp_arg_label, p.fp_kind) with
-        | Nolabel, Tparam_pat pat -> pat_name pat
-        | _ -> unsupported p.fp_loc "labelled and optional parameters"
-      in
-      mk loc (Lam (x, lams loc ps body))
+  | p :: ps -> (
+      match (p.fp_arg_label, p.fp_kind) with
+      | Nolabel, Tparam_pat pat -> (
+          match simple_name pat with
+          | Some x -> mk loc (Lam (x, lams loc ps body))
+          | None ->
+              let v = fresh () in
+              mk loc
+                (Lam
+                   ( v,
+                     pattern pat v (lams loc ps body)
+                       (match_failure pat.pat_loc) )))
+      | _ -> unsupported p.fp_loc "labelled and optional parameters")
   | [] -> (
       match body with
       | Tfunction_body b -> expr b
       | Tfunction_cases { cases; loc = cloc; _ } ->
           let x = fresh () in
-          mk loc (Lam (x, match_cases cloc (var cloc x) cases)))
+          mk loc (Lam (x, match_cases cloc x cases (match_failure cloc))))
 
 (* [let rec f x = b]: the name of the function, its first parameter, and the rest. *)
 and rec_fun vb =
@@ -554,34 +622,36 @@ and apply loc f args =
 
 (* [match s with cases]. *)
 and match_ loc s cases =
-  (* the handlers of an exception use it several times *)
-  if is_exn_type s && not (trivial s) then
-    let x = fresh () in
-    letin loc x (expr s) (match_cases loc (var loc x) cases)
-  else match_cases loc (expr s) cases
+  (* the name of [s] in the tests: [s] itself if it is a name that no case hides *)
+  let bound =
+    List.concat_map
+      (fun c -> List.map Ident.name (pat_bound_idents c.c_lhs))
+      cases
+  in
+  match s.exp_desc with
+  | Texp_ident (Path.Pident id, _, _) when not (List.mem (Ident.name id) bound)
+    ->
+      match_cases loc (Ident.name id) cases (match_failure loc)
+  | _ ->
+      let v = fresh () in
+      let s = expr s in
+      letin loc v s (match_cases loc v cases (match_failure loc))
 
-and is_exn_type s =
-  match Types.get_desc (Ctype.expand_head s.exp_env s.exp_type) with
-  | Tconstr (p, [], _) -> Path.same p Predef.path_exn
-  | _ -> false
-
-(* The cases of a [match] on [s], which has been translated: [[] -> n | x :: xs -> c]
-   (in any order), or exceptions [E x -> h | ... | _ -> m]. *)
-and match_cases loc s cases =
-  List.iter
-    (fun c ->
-      if c.c_guard <> None then unsupported c.c_lhs.pat_loc "`when` (for now)")
-    cases;
+(* The cases of a [match] on the name [v]. [final] is what happens if no case matches:
+   it is copied, so it must be small. [[] -> n | x :: xs -> c] (in any order) is DIVA's
+   [match] on lists. *)
+and match_cases loc v cases final =
   let ctor (c : value case) =
-    match c.c_lhs.pat_desc with
-    | Tpat_construct (_, cd, ps, _) -> Some (cd.cstr_name, ps)
+    match (c.c_lhs.pat_desc, c.c_guard) with
+    | Tpat_construct (_, cd, ps, _), None -> Some (cd.cstr_name, ps)
     | _ -> None
   in
+  let simple ps = List.for_all (fun p -> simple_name p <> None) ps in
   match cases with
   | [ c1; c2 ]
     when match (ctor c1, ctor c2) with
-         | Some ("[]", _), Some ("::", _) | Some ("::", _), Some ("[]", _) ->
-             true
+         | Some ("[]", _), Some ("::", ps) | Some ("::", ps), Some ("[]", _) ->
+             simple ps
          | _ -> false -> (
       let nil, cons =
         match ctor c1 with Some ("[]", _) -> (c1, c2) | _ -> (c2, c1)
@@ -589,50 +659,138 @@ and match_cases loc s cases =
       match ctor cons with
       | Some (_, [ x; xs ]) ->
           let n = expr nil.c_rhs in
-          mk loc (MatchList (s, n, pat_name x, pat_name xs, expr cons.c_rhs))
+          mk loc
+            (MatchList (var loc v, n, pat_name x, pat_name xs, expr cons.c_rhs))
       | _ -> assert false)
-  | _ ->
-      let exn_case (c : value case) =
-        match c.c_lhs.pat_desc with
-        | Tpat_construct (_, cd, _, _) -> is_exception cd
-        | Tpat_any | Tpat_var _ -> true
-        | _ -> false
-      in
-      if List.for_all exn_case cases then handlers loc s cases None
-      else
-        unsupported loc
-          "this `match` (only `[] -> ... | x :: xs -> ...` and exceptions, for \
-           now)"
+  | _ -> case_list loc v cases final
 
-(* The handlers [cases] of an exception [s]: [E x -> h | ... | k -> m]. An exception
-   that no handler matches is raised again, if [reraise] is its name (in [try]).
-   Otherwise the cases must match every exception. *)
-and handlers loc s cases reraise =
+(* The cases, tried one after the other. When a case doesn't match, the next ones are
+   tried: they are the code [next], or, if [next] would be copied, a function [%tN] that
+   the case calls. *)
+and case_list loc v cases final =
   match cases with
-  | [] -> (
-      match reraise with
-      | Some k -> mk loc (Raise (var loc k))
-      | None ->
-          unsupported loc "a `match` on an exception without a last case `_`")
-  | c :: rest -> (
-      if c.c_guard <> None then unsupported c.c_lhs.pat_loc "`when` (for now)";
-      match c.c_lhs.pat_desc with
-      | Tpat_construct (_, cd, ps, _) when is_exception cd ->
-          let x =
-            match ps with
-            | [] -> "_"
-            | [ p ] -> pat_name p
-            | _ ->
-                unsupported c.c_lhs.pat_loc
-                  "an exception with several arguments"
-          in
-          let h = expr c.c_rhs in
-          mk loc (ExnCase (s, cd.cstr_name, x, h, handlers loc s rest reraise))
-      | Tpat_any -> expr c.c_rhs
-      | Tpat_var (id, _, _) -> letin loc (Ident.name id) s (expr c.c_rhs)
+  | [] -> final
+  | c :: rest ->
+      let next, define =
+        if rest = [] then (final, fun e -> e)
+        else if uses c <= 1 then (case_list loc v rest final, fun e -> e)
+        else
+          let k = fresh () in
+          let f = mk loc (Lam ("_", case_list loc v rest final)) in
+          (app loc (var loc k) (unit loc), fun e -> letin loc k f e)
+      in
+      let ok =
+        match c.c_guard with
+        | None -> expr c.c_rhs
+        | Some g ->
+            let g = expr g in
+            ite loc g (expr c.c_rhs) next
+      in
+      define (pattern c.c_lhs v ok next)
+
+(* The number of times the test of the case [c] uses the code for "doesn't match". *)
+and uses (c : value case) = pat_uses c.c_lhs + if c.c_guard = None then 0 else 1
+
+and pat_uses (p : pattern) =
+  let sum ps = List.fold_left (fun n p -> n + pat_uses p) 0 ps in
+  match p.pat_desc with
+  | Tpat_any | Tpat_var _ -> 0
+  | Tpat_alias (q, _, _, _, _) -> pat_uses q
+  | Tpat_constant _ -> 1
+  | Tpat_tuple ps -> tuple_uses (List.map snd ps)
+  | Tpat_construct (_, cd, ps, _) -> (
+      match (cd.cstr_name, ps) with
+      | "()", _ -> 0
+      | ("true" | "false" | "[]"), _ -> 1
+      | "::", _ -> 1 + sum ps
+      | _, ([] | [ _ ]) -> 1 + sum ps
+      | _, _ -> 1 + tuple_uses ps)
+  | Tpat_or (_, q, _) -> pat_uses q
+  | _ -> 0
+
+(* a tuple: its tag, then a [match] on each component *)
+and tuple_uses ps =
+  1 + List.length ps + List.fold_left (fun n p -> n + pat_uses p) 0 ps
+
+(* The test of the pattern [p] on the value of the name [v]: [ok] if it matches, with the
+   names of [p] bound, else [ko]. [ko] is copied: it must be small. Its names are names
+   that start with [%]: [p] doesn't hide them. *)
+and pattern (p : pattern) v ok ko =
+  let loc = p.pat_loc in
+  match p.pat_desc with
+  | Tpat_any -> ok
+  | Tpat_var (id, _, _) when Ident.name id = v -> ok
+  | Tpat_var (id, _, _) -> letin loc (Ident.name id) (var loc v) ok
+  | Tpat_alias (q, id, _, _, _) ->
+      letin loc (Ident.name id) (var loc v) (pattern q v ok ko)
+  | Tpat_constant c ->
+      let n =
+        match c with
+        | Const_int n -> Int64.of_int n
+        | Const_char c -> Int64.of_int (Char.code c)
+        | Const_int32 n -> Int64.of_int32 n
+        | Const_int64 n -> n
+        | _ -> unsupported loc "this constant (only integers and characters)"
+      in
+      ite loc (binop loc Eq (var loc v) (mk loc (Int n))) ok ko
+  | Tpat_tuple ps ->
+      let ps =
+        List.map
+          (function
+            | None, p -> p | Some _, _ -> unsupported loc "labelled tuples")
+          ps
+      in
+      tuple_pattern loc ps v ok ko
+  | Tpat_construct (_, cd, ps, _) -> (
+      match (cd.cstr_name, ps) with
+      | "true", [] -> ite loc (var loc v) ok ko
+      | "false", [] -> ite loc (var loc v) ko ok
+      | "()", [] -> ok
+      | "[]", [] -> mk loc (MatchList (var loc v, ok, "_", "_", ko))
+      | "::", [ ph; pt ] ->
+          let h = name_for ph and t = name_for pt in
+          mk loc
+            (MatchList
+               (var loc v, ko, h, t, pattern ph h (pattern pt t ok ko) ko))
       | _ ->
-          unsupported c.c_lhs.pat_loc
-            "this pattern (only an exception, a name or `_`)")
+          let c = tag loc cd in
+          let x, inner =
+            match ps with
+            | [] -> ("_", ok)
+            | [ q ] ->
+                let x = name_for q in
+                (x, pattern q x ok ko)
+            | ps ->
+                let x = fresh () in
+                (x, tuple_pattern loc ps x ok ko)
+          in
+          mk loc (ExnCase (var loc v, c, x, inner, ko)))
+  | Tpat_or (p1, p2, _) -> pattern p1 v ok (pattern p2 v ok ko)
+  | Tpat_record _ -> unsupported loc "records (for now)"
+  | Tpat_array _ -> unsupported loc "array patterns"
+  | _ -> unsupported loc "this pattern"
+
+(* The test of the tuple pattern [(p1, ..., pn)] on [v]. *)
+and tuple_pattern loc ps v ok ko =
+  let l = fresh () in
+  let rec components l = function
+    | [] -> ok
+    | p :: ps ->
+        let h = name_for p in
+        let t = if ps = [] then "_" else fresh () in
+        mk loc
+          (MatchList (var loc l, ko, h, t, pattern p h (components t ps) ko))
+  in
+  mk loc
+    (ExnCase (var loc v, tuple_tag (List.length ps), l, components l ps, ko))
+
+(* The name for the value that the pattern [p] tests: the name of [p] if it is a name,
+   else a new name. *)
+and name_for (p : pattern) =
+  match p.pat_desc with
+  | Tpat_var (id, _, _) -> Ident.name id
+  | Tpat_any -> "_"
+  | _ -> fresh ()
 
 (**** Top-level items ****)
 
@@ -665,22 +823,37 @@ let spec src comments stop next =
   | Some (_, l) -> Some (comment_text src l)
   | None -> None
 
-(* The top-level item [si], whose contract is before [next]. *)
+(* The top-level items for [si], whose contract is before [next]. *)
 let item src comments next (si : structure_item) =
   let spec () = spec src comments si.str_loc.loc_end.pos_cnum next in
   match si.str_desc with
-  | Tstr_eval (e, _) -> Some (Expr_item (expr e))
-  (* [let _ = e] and [let () = e] define no name: they are the expression [e] *)
-  | Tstr_value (Nonrecursive, [ vb ]) when pat_name vb.vb_pat = "_" ->
-      Some (Expr_item (expr vb.vb_expr))
-  | Tstr_value (Nonrecursive, [ vb ]) ->
-      Some (Let_item (pat_name vb.vb_pat, expr vb.vb_expr, spec ()))
+  | Tstr_eval (e, _) -> [ Expr_item (expr e) ]
+  | Tstr_value (Nonrecursive, [ vb ]) -> (
+      match simple_name vb.vb_pat with
+      (* [let _ = e] and [let () = e] define no name: they are the expression [e] *)
+      | Some "_" -> [ Expr_item (expr vb.vb_expr) ]
+      | Some x -> [ Let_item (x, expr vb.vb_expr, spec ()) ]
+      | None ->
+          (* [let p = e]: [e] is named [v], then each name of [p] is defined by a test
+             of [p] on [v] *)
+          let v = fresh () in
+          let loc = vb.vb_loc in
+          let test ok = pattern vb.vb_pat v ok (match_failure loc) in
+          Let_item (v, expr vb.vb_expr, None)
+          ::
+          (match pat_bound_idents vb.vb_pat with
+          | [] -> [ Expr_item (test (unit loc)) ]
+          | ids ->
+              List.map
+                (fun id ->
+                  Let_item (Ident.name id, test (var loc (Ident.name id)), None))
+                ids))
   | Tstr_value (Recursive, [ vb ]) ->
       let f, x, b = rec_fun vb in
-      Some (Letrec_item (f, x, b, spec ()))
+      [ Letrec_item (f, x, b, spec ()) ]
   | Tstr_value _ -> unsupported si.str_loc "`let ... and ...`"
   (* a constructor of a type is rejected where it is used *)
-  | Tstr_exception _ | Tstr_type _ | Tstr_attribute _ -> None
+  | Tstr_exception _ | Tstr_type _ | Tstr_attribute _ -> []
   | _ -> unsupported si.str_loc "this declaration"
 
 let program src comments (str : structure) =
@@ -692,8 +865,8 @@ let program src comments (str : structure) =
           | n :: _ -> n.str_loc.loc_start.pos_cnum
           | [] -> max_int
         in
-        let x = item src comments next si in
-        Option.to_list x @ go rest
+        let items = item src comments next si in
+        items @ go rest
   in
   let buf = Buffer.create 4096 in
   Buffer.add_string buf "(program";

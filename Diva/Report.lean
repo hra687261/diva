@@ -135,9 +135,9 @@ def diagnose (H : Hints A) (place code : Span → String) :
     let vs := aevalExt H σ s
     diagnose H place code σ s (l.kid 0) ++
       (if vs.within Flat.listV then [] else [msg l s!"{snippet code e l}: may not match a list ({vs})"]) ++
-      (if vs.mayBeNil then diagnose H place code σ n (l.kid 1) else []) ++
-      (if vs.heads.leq Flat.bot then []
-       else diagnose H place code ((xs, vs.tails) :: (x, AVal.ofFlat vs.heads) :: σ) c (l.kid 2))
+      (if vs.mayBeNilI then diagnose H place code σ n (l.kid 1) else []) ++
+      (if vs.headsI.leq Flat.bot then []
+       else diagnose H place code ((xs, vs.tailsI) :: (x, AVal.ofFlat vs.headsI) :: σ) c (l.kid 2))
   -- the store (as in `mayFailExt`)
   | σ, e@(.ref site v), l =>
     diagnose H place code σ v (l.kid 0) ++ writeMsgs l e [site] (aevalExt H σ v)
@@ -180,9 +180,9 @@ def diagnose (H : Hints A) (place code : Span → String) :
   | σ, e@(.exn c a), l =>
     let va := aevalExt H σ a
     diagnose H place code σ a (l.kid 0) ++
-      (if va.flat.leq (H.arg c) then []
-       else [msg l s!"{snippet code e l}: the argument ({va}) is not in the hint `{c}` \
-         ({H.arg c})"])
+      (if fitsArg H c va then []
+       else [msg l s!"{snippet code e l}: the argument ({va}) is not in the hints of `{c}` \
+         ({H.argV c})"])
   | σ, e@(.raise v), l =>
     let vv := aevalExt H σ v
     diagnose H place code σ v (l.kid 0) ++

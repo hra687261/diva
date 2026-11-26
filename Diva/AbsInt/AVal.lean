@@ -234,6 +234,10 @@ structure AVal (A : Type) extends Flat A where
   sum : Option (Summary A)
   elems : Option (Flat A) := none
   mayNil : Bool := true
+  /-- The lists it may be, element by element, if they all have this length: for the
+      analysis of tuples (see `aevalM`). `mem` doesn't use it: `elems` gives the lists
+      it may be. -/
+  items : Option (List (Flat A)) := none
   deriving Inhabited
 
 namespace AVal
@@ -266,8 +270,17 @@ def flat (a : AVal A) : Flat A :=
 def join (a b : AVal A) : AVal A :=
   { joinSum a b with
     elems := Option.merge Flat.join a.elems b.elems,
-    mayNil := (a.elems.isSome && a.mayNil) || (b.elems.isSome && b.mayNil) }
+    mayNil := (a.elems.isSome && a.mayNil) || (b.elems.isSome && b.mayNil),
+    items := joinItems a b }
 where
+  /-- The lists of `a` and `b`, element by element: kept if `a` and `b` give them with
+      the same length, or if only one of them may be a list. -/
+  joinItems (a b : AVal A) : Option (List (Flat A)) :=
+    match a.items, b.items with
+    | some xs, some ys => if xs.length == ys.length then some (xs.zipWith Flat.join ys) else none
+    | some xs, none => if b.list || b.elems.isSome then none else some xs
+    | none, some ys => if a.list || a.elems.isSome then none else some ys
+    | none, none => none
   joinSum (a b : AVal A) : AVal A :=
   match a.sum, b.sum with
   | some S, some T =>
@@ -301,6 +314,35 @@ def heads (a : AVal A) : Flat A :=
 def tails (a : AVal A) : AVal A :=
   if a.list then top else (a.elems.map fun e => listOf e).getD bot
 
+/-! ### Lists of a known length (for the analysis of tuples, see `aevalM`) -/
+
+/-- The lists `[v₁; ...; vₙ]` where each `vᵢ` is in the `i`-th element of `ws`. -/
+def itemsOf (ws : List (Flat A)) : AVal A :=
+  { listOf (ws.foldl Flat.join Flat.bot) (mayNil := ws.isEmpty) with items := some ws }
+
+/-- `h :: t`, element by element if `t` is known that way. -/
+def consI (h t : AVal A) : AVal A := { cons h t with items := t.items.map (h.flat :: ·) }
+
+/-- `mayBeNil`, using `items` if `a` has them. -/
+def mayBeNilI (a : AVal A) : Bool :=
+  match a.items with
+  | some ws => ws.isEmpty
+  | none => a.mayBeNil
+
+/-- `heads`, using `items` if `a` has them. -/
+def headsI (a : AVal A) : Flat A :=
+  match a.items with
+  | some (w :: _) => w
+  | some [] => Flat.bot
+  | none => a.heads
+
+/-- `tails`, using `items` if `a` has them. -/
+def tailsI (a : AVal A) : AVal A :=
+  match a.items with
+  | some (_ :: ws) => itemsOf ws
+  | some [] => bot
+  | none => a.tails
+
 instance [ToString A] : ToString (AVal A) where
   toString a :=
     let parts :=
@@ -308,9 +350,10 @@ instance [ToString A] : ToString (AVal A) where
       (match a.sum with
         | none => []
         | some S => [s!"fun {" -> ".intercalate ((S.pre :: S.rest).map toString)} -> {S.res}"]) ++
-      (match a.elems with
-        | none => []
-        | some e => [if a.mayNil then s!"list of {e}" else s!"non-empty list of {e}"])
+      (match a.items, a.elems with
+        | some ws, _ => [s!"[{"; ".intercalate (ws.map toString)}]"]
+        | none, none => []
+        | none, some e => [if a.mayNil then s!"list of {e}" else s!"non-empty list of {e}"])
     if parts.isEmpty then "⊥" else " | ".intercalate parts
 
 end AVal

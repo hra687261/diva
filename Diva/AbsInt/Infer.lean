@@ -13,7 +13,8 @@ analysis under `H`:
 - `($f, r)`: the result `r` of the body of `f`, assuming `H`'s claims;
 - `(!s, v)`: a value `v` written to a ref or an array of the allocation site `s`, and
   `(!s.length, n)`: the length `n` of an array created at `s`;
-- `(C, v)`: the argument `v` of a tagged value `C v`, an exception for example.
+- `(C, v)`: the argument `v` of a tagged value `C v`, an exception for example, and
+  `(%n.i, v)`: the `i`-th component `v` of a tuple of `n` components.
 
 `up` grows the hints from `⊥`, with widening, until they cover all their claims.
 `down` then shrinks them back to their claims, as long as they still cover them,
@@ -71,10 +72,10 @@ def claims (H : Hints A) (C : Callees) (σ : AEnv A) : Expr → List (String × 
   | .matchList s n x xs c =>
     let vs := aevalM true true H σ s
     claims H C σ s ++
-      (if vs.mayBeNil then claims H C σ n else []) ++
-      (if vs.heads.leq Flat.bot then []
+      (if vs.mayBeNilI then claims H C σ n else []) ++
+      (if vs.headsI.leq Flat.bot then []
        else claims H ((xs, []) :: (x, []) :: C)
-         ((xs, vs.tails) :: (x, AVal.ofFlat vs.heads) :: σ) c)
+         ((xs, vs.tailsI) :: (x, AVal.ofFlat vs.headsI) :: σ) c)
   | .letin x e1 e2 =>
     claims H C σ e1 ++
       claims H ((x, callee C e1) :: C) ((x, aevalM true true H σ e1) :: σ) e2
@@ -112,7 +113,7 @@ def claims (H : Hints A) (C : Callees) (σ : AEnv A) : Expr → List (String × 
   | .deref a | .len a | .assert a | .raise a => claims H C σ a
   | .get a i => claims H C σ a ++ claims H C σ i
   -- a tagged value: a claim on the arguments of its constructor
-  | .exn c v => (c, (aevalM true true H σ v).flat) :: claims H C σ v
+  | .exn c v => argClaims c (aevalM true true H σ v) ++ claims H C σ v
   | .tryw a k h =>
     let ea := raisesM true true H σ a
     claims H C σ a ++
@@ -126,7 +127,7 @@ def claims (H : Hints A) (C : Callees) (σ : AEnv A) : Expr → List (String × 
 
 /-- The hint keys of `e`: its parameters, `$f` for each recursive function `f`, for
     each allocation site `s`, `!s` (the contents) and, for an array, `!s.length`, and
-    each constructor `C` of a tagged value (its arguments). -/
+    each constructor `C` of a tagged value, its arguments (`argKeys`). -/
 def hintKeys : Expr → List String
   | .lam x b => x :: hintKeys b
   | .letrec f x b e2 => x :: ("$" ++ f) :: hintKeys b ++ hintKeys e2
@@ -137,7 +138,7 @@ def hintKeys : Expr → List String
   | .assign a b | .get a b => hintKeys a ++ hintKeys b
   | .set a i v => hintKeys a ++ hintKeys i ++ hintKeys v
   | .deref a | .len a | .assert a | .raise a => hintKeys a
-  | .exn c v => c :: hintKeys v
+  | .exn c v => argKeys c ++ hintKeys v
   | .tryw a _ h => hintKeys a ++ hintKeys h
   | .exnCase s _ _ h m => hintKeys s ++ hintKeys h ++ hintKeys m
   | .int _ | .bool _ | .unit | .var _ | .nil => []

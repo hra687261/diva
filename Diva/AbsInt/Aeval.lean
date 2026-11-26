@@ -269,6 +269,45 @@ tagged values of `C`.
 def Hints.arg [NumDomain A] (H : Hints A) (c : String) : Flat A :=
   (H.lookup c).getD Flat.top
 
+/-- The number of components of the tuples of constructor `c`: `n` if `c` is `%n`. A
+    tuple `(a, b)` is the tagged value `exn "%2" [a; b]`. -/
+def tupleArity (c : String) : Option Nat :=
+  if c.startsWith "%" then (String.ofList (c.toList.drop 1)).toNat? else none
+
+/-- The `i`-th components of the tuples of constructor `c` (key `c.i`). -/
+def Hints.comp [NumDomain A] (H : Hints A) (c : String) (i : Nat) : Flat A :=
+  (H.lookup s!"{c}.{i}").getD Flat.top
+
+/-- The arguments of the tagged values of constructor `c`, as the hints describe them.
+    For a tuple, the list of its components, each described by its own hint. -/
+def Hints.argV [NumDomain A] (H : Hints A) (c : String) : AVal A :=
+  match tupleArity c with
+  | some n => AVal.itemsOf ((List.range n).map (H.comp c))
+  | none => AVal.ofFlat (H.arg c)
+
+/-- `v` is in the arguments of `c` that the hints describe. -/
+def fitsArg [NumDomain A] (H : Hints A) (c : String) (v : AVal A) : Bool :=
+  match tupleArity c, v.items with
+  | some n, some ws => ws.length == n && ws.zipIdx.all fun (w, i) => w.leq (H.comp c i)
+  | some _, none => false
+  | none, _ => v.flat.leq (H.arg c)
+
+/-- The keys of the hints of the arguments of `c`: `c`, or `c.0` ... `c.(n-1)` for a
+    tuple of `n` components. -/
+def argKeys (c : String) : List String :=
+  match tupleArity c with
+  | some n => (List.range n).map (s!"{c}.{·}")
+  | none => [c]
+
+/-- What the hints of the arguments of `c` must cover, for the argument `v`: a claim on
+    each of their keys. -/
+def argClaims [NumDomain A] (c : String) (v : AVal A) : List (String × Flat A) :=
+  match tupleArity c, v.items with
+  | some n, some ws => if ws.length == n then ws.zipIdx.map fun (w, i) => (s!"{c}.{i}", w)
+                       else (argKeys c).map (·, Flat.top)
+  | some _, none => (argKeys c).map (·, Flat.top)
+  | none, _ => [(c, v.flat)]
+
 /-- The tagged values that `a` may be. -/
 def AVal.tagged [NumDomain A] (a : AVal A) : Flat A := { Flat.bot with exn := a.exn, tags := a.tags }
 
@@ -287,10 +326,10 @@ def AVal.mayBeOtherTag [NumDomain A] (a : AVal A) (c : String) : Bool :=
 def AVal.withoutTag [NumDomain A] (a : AVal A) (c : String) : AVal A :=
   AVal.ofFlat { a.flat with tags := a.tags.erase c }
 
-/-- The argument of a tagged value of constructor `c` that `a` describes: the hint `c`,
-    or any value if `a` may be any tagged value. -/
-def tagArg [NumDomain A] (H : Hints A) (a : AVal A) (c : String) : Flat A :=
-  if a.exn then Flat.top else H.arg c
+/-- The argument of a tagged value of constructor `c` that `a` describes: the hints of
+    `c` (`Hints.argV`), or any value if `a` may be any tagged value. -/
+def tagArg [NumDomain A] (H : Hints A) (a : AVal A) (c : String) : AVal A :=
+  if a.exn then AVal.top else H.argV c
 
 /-- The exceptions a call of `af` on `aa` may raise: those of the summary of `af`, or
     any exception if the call isn't known (`af` may be any closure, or `aa` isn't in the
@@ -309,7 +348,7 @@ def callRaises [NumDomain A] (opt : Bool) (af aa : AVal A) : Flat A :=
     value of `C`. -/
 def hitEnv [NumDomain A] (H : Hints A) (σ : AEnv A) (s : Expr) (vs : AVal A) (c x : String) :
     AEnv A :=
-  (x, AVal.ofFlat (tagArg H vs c)) :: σ.bind s (AVal.ofFlat { Flat.bot with tags := [c] })
+  (x, tagArg H vs c) :: σ.bind s (AVal.ofFlat { Flat.bot with tags := [c] })
 
 mutual
 
@@ -331,8 +370,10 @@ def aevalM [NumDomain A] (opt ext : Bool) (H : Hints A) (σ : AEnv A) : Expr →
   | .int n => AVal.ofInt (const n)
   | .bool b => AVal.bools b !b
   | .unit => AVal.unitV
-  | .nil => AVal.listOf Flat.bot
-  | .cons a b => (aevalM opt ext H σ a).cons (aevalM opt ext H σ b)
+  | .nil => if ext then AVal.itemsOf [] else AVal.listOf Flat.bot
+  | .cons a b =>
+    if ext then (aevalM opt ext H σ a).consI (aevalM opt ext H σ b)
+    else (aevalM opt ext H σ a).cons (aevalM opt ext H σ b)
   | .var x => σ.get x
   | .binop op a b => abinopE op a b (aevalM opt ext H σ a) (aevalM opt ext H σ b)
   | .letin x e1 e2 => aevalM opt ext H ((x, aevalM opt ext H σ e1) :: σ) e2
@@ -385,6 +426,13 @@ def aevalM [NumDomain A] (opt ext : Bool) (H : Hints A) (σ : AEnv A) : Expr →
   | .matchList s n x xs c =>
     -- a branch is taken only if the list may be `[]`, or may have a first element
     let vs := aevalM opt ext H σ s
+    if ext then
+      -- the same, using the elements one by one if they are known (`items`)
+      joinOpt
+        (if vs.mayBeNilI then some (aevalM opt ext H σ n) else none)
+        (if vs.headsI.leq Flat.bot then none
+         else some (aevalM opt ext H ((xs, vs.tailsI) :: (x, AVal.ofFlat vs.headsI) :: σ) c))
+    else
     joinOpt
       (if vs.mayBeNil then some (aevalM opt ext H σ n) else none)
       (if vs.heads.leq Flat.bot then none
@@ -470,12 +518,18 @@ def mayFailM [NumDomain A] (opt ext : Bool) (H : Hints A) (σ : AEnv A) : Expr �
   | .matchList s n x xs c =>
     -- a branch counts only if it can be taken (as in `aevalM`)
     let vs := aevalM opt ext H σ s
+    if ext then
+      mayFailM opt ext H σ s || !vs.within Flat.listV ||
+        (vs.mayBeNilI && mayFailM opt ext H σ n) ||
+        (!vs.headsI.leq Flat.bot &&
+          mayFailM opt ext H ((xs, vs.tailsI) :: (x, AVal.ofFlat vs.headsI) :: σ) c)
+    else
     mayFailM opt ext H σ s || !vs.within Flat.listV ||
       (vs.mayBeNil && mayFailM opt ext H σ n) ||
       (!vs.heads.leq Flat.bot &&
         mayFailM opt ext H ((xs, vs.tails) :: (x, AVal.ofFlat vs.heads) :: σ) c)
   | .exn c e =>
-    if ext then mayFailM opt ext H σ e || !(aevalM opt ext H σ e).flat.leq (H.arg c)
+    if ext then mayFailM opt ext H σ e || !fitsArg H c (aevalM opt ext H σ e)
     else mayFailM opt ext H σ e
   -- the store, only with `ext` (as in `aevalM`). Each write checks that the value is
   -- in the contents of the sites written to. An array has a length of its site's
@@ -571,9 +625,9 @@ def raisesM [NumDomain A] (opt ext : Bool) (H : Hints A) (σ : AEnv A) : Expr �
   | .matchList s n x xs c =>
     let vs := aevalM opt ext H σ s
     ((raisesM opt ext H σ s).join
-      (if vs.mayBeNil then raisesM opt ext H σ n else Flat.bot)).join
-      (if vs.heads.leq Flat.bot then Flat.bot
-       else raisesM opt ext H ((xs, vs.tails) :: (x, AVal.ofFlat vs.heads) :: σ) c)
+      (if vs.mayBeNilI then raisesM opt ext H σ n else Flat.bot)).join
+      (if vs.headsI.leq Flat.bot then Flat.bot
+       else raisesM opt ext H ((xs, vs.tailsI) :: (x, AVal.ofFlat vs.headsI) :: σ) c)
   | .tryw a k h =>
     -- the exceptions of `h`, called on those of `a`
     let ea := raisesM opt ext H σ a
@@ -722,9 +776,10 @@ theorem mem_flat {a : AVal A} {v : Value} (h : a.mem v) : a.flat.mem v := by
 /-- A list described by `a.elems` is described by an `AVal` whose `elems` and
     `mayNil` are those of `join a b`. -/
 theorem mem_elems_l {a b : AVal A} {t : Flat A} {s : Option (Summary A)} {e : Flat A}
-    {v : Value} (he : a.elems = some e) (hm : e.listMem v) (hn : v = .nil → a.mayNil = true) :
+    {is : Option (List (Flat A))} {v : Value} (he : a.elems = some e) (hm : e.listMem v) (hn : v = .nil → a.mayNil = true) :
     ({ toFlat := t, sum := s, elems := Option.merge Flat.join a.elems b.elems,
-       mayNil := (a.elems.isSome && a.mayNil) || (b.elems.isSome && b.mayNil) } : AVal A).mem v := by
+       mayNil := (a.elems.isSome && a.mayNil) || (b.elems.isSome && b.mayNil),
+       items := is } : AVal A).mem v := by
   rw [he]
   -- `[]` only if `a.mayNil`
   cases b.elems with
@@ -736,9 +791,10 @@ theorem mem_elems_l {a b : AVal A} {t : Flat A} {s : Option (Summary A)} {e : Fl
 /-- A list described by `b.elems` is described by an `AVal` whose `elems` and
     `mayNil` are those of `join a b`. -/
 theorem mem_elems_r {a b : AVal A} {t : Flat A} {s : Option (Summary A)} {e : Flat A}
-    {v : Value} (he : b.elems = some e) (hm : e.listMem v) (hn : v = .nil → b.mayNil = true) :
+    {is : Option (List (Flat A))} {v : Value} (he : b.elems = some e) (hm : e.listMem v) (hn : v = .nil → b.mayNil = true) :
     ({ toFlat := t, sum := s, elems := Option.merge Flat.join a.elems b.elems,
-       mayNil := (a.elems.isSome && a.mayNil) || (b.elems.isSome && b.mayNil) } : AVal A).mem v := by
+       mayNil := (a.elems.isSome && a.mayNil) || (b.elems.isSome && b.mayNil),
+       items := is } : AVal A).mem v := by
   rw [he]
   -- `[]` only if `b.mayNil`
   cases a.elems with

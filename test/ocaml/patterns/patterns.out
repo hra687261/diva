@@ -1,0 +1,74 @@
+$ diva ocaml run patterns.ml
+()
+[exit 0]
+
+$ diva ocaml check patterns.ml
+patterns.ml:7:19-24: `w * h`: the operands may not be integers (⊤ and ⊤)
+patterns.ml:7:19-24: `w * h`: may overflow 63-bit integers (result: [-∞, +∞])
+patterns.ml:12:35-40: `a + b`: the operands may not be integers (⊤ and ⊤)
+patterns.ml:12:35-40: `a + b`: may overflow 63-bit integers (result: [-∞, +∞])
+patterns.ml:17:9-15: `y :: _`: may not match a list (⊤)
+patterns.ml:17:21-26: `y > 0`: the operands may not be integers (⊤ and 0)
+patterns.ml:15:18-18:13: `match l with | x :: _ when x > 0 -> Some x | _ :: y :: _ ...`: the function called may fail
+patterns.ml:16:16-21: `x > 0`: the operands may not be integers (⊤ and 0)
+patterns.ml:15:18-18:13: `match l with | x :: _ when x > 0 -> Some x | _ :: y :: _ ...`: the function called may fail
+patterns.ml:26:4-11: `x :: xs`: may not match a list (⊤)
+patterns.ml:26:13-20: `y :: ys`: may not match a list (⊤)
+patterns.ml:31:73-90: `sum_pair (10, 20)`: the function called may fail
+patterns.ml:31:52-62: `area Empty`: the function called may fail
+patterns.ml:31:34-49: `area (Square 5)`: the function called may fail
+patterns.ml:31:13-31: `area (Rect (3, 4))`: the function called may fail
+patterns.ml:31:13-49: `area (Rect (3, 4)) + area (Square 5)`: may overflow 63-bit integers (result: [-∞, +∞])
+patterns.ml:31:13-62: `area (Rect (3, 4)) + area (Square 5) + area Empty`: may overflow 63-bit integers (result: [-∞, +∞])
+patterns.ml:31:13-66: `area (Rect (3, 4)) + area (Square 5) + area Empty + a`: the operands may not be integers ([-∞, +∞] and ⊤)
+patterns.ml:31:13-66: `area (Rect (3, 4)) + area (Square 5) + area Empty + a`: may overflow 63-bit integers (result: [-∞, +∞])
+patterns.ml:31:13-70: `area (Rect (3, 4)) + area (Square 5) + area Empty + a + b`: the operands may not be integers ([-∞, +∞] and ⊤)
+patterns.ml:31:13-70: `area (Rect (3, 4)) + area (Square 5) + area Empty + a + b`: may overflow 63-bit integers (result: [-∞, +∞])
+patterns.ml:31:12-91: `(area (Rect (3, 4)) + area (Square 5) + area Empty + a + ...`: may overflow 63-bit integers (result: [-∞, +∞])
+patterns.ml:32:54-76: `(first_pos [ -1; -2 ])`: the function called may fail
+patterns.ml:32:22-42: `(first_pos [ 0; 5 ])`: the function called may fail
+patterns.ml:32:12-77: `(get_or 0 (first_pos [ 0; 5 ]) + get_or 7 (first_pos [ -1...`: may overflow 63-bit integers (result: [0, +∞])
+patterns.ml:34:8-26: `zip [ 1; 2 ] [ 3 ]`: the function called may fail
+patterns.ml:34:34-40: `(x, y)`: may not match an exception or a constructor (⊤)
+patterns.ml:34:34-40: `(x, y)`: may not match a list (⊤)
+patterns.ml:34:34-40: `(x, y)`: may not match a list (⊤)
+patterns.ml:34:41-42: `]`: may not match a list (⊤)
+patterns.ml:34:56-63: `(x + y)`: the operands may not be integers (⊤ and ⊤)
+patterns.ml:34:56-63: `(x + y)`: may overflow 63-bit integers (result: [-∞, +∞])
+patterns.ml:30:6-12: `(a, b)`: may raise an exception that isn't caught (Match_failure)
+[exit 1]
+
+$ diva ocaml opt patterns.ml
+(let area = (fun s -> (match s with Square n -> (let %r = (n * n) in (let _ = (assert (%r <= 4611686018427387903)) in %r)) | _ -> (let %t1 = (fun _ -> (match s with Empty _ -> 0 | _ -> (raise Match_failure))) in (match s with Rect %t2 -> (match %t2 with %2 %t3 -> (match %t3 with [] -> (%t1 ()) | w :: %t4 -> (match %t4 with [] -> (%t1 ()) | h :: _ -> (let %r = (w * h) in (let _ = (assert (if (-4611686018427387904 <= %r) then (%r <= 4611686018427387903) else false)) in %r)))) | _ -> (%t1 ())) | _ -> (%t1 ()))))) in (let swap = (fun %t5 -> (match %t5 with %2 %t6 -> (match %t6 with [] -> (raise Match_failure) | a :: %t7 -> (match %t7 with [] -> (raise Match_failure) | b :: _ -> (%2 (b :: (a :: []))))) | _ -> (raise Match_failure))) in (let sum_pair = (fun p -> (let %t8 = p in (match %t8 with %2 %t9 -> (match %t9 with [] -> (raise Match_failure) | a :: %t10 -> (match %t10 with [] -> (raise Match_failure) | b :: _ -> (let %r = (a + b) in (let _ = (assert (if (-4611686018427387904 <= %r) then (%r <= 4611686018427387903) else false)) in %r)))) | _ -> (raise Match_failure)))) in (let first_pos = (fun l -> (let %t11 = (fun _ -> (let %t12 = (fun _ -> None) in (match l with [] -> (%t12 ()) | _ :: %t13 -> (match %t13 with [] -> (%t12 ()) | y :: _ -> (if (y > 0) then (Some y) else (%t12 ())))))) in (match l with [] -> (%t11 ()) | x :: _ -> (if (x > 0) then (Some x) else (%t11 ()))))) in (let get_or = (fun d -> (fun o -> (match o with Some x -> x | _ -> (match o with None _ -> d | _ -> (raise Match_failure))))) in (let small = (fun n -> (if (n = 0) then true else (if (n = 1) then true else (if (n = 2) then true else false)))) in (let rec zip l1 = (fun l2 -> (let %t14 = (%2 (l1 :: (l2 :: []))) in (let %t15 = (fun _ -> (match %t14 with %2 %t16 -> (match %t16 with [] -> (raise Match_failure) | _ :: %t17 -> (match %t17 with [] -> (raise Match_failure) | _ :: _ -> [])) | _ -> (raise Match_failure))) in (match %t14 with %2 %t18 -> (match %t18 with [] -> (%t15 ()) | %t19 :: %t20 -> (match %t19 with [] -> (%t15 ()) | x :: xs -> (match %t20 with [] -> (%t15 ()) | %t21 :: _ -> (match %t21 with [] -> (%t15 ()) | y :: ys -> ((%2 (x :: (y :: []))) :: ((zip xs) ys)))))) | _ -> (%t15 ()))))) in (let %t22 = (swap (%2 (1 :: (2 :: [])))) in (match %t22 with %2 %t37 -> (match %t37 with [] -> (raise Match_failure) | a :: %t38 -> (match %t38 with [] -> (raise Match_failure) | b :: _ -> (let _ = (let _ = (let %t28 = (sum_pair (%2 (10 :: (20 :: [])))) in (let %t27 = (let %r = ((let %r = ((let %t26 = (area Empty) in (let %t25 = (let %t24 = (area (Square 5)) in (let %t23 = (area (Rect (%2 (3 :: (4 :: []))))) in (let %r = (%t23 + %t24) in (let _ = (assert (if (-4611686018427387904 <= %r) then (%r <= 4611686018427387903) else false)) in %r)))) in (let %r = (%t25 + %t26) in (let _ = (assert (if (-4611686018427387904 <= %r) then (%r <= 4611686018427387903) else false)) in %r)))) + a) in (let _ = (assert (if (-4611686018427387904 <= %r) then (%r <= 4611686018427387903) else false)) in %r)) + b) in (let _ = (assert (if (-4611686018427387904 <= %r) then (%r <= 4611686018427387903) else false)) in %r)) in (let %r = (%t27 + %t28) in (let _ = (assert (if (-4611686018427387904 <= %r) then (%r <= 4611686018427387903) else false)) in %r)))) in ()) in (let _ = (let _ = (let %t30 = ((get_or 7) (first_pos (-1 :: (-2 :: [])))) in (let %t29 = ((get_or 0) (first_pos (0 :: (5 :: [])))) in (let %r = (%t29 + %t30) in (let _ = (assert (if (-4611686018427387904 <= %r) then (%r <= 4611686018427387903) else false)) in %r)))) in ()) in (let _ = (let _ = (if (if (small 1) then (if (small 5) then false else true) else false) then 1 else 0) in ()) in (let %t31 = ((zip (1 :: (2 :: []))) (3 :: [])) in (let %t32 = (fun _ -> ()) in (match %t31 with [] -> (%t32 ()) | %t33 :: %t34 -> (match %t33 with %2 %t35 -> (match %t35 with [] -> (%t32 ()) | x :: %t36 -> (match %t36 with [] -> (%t32 ()) | y :: _ -> (match %t34 with [] -> (let _ = (let %r = (x + y) in (let _ = (assert (if (-4611686018427387904 <= %r) then (%r <= 4611686018427387903) else false)) in %r)) in ()) | _ :: _ -> (%t32 ())))) | _ -> (%t32 ())))))))))) | _ -> (raise Match_failure))))))))))
+[exit 0]
+
+$ diva ocaml hints patterns.ml
+s#0 : Empty | Square | Rect
+_#1 : ()
+Match_failure : ()
+%t5#2 : %2
+p#3 : %2
+l#4 : list
+_#5 : ()
+_#6 : ()
+None : ()
+Some : [1, +∞]
+d#7 : [0, 7]
+o#8 : None | Some
+n#9 : [1, 5]
+$zip#10 : list
+_#13 : ()
+Empty : ()
+Square : 5
+Rect : %2
+_#14 : ()
+[exit 0]
+
+$ diva ocaml cert --check patterns.ml
+the program may fail, so there is no certificate (see `diva check`)
+[exit 1]
+
+$ diva ocaml prove --check -o prove.lean patterns.ml
+no function has a contract: write one in a `(*@ ... *)` comment after a function
+[exit 1]
+

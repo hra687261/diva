@@ -1,0 +1,42 @@
+$ diva ocaml run same_name.ml
+error: File "same_name.ml", line 7, characters 9-12:
+7 | let y = (A 1 : a)
+             ^^^
+Error: DIVA doesn't support two constructors named `A`: it tells constructors apart by their names only
+[exit 1]
+
+$ diva ocaml check same_name.ml
+error: File "same_name.ml", line 7, characters 9-12:
+7 | let y = (A 1 : a)
+             ^^^
+Error: DIVA doesn't support two constructors named `A`: it tells constructors apart by their names only
+[exit 1]
+
+$ diva ocaml opt same_name.ml
+error: File "same_name.ml", line 7, characters 9-12:
+7 | let y = (A 1 : a)
+             ^^^
+Error: DIVA doesn't support two constructors named `A`: it tells constructors apart by their names only
+[exit 1]
+
+$ diva ocaml hints same_name.ml
+error: File "same_name.ml", line 7, characters 9-12:
+7 | let y = (A 1 : a)
+             ^^^
+Error: DIVA doesn't support two constructors named `A`: it tells constructors apart by their names only
+[exit 1]
+
+$ diva ocaml cert --check same_name.ml
+error: File "same_name.ml", line 7, characters 9-12:
+7 | let y = (A 1 : a)
+             ^^^
+Error: DIVA doesn't support two constructors named `A`: it tells constructors apart by their names only
+[exit 1]
+
+$ diva ocaml prove --check -o prove.lean same_name.ml
+error: File "same_name.ml", line 7, characters 9-12:
+7 | let y = (A 1 : a)
+             ^^^
+Error: DIVA doesn't support two constructors named `A`: it tells constructors apart by their names only
+[exit 1]
+
