@@ -21,7 +21,68 @@ exception Unsupported of Location.t * string
 let unsupported loc fmt =
   Format.kasprintf (fun s -> raise (Unsupported (loc, s))) fmt
 
-(* ---------- S-expressions ---------- *)
+(**** DIVA's core language ****)
+
+(* [expr] is [Expr] in [Diva/Ast.lean], with the part of the file that each expression
+   comes from. [to_sexp] prints it in the format of [Diva/Sexp.lean]: it is the only
+   place with the names of that format. *)
+
+type op = Add | Sub | Mul | Div | Mod | Eq | Ne | Lt | Le | Gt | Ge
+
+type expr = { loc : Location.t; desc : desc }
+
+and desc =
+  | Int of int64
+  | Bool of bool
+  | Unit
+  | Nil
+  | Var of string
+  | App of expr * expr
+  | Lam of string * expr
+  | Letin of string * expr * expr
+  | Letrec of string * string * expr * expr  (** [let rec f x = b in e] *)
+  | Ite of expr * expr * expr
+  | Binop of op * expr * expr
+  | Cons of expr * expr
+  | MatchList of expr * expr * string * string * expr
+      (** [match s with [] -> n | x :: xs -> c] *)
+  | Assert of expr
+  | Alloc of expr * expr  (** [Array.make n v] *)
+  | Get of expr * expr
+  | Set of expr * expr * expr
+  | Len of expr
+  | Ref of expr
+  | Deref of expr
+  | Assign of expr * expr
+  | Exn of string * expr  (** the exception [C v] *)
+  | Raise of expr
+  | Try of expr * string * expr  (** [try a with k -> h] *)
+  | ExnCase of expr * string * string * expr * expr
+      (** [match s with C x -> h | _ -> m] *)
+  | Overflow of int * expr
+      (** [e], an integer of [bits] bits: DIVA checks that its value fits, if it
+          may not ([Overflow.wrap]) *)
+
+(* A top-level item, with the text of its contract, if it has one. *)
+type item =
+  | Let_item of string * expr * string option
+  | Letrec_item of string * string * expr * string option
+  | Expr_item of expr
+
+let op_name = function
+  | Add -> "add"
+  | Sub -> "sub"
+  | Mul -> "mul"
+  | Div -> "div"
+  | Mod -> "mod"
+  | Eq -> "eq"
+  | Ne -> "ne"
+  | Lt -> "lt"
+  | Le -> "le"
+  | Gt -> "gt"
+  | Ge -> "ge"
+
+(**** S-expressions ****)
 
 type sexp = Atom of string | Str of string | List of sexp list
 
@@ -44,27 +105,67 @@ let rec print buf = function
         xs;
       Buffer.add_char buf ')'
 
-(* The expression [(KIND START STOP args...)], for the part [loc] of the file. *)
-let node (loc : Location.t) kind args =
-  List
-    (Atom kind
-    :: Atom (string_of_int loc.loc_start.pos_cnum)
-    :: Atom (string_of_int loc.loc_end.pos_cnum)
-    :: args)
+(* [e] as [(KIND START STOP args...)], for its part of the file. *)
+let rec to_sexp (e : expr) =
+  let node kind args =
+    List
+      (Atom kind
+      :: Atom (string_of_int e.loc.loc_start.pos_cnum)
+      :: Atom (string_of_int e.loc.loc_end.pos_cnum)
+      :: args)
+  in
+  let s = to_sexp in
+  match e.desc with
+  | Int n -> node "int" [ Atom (Int64.to_string n) ]
+  | Bool b -> node "bool" [ Atom (string_of_bool b) ]
+  | Unit -> node "unit" []
+  | Nil -> node "nil" []
+  | Var x -> node "var" [ Str x ]
+  | App (f, a) -> node "app" [ s f; s a ]
+  | Lam (x, b) -> node "lam" [ Str x; s b ]
+  | Letin (x, a, b) -> node "letin" [ Str x; s a; s b ]
+  | Letrec (f, x, b, e) -> node "letrec" [ Str f; Str x; s b; s e ]
+  | Ite (c, t, f) -> node "ite" [ s c; s t; s f ]
+  | Binop (op, a, b) -> node "binop" [ Atom (op_name op); s a; s b ]
+  | Cons (a, b) -> node "cons" [ s a; s b ]
+  | MatchList (l, n, x, xs, c) ->
+      node "matchList" [ s l; s n; Str x; Str xs; s c ]
+  | Assert c -> node "assert" [ s c ]
+  | Alloc (n, v) -> node "alloc" [ s n; s v ]
+  | Get (a, i) -> node "get" [ s a; s i ]
+  | Set (a, i, v) -> node "set" [ s a; s i; s v ]
+  | Len a -> node "len" [ s a ]
+  | Ref v -> node "ref" [ s v ]
+  | Deref r -> node "deref" [ s r ]
+  | Assign (r, v) -> node "assign" [ s r; s v ]
+  | Exn (c, v) -> node "exn" [ Str c; s v ]
+  | Raise v -> node "raise" [ s v ]
+  | Try (a, k, h) -> node "tryw" [ s a; Str k; s h ]
+  | ExnCase (v, c, x, h, m) -> node "exnCase" [ s v; Str c; Str x; s h; s m ]
+  | Overflow (bits, e) -> node "overflow" [ Atom (string_of_int bits); s e ]
 
-let var loc x = node loc "var" [ Str x ]
-let int loc n = node loc "int" [ Atom (string_of_int n) ]
-let bool loc b = node loc "bool" [ Atom (string_of_bool b) ]
-let unit loc = node loc "unit" []
-let letin loc x a b = node loc "letin" [ Str x; a; b ]
+let spec_sexp = function Some s -> [ Str s ] | None -> []
+
+let item_to_sexp = function
+  | Let_item (f, e, spec) ->
+      List ([ Atom "let"; Str f; to_sexp e ] @ spec_sexp spec)
+  | Letrec_item (f, x, b, spec) ->
+      List ([ Atom "letrec"; Str f; Str x; to_sexp b ] @ spec_sexp spec)
+  | Expr_item e -> List [ Atom "expr"; to_sexp e ]
+
+(**** Building expressions ****)
+
+let mk loc desc = { loc; desc }
+let var loc x = mk loc (Var x)
+let int loc n = mk loc (Int (Int64.of_int n))
+let bool loc b = mk loc (Bool b)
+let unit loc = mk loc Unit
+let letin loc x a b = mk loc (Letin (x, a, b))
 let seq loc a b = letin loc "_" a b
-let ite loc c t e = node loc "ite" [ c; t; e ]
-let binop loc op a b = node loc "binop" [ Atom op; a; b ]
-let app loc f a = node loc "app" [ f; a ]
-
-(* [s], an integer of [bits] bits: DIVA checks that its value fits, if it may not
-   ([Overflow.wrap] in [Diva/Sexp.lean]). *)
-let overflow loc bits s = node loc "overflow" [ Atom (string_of_int bits); s ]
+let ite loc c t e = mk loc (Ite (c, t, e))
+let binop loc op a b = mk loc (Binop (op, a, b))
+let app loc f a = mk loc (App (f, a))
+let overflow loc bits e = mk loc (Overflow (bits, e))
 
 (* [a op b] on integers of [bits] bits. *)
 let arith loc bits op a b = overflow loc bits (binop loc op a b)
@@ -77,7 +178,7 @@ let fresh =
     incr n;
     Printf.sprintf "%%t%d" !n
 
-(* ---------- Types ---------- *)
+(**** Types ****)
 
 (* The type [ty] is [int], [char], [Int32.t] or [Int64.t] ([`Int]), [bool], [unit], a
    type variable such as ['a], or another one. *)
@@ -97,7 +198,7 @@ let kind env ty =
   | Tvar _ -> `Var
   | _ -> `Other
 
-(* ---------- Expressions ---------- *)
+(**** Expressions ****)
 
 (* The operators of DIVA. DIVA's [=] and [<>] work on integers, booleans and [()], and
    its other comparisons only on integers. On other values, they stop the program with a
@@ -106,34 +207,34 @@ let kind env ty =
    reports. *)
 let binops =
   [
-    ("Stdlib.+", "add");
-    ("Stdlib.-", "sub");
-    ("Stdlib.*", "mul");
-    ("Stdlib./", "div");
-    ("Stdlib.mod", "mod");
-    ("Stdlib.=", "eq");
-    ("Stdlib.<>", "ne");
-    ("Stdlib.<", "lt");
-    ("Stdlib.<=", "le");
-    ("Stdlib.>", "gt");
-    ("Stdlib.>=", "ge");
+    ("Stdlib.+", Add);
+    ("Stdlib.-", Sub);
+    ("Stdlib.*", Mul);
+    ("Stdlib./", Div);
+    ("Stdlib.mod", Mod);
+    ("Stdlib.=", Eq);
+    ("Stdlib.<>", Ne);
+    ("Stdlib.<", Lt);
+    ("Stdlib.<=", Le);
+    ("Stdlib.>", Gt);
+    ("Stdlib.>=", Ge);
   ]
 
 (* The integer constants of the library. *)
 let constants =
   [
-    ("Stdlib.max_int", string_of_int max_int);
-    ("Stdlib.min_int", string_of_int min_int);
-    ("Stdlib.Int32.zero", "0");
-    ("Stdlib.Int32.one", "1");
-    ("Stdlib.Int32.minus_one", "-1");
-    ("Stdlib.Int32.max_int", Int32.to_string Int32.max_int);
-    ("Stdlib.Int32.min_int", Int32.to_string Int32.min_int);
-    ("Stdlib.Int64.zero", "0");
-    ("Stdlib.Int64.one", "1");
-    ("Stdlib.Int64.minus_one", "-1");
-    ("Stdlib.Int64.max_int", Int64.to_string Int64.max_int);
-    ("Stdlib.Int64.min_int", Int64.to_string Int64.min_int);
+    ("Stdlib.max_int", Int64.of_int max_int);
+    ("Stdlib.min_int", Int64.of_int min_int);
+    ("Stdlib.Int32.zero", 0L);
+    ("Stdlib.Int32.one", 1L);
+    ("Stdlib.Int32.minus_one", -1L);
+    ("Stdlib.Int32.max_int", Int64.of_int32 Int32.max_int);
+    ("Stdlib.Int32.min_int", Int64.of_int32 Int32.min_int);
+    ("Stdlib.Int64.zero", 0L);
+    ("Stdlib.Int64.one", 1L);
+    ("Stdlib.Int64.minus_one", -1L);
+    ("Stdlib.Int64.max_int", Int64.max_int);
+    ("Stdlib.Int64.min_int", Int64.min_int);
   ]
 
 (* The modules of integers with a fixed number of bits other than [int]'s 63, and
@@ -141,13 +242,7 @@ let constants =
 let int_modules = [ ("Stdlib.Int32.", 32); ("Stdlib.Int64.", 64) ]
 
 let int_functions =
-  [
-    ("add", "add");
-    ("sub", "sub");
-    ("mul", "mul");
-    ("div", "div");
-    ("rem", "mod");
-  ]
+  [ ("add", Add); ("sub", Sub); ("mul", Mul); ("div", Div); ("rem", Mod) ]
 
 (* The module of [p] in [int_modules], with its number of bits, and the name of [p] in
    it: [Stdlib.Int32.add] gives [32] and [add]. *)
@@ -214,18 +309,18 @@ let is_exception (cd : Data_types.constructor_description) =
 (* The translation of [e]. The sub-expressions are translated from the first to the
    last, with [let]: OCaml computes the arguments of a function from the last to the
    first. So the first construct that isn't supported is the one reported. *)
-let rec expr (e : expression) : sexp =
+let rec expr (e : expression) : expr =
   let loc = e.exp_loc in
   match e.exp_desc with
   | Texp_ident (Path.Pident id, _, _) -> var loc (Ident.name id)
   | Texp_ident (p, _, _) when List.mem_assoc (Path.name p) constants ->
-      node loc "int" [ Atom (List.assoc (Path.name p) constants) ]
+      mk loc (Int (List.assoc (Path.name p) constants))
   | Texp_ident (p, _, _) ->
       unsupported loc "the library function `%s`, except when it is called"
         (Path.name p)
   | Texp_constant (Const_int n) -> int loc n
-  | Texp_constant (Const_int32 n) -> node loc "int" [ Atom (Int32.to_string n) ]
-  | Texp_constant (Const_int64 n) -> node loc "int" [ Atom (Int64.to_string n) ]
+  | Texp_constant (Const_int32 n) -> mk loc (Int (Int64.of_int32 n))
+  | Texp_constant (Const_int64 n) -> mk loc (Int n)
   | Texp_constant (Const_char c) -> int loc (Char.code c)
   | Texp_constant _ ->
       unsupported loc "this constant (only integers and characters)"
@@ -236,7 +331,7 @@ let rec expr (e : expression) : sexp =
       letin loc x a (expr body)
   | Texp_let (Recursive, [ vb ], body) ->
       let f, x, b = rec_fun vb in
-      node loc "letrec" [ Str f; Str x; b; expr body ]
+      mk loc (Letrec (f, x, b, expr body))
   | Texp_let _ -> unsupported loc "`let ... and ...`"
   | Texp_function (params, body) -> lams loc params body
   | Texp_apply (f, args) ->
@@ -252,7 +347,7 @@ let rec expr (e : expression) : sexp =
   | Texp_sequence (a, b) ->
       let a = expr a in
       seq loc a (expr b)
-  | Texp_assert (c, _) -> node loc "assert" [ expr c ]
+  | Texp_assert (c, _) -> mk loc (Assert (expr c))
   | Texp_match (s, cases, [], _) ->
       let value (c : computation case) =
         match split_pattern c.c_lhs with
@@ -263,19 +358,15 @@ let rec expr (e : expression) : sexp =
   | Texp_try (a, cases, []) ->
       let k = "%exn" in
       let a = expr a in
-      node loc "tryw" [ a; Str k; handlers loc (var loc k) cases (Some k) ]
+      mk loc (Try (a, k, handlers loc (var loc k) cases (Some k)))
   | Texp_while (c, b) ->
       (* as DIVA's parser: [let rec %while _ = if c then (b; %while ()) else () in
        %while ()] *)
       let c = expr c in
       let next = app loc (var loc "%while") (unit loc) in
-      node loc "letrec"
-        [
-          Str "%while";
-          Str "_";
-          ite loc c (seq loc (expr b) next) (unit loc);
-          next;
-        ]
+      mk loc
+        (Letrec
+           ("%while", "_", ite loc c (seq loc (expr b) next) (unit loc), next))
   | Texp_for (id, _, lo, hi, dir, b) ->
       (* as DIVA's parser: [let %lo = lo in let %hi = hi in
        let rec %for i = if i <= %hi then (b; %for (i + 1)) else () in %for %lo] *)
@@ -283,22 +374,21 @@ let rec expr (e : expression) : sexp =
       let lo = expr lo in
       let hi = expr hi in
       let cmp, step =
-        match dir with Upto -> ("le", "add") | Downto -> ("ge", "sub")
+        match dir with Upto -> (Le, Add) | Downto -> (Ge, Sub)
       in
       let next =
         app loc (var loc "%for") (binop loc step (var loc i) (int loc 1))
       in
       let loop =
-        node loc "letrec"
-          [
-            Str "%for";
-            Str i;
-            ite loc
-              (binop loc cmp (var loc i) (var loc "%hi"))
-              (seq loc (expr b) next)
-              (unit loc);
-            app loc (var loc "%for") (var loc "%lo");
-          ]
+        mk loc
+          (Letrec
+             ( "%for",
+               i,
+               ite loc
+                 (binop loc cmp (var loc i) (var loc "%hi"))
+                 (seq loc (expr b) next)
+                 (unit loc),
+               app loc (var loc "%for") (var loc "%lo") ))
       in
       letin loc "%lo" lo (letin loc "%hi" hi loop)
   | Texp_tuple _ -> unsupported loc "tuples (for now)"
@@ -313,10 +403,13 @@ and construct loc cd args =
   | "true", [] -> bool loc true
   | "false", [] -> bool loc false
   | "()", [] -> unit loc
-  | "[]", [] -> node loc "nil" []
-  | "::", [ a; b ] -> ordered loc [ a; b ] (fun l -> node loc "cons" l)
-  | c, [] when is_exception cd -> node loc "exn" [ Str c; unit loc ]
-  | c, [ a ] when is_exception cd -> node loc "exn" [ Str c; arg a ]
+  | "[]", [] -> mk loc Nil
+  | "::", [ a; b ] ->
+      ordered loc [ a; b ] (function
+        | [ a; b ] -> mk loc (Cons (a, b))
+        | _ -> assert false)
+  | c, [] when is_exception cd -> mk loc (Exn (c, unit loc))
+  | c, [ a ] when is_exception cd -> mk loc (Exn (c, arg a))
   | c, _ ->
       unsupported loc
         "the constructor `%s` (only exceptions with at most one argument)" c
@@ -337,13 +430,13 @@ and lams loc params body =
         | Nolabel, Tparam_pat pat -> pat_name pat
         | _ -> unsupported p.fp_loc "labelled and optional parameters"
       in
-      node loc "lam" [ Str x; lams loc ps body ]
+      mk loc (Lam (x, lams loc ps body))
   | [] -> (
       match body with
       | Tfunction_body b -> expr b
       | Tfunction_cases { cases; loc = cloc; _ } ->
           let x = fresh () in
-          node loc "lam" [ Str x; match_cases cloc (var cloc x) cases ])
+          mk loc (Lam (x, match_cases cloc (var cloc x) cases)))
 
 (* [let rec f x = b]: the name of the function, its first parameter, and the rest. *)
 and rec_fun vb =
@@ -351,7 +444,7 @@ and rec_fun vb =
   match vb.vb_expr.exp_desc with
   | Texp_function _ -> (
       match expr vb.vb_expr with
-      | List [ Atom "lam"; _; _; Str x; b ] -> (f, x, b)
+      | { desc = Lam (x, b); _ } -> (f, x, b)
       | _ -> assert false)
   | _ -> unsupported vb.vb_loc "`let rec` of a value that isn't a function"
 
@@ -396,7 +489,7 @@ and apply loc f args =
   | Some p, [ a; b ] when List.mem_assoc p binops ->
       let op = List.assoc p binops in
       (match (op, kind a.exp_env a.exp_type) with
-      | _, (`Int | `Var) | ("eq" | "ne"), (`Bool | `Unit) -> ()
+      | _, (`Int | `Var) | (Eq | Ne), (`Bool | `Unit) -> ()
       | _ -> unsupported loc "`%s` on this type" p);
       two a b (fun a b -> arith loc 63 op a b)
   | Some "Stdlib.&&", [ a; b ] ->
@@ -408,25 +501,19 @@ and apply loc f args =
   | Some "Stdlib.not", [ a ] ->
       ite loc (expr a) (bool loc false) (bool loc true)
   | Some "Stdlib.~-", [ a ] ->
-      overflow loc 63 (binop loc "sub" (int loc 0) (expr a))
-  | Some "Stdlib.ref", [ v ] -> node loc "ref" [ expr v ]
-  | Some "Stdlib.!", [ r ] -> node loc "deref" [ expr r ]
-  | Some "Stdlib.:=", [ r; v ] ->
-      two r v (fun r v -> node loc "assign" [ r; v ])
+      overflow loc 63 (binop loc Sub (int loc 0) (expr a))
+  | Some "Stdlib.ref", [ v ] -> mk loc (Ref (expr v))
+  | Some "Stdlib.!", [ r ] -> mk loc (Deref (expr r))
+  | Some "Stdlib.:=", [ r; v ] -> two r v (fun r v -> mk loc (Assign (r, v)))
   | Some (("Stdlib.incr" | "Stdlib.decr") as p), [ r ] ->
-      let op = if p = "Stdlib.incr" then "add" else "sub" in
+      let op = if p = "Stdlib.incr" then Add else Sub in
       with_name loc r (fun r ->
-          node loc "assign"
-            [
-              r;
-              overflow loc 63
-                (binop loc op (node loc "deref" [ r ]) (int loc 1));
-            ])
-  | Some "Stdlib.raise", [ v ] -> node loc "raise" [ expr v ]
+          mk loc (Assign (r, arith loc 63 op (mk loc (Deref r)) (int loc 1))))
+  | Some "Stdlib.raise", [ v ] -> mk loc (Raise (expr v))
   | Some "Stdlib.failwith", [ s ] ->
-      node loc "raise" [ node loc "exn" [ Str "Failure"; arg s ] ]
+      mk loc (Raise (mk loc (Exn ("Failure", arg s))))
   | Some "Stdlib.invalid_arg", [ s ] ->
-      node loc "raise" [ node loc "exn" [ Str "Invalid_argument"; arg s ] ]
+      mk loc (Raise (mk loc (Exn ("Invalid_argument", arg s))))
   | Some "Stdlib.ignore", [ a ] -> seq loc (expr a) (unit loc)
   | Some p, [ a ] when List.mem p output_functions -> seq loc (arg a) (unit loc)
   | Some "Stdlib.Char.code", [ a ] -> expr a
@@ -435,7 +522,7 @@ and apply loc f args =
       match (name, args) with
       | n, [ a; b ] when List.mem_assoc n int_functions ->
           two a b (fun a b -> arith loc bits (List.assoc n int_functions) a b)
-      | "neg", [ a ] -> overflow loc bits (binop loc "sub" (int loc 0) (expr a))
+      | "neg", [ a ] -> overflow loc bits (binop loc Sub (int loc 0) (expr a))
       (* [Int32.of_int] wraps an [int] that doesn't fit in 32 bits *)
       | "of_int", [ a ] ->
           if bits < 63 then overflow loc bits (expr a) else expr a
@@ -444,13 +531,13 @@ and apply loc f args =
           if bits > 63 then overflow loc 63 (expr a) else expr a
       | _ -> unsupported loc "the library function `%s`" p)
   | Some "Stdlib.Array.make", [ n; v ] ->
-      two n v (fun n v -> node loc "alloc" [ n; v ])
-  | Some "Stdlib.Array.length", [ a ] -> node loc "len" [ expr a ]
+      two n v (fun n v -> mk loc (Alloc (n, v)))
+  | Some "Stdlib.Array.length", [ a ] -> mk loc (Len (expr a))
   | Some "Stdlib.Array.get", [ a; i ] ->
-      two a i (fun a i -> node loc "get" [ a; i ])
+      two a i (fun a i -> mk loc (Get (a, i)))
   | Some "Stdlib.Array.set", [ a; i; v ] ->
       ordered loc [ a; i; v ] (function
-        | [ a; i; v ] -> node loc "set" [ a; i; v ]
+        | [ a; i; v ] -> mk loc (Set (a, i, v))
         | _ -> assert false)
   | Some p, _ -> unsupported loc "the library function `%s`" p
   | None, _ ->
@@ -495,8 +582,7 @@ and match_cases loc s cases =
       match ctor cons with
       | Some (_, [ x; xs ]) ->
           let n = expr nil.c_rhs in
-          node loc "matchList"
-            [ s; n; Str (pat_name x); Str (pat_name xs); expr cons.c_rhs ]
+          mk loc (MatchList (s, n, pat_name x, pat_name xs, expr cons.c_rhs))
       | _ -> assert false)
   | _ ->
       let exn_case (c : value case) =
@@ -518,7 +604,7 @@ and handlers loc s cases reraise =
   match cases with
   | [] -> (
       match reraise with
-      | Some k -> node loc "raise" [ var loc k ]
+      | Some k -> mk loc (Raise (var loc k))
       | None ->
           unsupported loc "a `match` on an exception without a last case `_`")
   | c :: rest -> (
@@ -534,15 +620,14 @@ and handlers loc s cases reraise =
                   "an exception with several arguments"
           in
           let h = expr c.c_rhs in
-          node loc "exnCase"
-            [ s; Str cd.cstr_name; Str x; h; handlers loc s rest reraise ]
+          mk loc (ExnCase (s, cd.cstr_name, x, h, handlers loc s rest reraise))
       | Tpat_any -> expr c.c_rhs
       | Tpat_var (id, _, _) -> letin loc (Ident.name id) s (expr c.c_rhs)
       | _ ->
           unsupported c.c_lhs.pat_loc
             "this pattern (only an exception, a name or `_`)")
 
-(* ---------- Top-level items ---------- *)
+(**** Top-level items ****)
 
 (* The text of the comment at [loc], after spaces and newlines that replace the text
    of the file before it. So a parse error in the contract has its position in the
@@ -570,24 +655,22 @@ let spec src comments stop next =
         && l.loc_start.pos_cnum < next)
       comments
   with
-  | Some (_, l) -> [ Str (comment_text src l) ]
-  | None -> []
+  | Some (_, l) -> Some (comment_text src l)
+  | None -> None
 
 (* The top-level item [si], whose contract is before [next]. *)
 let item src comments next (si : structure_item) =
   let spec () = spec src comments si.str_loc.loc_end.pos_cnum next in
   match si.str_desc with
-  | Tstr_eval (e, _) -> Some (List [ Atom "expr"; expr e ])
+  | Tstr_eval (e, _) -> Some (Expr_item (expr e))
   (* [let _ = e] and [let () = e] define no name: they are the expression [e] *)
   | Tstr_value (Nonrecursive, [ vb ]) when pat_name vb.vb_pat = "_" ->
-      Some (List [ Atom "expr"; expr vb.vb_expr ])
+      Some (Expr_item (expr vb.vb_expr))
   | Tstr_value (Nonrecursive, [ vb ]) ->
-      Some
-        (List
-           ([ Atom "let"; Str (pat_name vb.vb_pat); expr vb.vb_expr ] @ spec ()))
+      Some (Let_item (pat_name vb.vb_pat, expr vb.vb_expr, spec ()))
   | Tstr_value (Recursive, [ vb ]) ->
       let f, x, b = rec_fun vb in
-      Some (List ([ Atom "letrec"; Str f; Str x; b ] @ spec ()))
+      Some (Letrec_item (f, x, b, spec ()))
   | Tstr_value _ -> unsupported si.str_loc "`let ... and ...`"
   (* a constructor of a type is rejected where it is used *)
   | Tstr_exception _ | Tstr_type _ | Tstr_attribute _ -> None
@@ -610,7 +693,7 @@ let program src comments (str : structure) =
   List.iter
     (fun x ->
       Buffer.add_string buf "\n  ";
-      print buf x)
+      print buf (item_to_sexp x))
     (go str.str_items);
   Buffer.add_string buf ")\n";
   Buffer.contents buf
