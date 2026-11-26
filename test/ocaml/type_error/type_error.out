@@ -1,0 +1,48 @@
+$ diva ocaml run type_error.ml
+error: File "type_error.ml", line 2, characters 12-16:
+2 | let x = 1 + true
+                ^^^^
+Error: The constructor true has type bool
+       but an expression was expected of type int
+[exit 1]
+
+$ diva ocaml check type_error.ml
+error: File "type_error.ml", line 2, characters 12-16:
+2 | let x = 1 + true
+                ^^^^
+Error: The constructor true has type bool
+       but an expression was expected of type int
+[exit 1]
+
+$ diva ocaml opt type_error.ml
+error: File "type_error.ml", line 2, characters 12-16:
+2 | let x = 1 + true
+                ^^^^
+Error: The constructor true has type bool
+       but an expression was expected of type int
+[exit 1]
+
+$ diva ocaml hints type_error.ml
+error: File "type_error.ml", line 2, characters 12-16:
+2 | let x = 1 + true
+                ^^^^
+Error: The constructor true has type bool
+       but an expression was expected of type int
+[exit 1]
+
+$ diva ocaml cert --check type_error.ml
+error: File "type_error.ml", line 2, characters 12-16:
+2 | let x = 1 + true
+                ^^^^
+Error: The constructor true has type bool
+       but an expression was expected of type int
+[exit 1]
+
+$ diva ocaml prove --check -o prove.lean type_error.ml
+error: File "type_error.ml", line 2, characters 12-16:
+2 | let x = 1 + true
+                ^^^^
+Error: The constructor true has type bool
+       but an expression was expected of type int
+[exit 1]
+

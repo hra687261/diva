@@ -13,7 +13,8 @@
         default = pkgs.mkShell {
           # `elan` manages the Lean toolchain pinned in ./lean-toolchain
           # `git` is needed by Lake to fetch the ParseIt dependency.
-          packages = [ pkgs.elan pkgs.git ];
+          packages = [ pkgs.elan pkgs.git ] ++ (with pkgs.ocaml-ng.ocamlPackages_5_4;
+            [ ocaml dune_3 ocamlformat ocaml-lsp ]);
           # With `bindnow` Nix's linker resolves every symbol of a shared library
           # when it is loaded.
           hardeningDisable = [ "bindnow" ];

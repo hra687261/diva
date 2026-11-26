@@ -1,0 +1,30 @@
+$ diva ocaml run order.ml
+2
+[exit 0]
+
+$ diva ocaml check order.ml
+order.ml:7:17-24: `(raise A)`: not analysed yet, so it may fail
+order.ml:8:17-24: `(raise B)`: not analysed yet, so it may fail
+order.ml:9:14-19: `(a - b)`: the operands may not be integers (⊤ and ⊤)
+order.ml:11:3-45: `(try (let %t2 = (g ()) in (let %t1 = (f ()) in ((sub %t1)...`: not analysed yet, so it may fail
+[exit 1]
+
+$ diva ocaml opt order.ml
+(let f = (fun _ -> (raise A)) in (let g = (fun _ -> (raise B)) in (let sub = (fun a -> (fun b -> (a - b))) in (try (let %t2 = (g ()) in (let %t1 = (f ()) in ((sub %t1) %t2))) with %exn -> (match %exn with A _ -> 1 | _ -> (match %exn with B _ -> 2 | _ -> (raise %exn)))))))
+[exit 0]
+
+$ diva ocaml hints order.ml
+[exit 0]
+
+$ diva ocaml cert --check order.ml
+the program may fail, so there is no certificate (see `diva check`)
+[exit 1]
+
+$ diva ocaml prove --check -o prove.lean order.ml
+no function has a contract: write one in a `(*@ ... *)` comment after a function
+[exit 1]
+
+$ diva ocaml print order.ml
+(let f = (fun _ -> (raise A)) in (let g = (fun _ -> (raise B)) in (let sub = (fun a -> (fun b -> (a - b))) in (try (let %t2 = (g ()) in (let %t1 = (f ()) in ((sub %t1) %t2))) with %exn -> (match %exn with A _ -> 1 | _ -> (match %exn with B _ -> 2 | _ -> (raise %exn)))))))
+[exit 0]
+

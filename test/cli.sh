@@ -9,20 +9,28 @@
 #
 # A test's folder may also have a file `commands`, with more commands to run, one per
 # line, and scripts `*.sh` that these commands use.
+#
+# The tests in `test/ocaml/` are the same, but every command is run as `diva ocaml CMD`:
+# they are read by the OCaml front end.
 set -u
 export PATH=$HOME/.elan/bin:$PATH
 lake build diva >/dev/null || exit 1
+# the OCaml front end, if dune is installed (`nix develop`). Without it, the tests in
+# `test/ocaml/` are skipped.
+if command -v dune >/dev/null; then frontend/ocaml/build.sh || exit 1; fi
 diva=$PWD/.lake/build/bin/diva
 commands=(run check opt hints "cert --check" "prove --check -o prove.lean")
 fails=0
 
-# The output of each command on the program $1, run from its folder.
+# The output of each command on the program $1, run from its folder. $2 is put before
+# each command: `ocaml` or nothing.
 outputs() {
   local all=("${commands[@]}")
   if [ -f "$(dirname "$1")/commands" ]; then
     mapfile -t -O "${#all[@]}" all <"$(dirname "$1")/commands"
   fi
   for command in "${all[@]}"; do
+    command="$2$command"
     echo "\$ diva $command $(basename "$1")"
     # `$command` unquoted: `cert --check` is two arguments
     (cd "$(dirname "$1")" && "$diva" $command "$(basename "$1")" 2>&1)
@@ -31,12 +39,20 @@ outputs() {
   done
 }
 
-for test in $(find test/cli -name "*.ml" | sort); do
+for test in $(find test/cli test/ocaml -name "*.ml" | sort); do
   dir=$(dirname "$test")
+  prefix=""
+  if [ "${test#test/ocaml/}" != "$test" ]; then
+    prefix="ocaml "
+    if [ ! -x .lake/build/bin/ocaml-frontend ]; then
+      echo "skip $test (no OCaml)"
+      continue
+    fi
+  fi
   work=$(mktemp -d)
   cp "$test" "$work"
   cp "$dir"/commands "$dir"/*.sh "$work" 2>/dev/null
-  outputs "$work/$(basename "$test")" >"$work/$(basename "${test%.ml}").out"
+  outputs "$work/$(basename "$test")" "$prefix" >"$work/$(basename "${test%.ml}").out"
   if [ "${1:-}" = "--update" ] || [ ! -f "${test%.ml}.out" ]; then
     rm -f "$dir"/*.lean
     cp "$work"/* "$dir"

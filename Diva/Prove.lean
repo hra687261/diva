@@ -269,7 +269,7 @@ def item (proofs : List (String × String)) (called inferred : List String) (st 
           let text ← withContract proofs st n f s x body env {} (empty := true)
           return { st with out := st.out.push text, env := (f, some s!"{n}_fn.clos") :: st.env,
                            fns := n :: st.fns, defs := (n ++ "_fn") :: st.defs }
-        let sStr := match s with | some s => s!"some {Cert.str s}" | none => "none"
+        let sStr := match s with | some s => s!"(some {Cert.str s})" | none => "none"
         let text := s!"/-- `{f}`, which has no contract. -/
 def {n}_val : Value := .clos {sStr} {Cert.str x} {Cert.expr body} {env}
 "

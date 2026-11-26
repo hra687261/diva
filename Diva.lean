@@ -2,6 +2,7 @@ import Diva.Ast
 import Diva.Desugar
 import Diva.Overflow
 import Diva.Parser
+import Diva.Sexp
 import Diva.Semantics
 import Diva.Interp
 import Diva.AbsInt.Domain

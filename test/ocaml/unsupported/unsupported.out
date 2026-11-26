@@ -1,0 +1,42 @@
+$ diva ocaml run unsupported.ml
+error: File "unsupported.ml", line 5, characters 11-17:
+5 | let pair = (1, 2)
+               ^^^^^^
+Error: DIVA doesn't support tuples (for now)
+[exit 1]
+
+$ diva ocaml check unsupported.ml
+error: File "unsupported.ml", line 5, characters 11-17:
+5 | let pair = (1, 2)
+               ^^^^^^
+Error: DIVA doesn't support tuples (for now)
+[exit 1]
+
+$ diva ocaml opt unsupported.ml
+error: File "unsupported.ml", line 5, characters 11-17:
+5 | let pair = (1, 2)
+               ^^^^^^
+Error: DIVA doesn't support tuples (for now)
+[exit 1]
+
+$ diva ocaml hints unsupported.ml
+error: File "unsupported.ml", line 5, characters 11-17:
+5 | let pair = (1, 2)
+               ^^^^^^
+Error: DIVA doesn't support tuples (for now)
+[exit 1]
+
+$ diva ocaml cert --check unsupported.ml
+error: File "unsupported.ml", line 5, characters 11-17:
+5 | let pair = (1, 2)
+               ^^^^^^
+Error: DIVA doesn't support tuples (for now)
+[exit 1]
+
+$ diva ocaml prove --check -o prove.lean unsupported.ml
+error: File "unsupported.ml", line 5, characters 11-17:
+5 | let pair = (1, 2)
+               ^^^^^^
+Error: DIVA doesn't support tuples (for now)
+[exit 1]
+

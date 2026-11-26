@@ -54,19 +54,18 @@ def fuel : Nat := 100000
 def parseError (file : Option String) (msg : String) : Result :=
   { err := [match file with | some f => s!"{f}:{msg}" | none => msg], code := 1 }
 
-/-- The result of `cmd` on the program `src` parses to, or a parse error. With an integer
-    type `intTy`, each operation that may overflow it is checked (`Overflow`). -/
+/-- The result of `cmd` on the program `src` parses to, or a parse error. -/
 def withParse (file : Option String) (src : String) (cmd : Expr → Result)
-    (intTy : Option IntType := none) : Result :=
-  match parse src intTy with
+    (read : Reader := parseItemsLoc) : Result :=
+  match read.expr src with
   | .ok e => cmd e
   | .error msg => parseError file msg
 
 /-- `diva run`: parse the program `src`, run it, and print the value it returns. If
     the run fails, or takes more than `fuel` steps, print why and exit with code 1. -/
-def run (src : String) (file : Option String := none) (intTy : Option IntType := none) :
-    Result :=
-  withParse file src (intTy := intTy) fun e =>
+def run (src : String) (file : Option String := none)
+    (read : Reader := parseItemsLoc) : Result :=
+  withParse file src (read := read) fun e =>
     match eval fuel [] [] e with
     | .ok v _ => { out := [Report.clean (toString v)] }
     | .err k _ => { err := [s!"runtime error: {ppErr k}"], code := 1 }
@@ -78,12 +77,18 @@ def place (src : String) : Option String → Span → String
   | some file, sp => sp.format src file
   | none, _ => ""
 
+/-- `diva print`: parse the program `src`, and print it as DIVA reads it: one expression,
+    where the `requires` of the contracts are `assert`s. -/
+def print (src : String) (file : Option String := none)
+    (read : Reader := parseItemsLoc) : Result :=
+  withParse file src (read := read) fun e => { out := [Report.clean (toString e)] }
+
 /-- `diva check`: parse the program `src`, and print the places where the analysis
     says it may fail, with their positions in `file`. Exit with code 1 if it may fail,
     and 0 if it can't. -/
-def check (src : String) (file : Option String := none) (intTy : Option IntType := none) :
-    Result :=
-  match parseLoc src intTy with
+def check (src : String) (file : Option String := none)
+    (read : Reader := parseItemsLoc) : Result :=
+  match read.lexpr src with
   | .error msg => parseError file msg
   | .ok ⟨e, l⟩ =>
     let H := inferHints ([] : AEnv Itv) e
@@ -94,8 +99,8 @@ def check (src : String) (file : Option String := none) (intTy : Option IntType 
     `rounds` times, until the program is safe with them (`Oracle.consult`). Print each
     round, then what `check` prints with the last hints, with the positions in `file`. -/
 def checkOracle [Monad m] (oracle : String → m String) (rounds : Nat) (src : String)
-    (file : Option String := none) (intTy : Option IntType := none) : m Result :=
-  match parseLoc src intTy with
+    (file : Option String := none) (read : Reader := parseItemsLoc) : m Result :=
+  match read.lexpr src with
   | .error msg => return parseError file msg
   | .ok ⟨e, l⟩ => do
     let rs ← Oracle.consult oracle ([] : AEnv Itv) e rounds (file.map fun f => ⟨f, src, l⟩)
@@ -119,8 +124,8 @@ def checkOracle [Monad m] (oracle : String → m String) (rounds : Nat) (src : S
     optimiser knows the precondition. If the analysis proves that the program never
     fails, the checks (`assert`) are erased: they always hold. -/
 def opt (src : String) (infer : Bool := false) (file : Option String := none)
-    (intTy : Option IntType := none) : Result :=
-  match parseItems src intTy with
+    (read : Reader := parseItemsLoc) : Result :=
+  match read.items src with
   | .error msg => parseError file msg
   | .ok items =>
     let items := if infer then (SpecOfHints.inferContracts items).1 else items
@@ -132,8 +137,8 @@ def opt (src : String) (infer : Bool := false) (file : Option String := none)
     (`Cert.optCertificate`): a Lean file stating that the program and its optimised
     version are equivalent. -/
 def optCert (src : String) (infer : Bool := false) (file : Option String := none)
-    (intTy : Option IntType := none) : Result :=
-  match parseItems src intTy with
+    (read : Reader := parseItemsLoc) : Result :=
+  match read.items src with
   | .error msg => parseError file msg
   | .ok items =>
     let items := if infer then (SpecOfHints.inferContracts items).1 else items
@@ -144,18 +149,18 @@ def optCert (src : String) (infer : Bool := false) (file : Option String := none
     line, as `name : values`. A hint gives the values that a function parameter can
     take, or that a function can return: `$f` is the result of the function `f`.
     Names keep their `#n` suffix: it makes them unique, and hints are keyed by name. -/
-def hints (src : String) (file : Option String := none) (intTy : Option IntType := none) :
-    Result :=
-  withParse file src (intTy := intTy) fun e =>
+def hints (src : String) (file : Option String := none)
+    (read : Reader := parseItemsLoc) : Result :=
+  withParse file src (read := read) fun e =>
     { out := (inferHints ([] : AEnv Itv) e).map fun (x, a) => s!"{x} : {a}" }
 
 /-- `diva cert`: parse the program `src`, and print its certificate
     (`Cert.certificate`): a Lean file stating that the program never fails, with the
     hints inferred for it. If the analysis says that the program may fail, there is
     no certificate: print why and exit with code 1. -/
-def cert (src : String) (file : Option String := none) (intTy : Option IntType := none) :
-    Result :=
-  withParse file src (intTy := intTy) fun e =>
+def cert (src : String) (file : Option String := none)
+    (read : Reader := parseItemsLoc) : Result :=
+  withParse file src (read := read) fun e =>
     match Cert.certificate (inferHints ([] : AEnv Itv) e) e with
     | some c => { out := [c] }
     | none => { err := ["the program may fail, so there is no certificate (see `diva check`)"],
@@ -167,8 +172,8 @@ def cert (src : String) (file : Option String := none) (intTy : Option IntType :
     with code 1. With `infer`, each function without a contract gets the contract that
     the analysis infers (`SpecOfHints.inferContracts`). -/
 def prove (src : String) (infer : Bool := false) (file : Option String := none)
-    (intTy : Option IntType := none) : Result :=
-  match parseItems src intTy with
+    (read : Reader := parseItemsLoc) : Result :=
+  match read.items src with
   | .error msg => parseError file msg
   | .ok items =>
     let (items, inferred) := if infer then SpecOfHints.inferContracts items else (items, [])
@@ -183,8 +188,8 @@ def prove (src : String) (infer : Bool := false) (file : Option String := none)
     Exit with code 1 if Lean doesn't accept the last file. -/
 def proveOracle [Monad m] (oracle : String → m String) (lean : String → m (Option String))
     (check : String → Option String) (rounds : Nat) (src : String)
-    (file : Option String := none) (intTy : Option IntType := none) : m Result := do
-  match parseItems src intTy with
+    (file : Option String := none) (read : Reader := parseItemsLoc) : m Result := do
+  match read.items src with
   | .error msg => return parseError file msg
   | .ok items =>
     match ← (ProveOracle.consult oracle lean check items rounds).run with
@@ -200,8 +205,8 @@ def proveOracle [Monad m] (oracle : String → m String) (lean : String → m (O
     with the new contracts. Exit with code 1 if no answer is accepted. -/
 def specOracle [Monad m] (oracle : String → m String) (lean : String → m (Option String))
     (rounds : Nat) (src : String)
-    (file : Option String := none) : m Result := do
-  match parseItems src with
+    (file : Option String := none) (read : Reader := parseItemsLoc) : m Result := do
+  match read.items src with
   | .error msg => return parseError file msg
   | .ok items =>
     if ContractOracle.toSpecify items |>.isEmpty then
@@ -224,8 +229,8 @@ def specOracle [Monad m] (oracle : String → m String) (lean : String → m (Op
     code 1 if no answer is accepted. -/
 def synthOracle [Monad m] (oracle : String → m String) (lean : String → m (Option String))
     (rounds : Nat) (src : String)
-    (file : Option String := none) : m Result := do
-  match parseItems src with
+    (file : Option String := none) (read : Reader := parseItemsLoc) : m Result := do
+  match read.items src with
   | .error msg => return parseError file msg
   | .ok items =>
     let fs := SynthOracle.stubs items

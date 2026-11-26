@@ -22,6 +22,30 @@ def fileName (p : Parsed) : String :=
   let path := p.positionalArg! "file" |>.as! String
   if path == "-" then "<stdin>" else path
 
+/-- The OCaml front end: `ocaml-frontend`, next to the `diva` executable, where
+    `frontend/ocaml/build.sh` puts it. -/
+def frontendPath : IO String := do
+  let app ← IO.appPath
+  let p := (app.parent.getD ".") / "ocaml-frontend"
+  unless ← p.pathExists do
+    throw (IO.userError "the OCaml front end isn't built: run frontend/ocaml/build.sh")
+  return p.toString
+
+/-- How the commands read the file. Under `diva ocaml`, the OCaml front end
+    translates the file, and the commands read its S-expressions (`Sexp.items`).
+    Otherwise, DIVA's parser reads the file. -/
+def fileReader (p : Parsed) : IO Reader := do
+  unless p.cmd.meta.parentNames.contains "ocaml" do return parseItemsLoc
+  let path := p.positionalArg! "file" |>.as! String
+  if path == "-" then throw (IO.userError "`diva ocaml` needs a file, not `-`")
+  let out ← IO.Process.output { cmd := ← frontendPath, args := #[path] }
+  if out.exitCode != 0 then throw (IO.userError out.stderr.trimAsciiEnd.toString)
+  return fun _ => Sexp.items out.stdout
+
+/-- How the commands read the program (`fileReader`). In DIVA's syntax, integers have no
+    bound. -/
+def reader (p : Parsed) : IO Reader := fileReader p
+
 /-- Runs `cmd`, which may do IO, on the file given as argument, and prints its
     result. -/
 def runWith' (cmd : String → IO Commands.Result) (p : Parsed) : IO UInt32 := do
@@ -36,7 +60,8 @@ def runWith' (cmd : String → IO Commands.Result) (p : Parsed) : IO UInt32 := d
 def runWith (cmd : String → Commands.Result) : Parsed → IO UInt32 :=
   runWith' fun src => pure (cmd src)
 
-def runRun (p : Parsed) := runWith (Commands.run (file := some (fileName p))) p
+def runRun (p : Parsed) : IO UInt32 := do
+  runWith (Commands.run (file := some (fileName p)) (read := ← reader p)) p
 
 /-- The result of `reader`, or `none` if `seconds` seconds pass first (no limit if
     `seconds` is `none`). A second task, `timer`, sleeps for `seconds` seconds.
@@ -84,12 +109,14 @@ def oracleOf (p : Parsed) (cmd : String) : IO (String → IO String) := do
     is asked for hints when the check fails. `diva` checks them. -/
 def runCheck (p : Parsed) : IO UInt32 :=
   match p.flag? "oracle" with
-  | none => runWith (Commands.check (file := some (fileName p))) p
+  | none => do
+    runWith (Commands.check (file := some (fileName p)) (read := ← reader p)) p
   | some cmd => do
     runWith' (Commands.checkOracle (← oracleOf p (cmd.as! String)) (rounds p)
-      (file := some (fileName p))) p
+      (file := some (fileName p)) (read := ← reader p)) p
 
-def runHints (p : Parsed) := runWith (Commands.hints (file := some (fileName p))) p
+def runHints (p : Parsed) : IO UInt32 := do
+  runWith (Commands.hints (file := some (fileName p)) (read := ← reader p)) p
 
 /-- The folder of Diva's compiled modules (`.olean` files): `../lib/lean`, starting from
     the folder of the `diva` executable. `lake build` puts them there, in `.lake/build`.
@@ -156,24 +183,25 @@ def writeAndCheck (cmd : String → Commands.Result) (stdin ok : String) (p : Pa
 
 /-- `diva cert`: write the certificate, a Lean file stating that the program never
     fails. -/
-def runCert (p : Parsed) := writeAndCheck (Commands.cert (file := some (fileName p))) "cert.lean"
-  "certificate checked by Lean: the program never fails" p
+def runCert (p : Parsed) : IO UInt32 := do
+  writeAndCheck (Commands.cert (file := some (fileName p)) (read := ← reader p)) "cert.lean"
+    "certificate checked by Lean: the program never fails" p
 
 /-- `diva opt`: print the optimised program. With `--cert`, write the certificate of the
     optimisation instead, a Lean file stating that the two programs are equivalent. -/
-def runOpt (p : Parsed) : IO UInt32 :=
+def runOpt (p : Parsed) : IO UInt32 := do
   let infer := p.hasFlag "infer"
   if p.hasFlag "cert" then
-    writeAndCheck (Commands.optCert (infer := infer) (file := some (fileName p))) "opt.lean"
+    writeAndCheck (Commands.optCert (infer := infer) (file := some (fileName p)) (read := ← reader p)) "opt.lean"
       "certificate checked by Lean: the optimised program is equivalent to the program" p
-  else runWith (Commands.opt (infer := infer) (file := some (fileName p))) p
+  else runWith (Commands.opt (infer := infer) (file := some (fileName p)) (read := ← reader p)) p
 
 /-- `diva prove`: write a Lean file stating that the functions meet their contracts.
     With `--oracle CMD`, the command `CMD` completes the proofs that Lean doesn't accept. -/
 def runProve (p : Parsed) : IO UInt32 :=
   match p.flag? "oracle" with
-  | none =>
-    writeAndCheck (Commands.prove (infer := p.hasFlag "infer") (file := some (fileName p)))
+  | none => do
+    writeAndCheck (Commands.prove (infer := p.hasFlag "infer") (file := some (fileName p)) (read := ← reader p))
       "prove.lean"
       "checked by Lean: the functions meet their contracts, and the top-level expressions don't fail" p
   | some cmd => do
@@ -184,7 +212,7 @@ def runProve (p : Parsed) : IO UInt32 :=
       runLean p output
     let check := ParseProof.check (← proofEnv)
     runWith' (Commands.proveOracle (← oracleOf p (cmd.as! String)) lean check (rounds p)
-      (file := some (fileName p))) p
+      (file := some (fileName p)) (read := ← reader p)) p
 
 /-- `diva spec --oracle CMD`: the command `CMD` writes the contracts of the functions
     that the functions with a contract call. Lean checks the file of `diva prove`, which
@@ -197,7 +225,7 @@ def runSpec (p : Parsed) : IO UInt32 := do
     IO.FS.writeFile output file
     runLean p output
   runWith' (Commands.specOracle (← oracleOf p (cmd.as! String)) lean (rounds p)
-    (file := some (fileName p))) p
+    (file := some (fileName p)) (read := ← reader p)) p
 
 /-- `diva synth --oracle CMD`: the command `CMD` writes the code of the functions whose
     body is `assert false`. Lean checks the file of `diva prove`, which is written to
@@ -210,7 +238,7 @@ def runSynth (p : Parsed) : IO UInt32 := do
     IO.FS.writeFile output file
     runLean p output
   runWith' (Commands.synthOracle (← oracleOf p (cmd.as! String)) lean (rounds p)
-    (file := some (fileName p))) p
+    (file := some (fileName p)) (read := ← reader p)) p
 
 /-- `diva` without a command: print the help. -/
 def runDiva (p : Parsed) : IO UInt32 := do
@@ -226,6 +254,18 @@ def roundsDoc := "How many times to ask the oracle (3 by default)."
 
 def timeoutDoc :=
   "How many seconds to wait for each answer of the oracle (no limit by default). If the time is up, the oracle is stopped, and `diva` stops with an error."
+
+def runPrint (p : Parsed) : IO UInt32 := do
+  runWith (Commands.print (file := some (fileName p)) (read := ← reader p)) p
+
+def printCmd : Cmd := `[Cli|
+  print VIA runPrint;
+  "Print the program as DIVA reads it."
+  FLAGS:
+    quiet; quietDoc
+  ARGS:
+    file : String; "The program (`-` reads the standard input)."
+]
 
 def runCmd : Cmd := `[Cli|
   run VIA runRun;
@@ -338,18 +378,34 @@ def synthCmd : Cmd := `[Cli|
     file : String; "The program (`-` reads the standard input)."
 ]
 
+def ocamlCmd : Cmd := `[Cli|
+  ocaml VIA runDiva;
+  "Run a command on an OCaml file: the OCaml compiler type-checks it, and DIVA's \
+   OCaml front end translates it (see `frontend/ocaml`). (WIP)"
+  SUBCOMMANDS:
+    runCmd;
+    printCmd;
+    checkCmd;
+    optCmd;
+    hintsCmd;
+    certCmd;
+    proveCmd
+]
+
 def divaCmd : Cmd := `[Cli|
   diva VIA runDiva; ["dev"]
   "A simple program verifier."
   SUBCOMMANDS:
     runCmd;
+    printCmd;
     checkCmd;
     optCmd;
     hintsCmd;
     certCmd;
     proveCmd;
     specCmd;
-    synthCmd
+    synthCmd;
+    ocamlCmd
 ]
 
 /-- An error, such as an oracle that takes too long, is printed as `error: ...`, with

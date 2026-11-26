@@ -640,24 +640,41 @@ def errorAt (s : String) (off : Nat) : String :=
   let (l, c) := lineCol s off
   s!"{l}:{c}: parse error"
 
-/-- Parse a complete program into its top-level items, with their positions. With an
-    integer type `intTy`, each operation that may overflow it is checked
-    (`Overflow.items`). -/
-def parseItemsLoc (s : String) (intTy : Option IntType := none) :
-    Except String (List (Item × Loc)) :=
+/-- How a command gets the program from the text of a file: its top-level items with
+    their positions, or an error. DIVA's parser is one (`parseItemsLoc`). The OCaml
+    front end is another (`Sexp.items`). -/
+abbrev Reader := String → Except String (List (Item × Loc))
+
+/-- Parse a complete program into its top-level items, with their positions. -/
+def parseItemsLoc : Reader := fun s =>
   match (whitespace *> itemsLoc <* endOfInput).parseString s with
-  | .ok is => .ok (Overflow.items intTy is)
+  | .ok is => .ok is
   | .error err => .error (errorAt s err.pos.byteIdx)
 
-/-- Parse a complete program, with its positions. `resolve` keeps the shape of the
-    expression, so the positions stay valid. -/
-def parseLoc (s : String) (intTy : Option IntType := none) : Except String LExpr :=
-  (parseItemsLoc s intTy).map fun is =>
-    ⟨(resolve [] (Item.toExpr (is.map (·.1)))).run' {}, Item.toLoc is⟩
+/-- The reader `r`, where each operation that may overflow the integer type `intTy` is
+    checked (`Overflow.items`). Without `intTy`, `r` itself. -/
+def Reader.withIntTy (intTy : Option IntType) (r : Reader) : Reader := fun s =>
+  (r s).map (Overflow.items intTy)
+
+/-- The program read by `r`, as one expression, with its positions. `resolve` keeps
+    the shape of the expression, so the positions stay valid. -/
+def Reader.lexpr (r : Reader) (s : String) : Except String LExpr :=
+  (r s).map fun is => ⟨(resolve [] (Item.toExpr (is.map (·.1)))).run' {}, Item.toLoc is⟩
+
+/-- The program read by `r`, as one expression. -/
+def Reader.expr (r : Reader) (s : String) : Except String Expr :=
+  (r.lexpr s).map (·.expr)
+
+/-- The top-level items read by `r`, with their contracts. The names are the ones of
+    the source: there is no `resolve`. -/
+def Reader.items (r : Reader) (s : String) : Except String (List Item) :=
+  (r s).map (·.map (·.1))
+
+/-- Parse a complete program, with its positions. -/
+def parseLoc : String → Except String LExpr := parseItemsLoc.lexpr
 
 /-- Parse a complete program. -/
-def parse (s : String) (intTy : Option IntType := none) : Except String Expr :=
-  (parseLoc s intTy).map (·.expr)
+def parse : String → Except String Expr := parseItemsLoc.expr
 
 /-- Parse a formula of the contract language, such as `0 <= v && v < 10`. -/
 def parseTerm (s : String) : Except String Term :=
@@ -665,9 +682,13 @@ def parseTerm (s : String) : Except String Term :=
   | .ok t => .ok t
   | .error err => .error (errorAt s err.pos.byteIdx)
 
-/-- Parse a complete program into its top-level items, with their contracts. The
-    names are the ones of the source: there is no `resolve`. -/
-def parseItems (s : String) (intTy : Option IntType := none) : Except String (List Item) :=
-  (parseItemsLoc s intTy).map (·.map (·.1))
+/-- Parse a contract `(*@ ... *)`. -/
+def parseSpec (s : String) : Except String Spec :=
+  match (whitespace *> specComment <* endOfInput).parseString s with
+  | .ok sp => .ok sp
+  | .error err => .error (errorAt s err.pos.byteIdx)
+
+/-- Parse a complete program into its top-level items, with their contracts. -/
+def parseItems : String → Except String (List Item) := parseItemsLoc.items
 
 end Diva
