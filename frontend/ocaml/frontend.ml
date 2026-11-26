@@ -266,10 +266,17 @@ let output_functions =
     "Stdlib.print_char";
   ]
 
+(* The name of [p], such as [Stdlib.mod], from its parts. [Path.name] writes a keyword
+   used as a name after [\#]: [Stdlib.\#mod]. *)
+let path_name p =
+  match Path.flatten p with
+  | `Ok (id, parts) -> String.concat "." (Ident.name id :: parts)
+  | `Contains_apply -> Path.name p
+
 (* The name of the library function [f], if [f] is one, such as [Stdlib.+]. *)
 let library f =
   match f.exp_desc with
-  | Texp_ident ((Path.Pdot _ as p), _, _) -> Some (Path.name p)
+  | Texp_ident ((Path.Pdot _ as p), _, _) -> Some (path_name p)
   | _ -> None
 
 (* The library functions that can fail on integers only by overflow: [/] and [mod]
@@ -313,11 +320,11 @@ let rec expr (e : expression) : expr =
   let loc = e.exp_loc in
   match e.exp_desc with
   | Texp_ident (Path.Pident id, _, _) -> var loc (Ident.name id)
-  | Texp_ident (p, _, _) when List.mem_assoc (Path.name p) constants ->
-      mk loc (Int (List.assoc (Path.name p) constants))
+  | Texp_ident (p, _, _) when List.mem_assoc (path_name p) constants ->
+      mk loc (Int (List.assoc (path_name p) constants))
   | Texp_ident (p, _, _) ->
       unsupported loc "the library function `%s`, except when it is called"
-        (Path.name p)
+        (path_name p)
   | Texp_constant (Const_int n) -> int loc n
   | Texp_constant (Const_int32 n) -> mk loc (Int (Int64.of_int32 n))
   | Texp_constant (Const_int64 n) -> mk loc (Int n)
