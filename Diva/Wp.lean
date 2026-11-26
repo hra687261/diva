@@ -402,9 +402,9 @@ theorem wp_sound {S : Contracts} {ρ : Env} {μ : Store} {e : Expr} {r : Outcome
     exact h m
 /-- Prove a goal of integer arithmetic made of `∧`, `→` and `∀`, such as the goals that
     `simp [wp]` leaves: introduce the hypotheses and the names, split each `∧`, then
-    run `omega` on each part. -/
+    run `omega` on each part. `repeat'` splits every goal, not only the first one. -/
 macro "split_omega" : tactic =>
-  `(tactic| (repeat (first | (intro) | (apply And.intro))) <;> omega)
+  `(tactic| (repeat' (first | (intro) | (apply And.intro))) <;> omega)
 
 /-- A contract holds if its precondition implies the weakest precondition, with the
     contracts `S` of the functions defined by `let rec`. -/

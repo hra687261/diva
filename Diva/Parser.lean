@@ -1,5 +1,6 @@
 import ParseIt
 import Diva.Desugar
+import Diva.Overflow
 
 open Std
 open ParseIt ParseIt.Char
@@ -639,16 +640,24 @@ def errorAt (s : String) (off : Nat) : String :=
   let (l, c) := lineCol s off
   s!"{l}:{c}: parse error"
 
-/-- Parse a complete program, with its positions. `resolve` keeps the shape of the
-    expression, so the positions stay valid. -/
-def parseLoc (s : String) : Except String LExpr :=
-  match (whitespace *> program <* endOfInput).parseString s with
-  | .ok e => .ok ⟨(resolve [] e.expr).run' {}, e.loc⟩
+/-- Parse a complete program into its top-level items, with their positions. With an
+    integer type `intTy`, each operation that may overflow it is checked
+    (`Overflow.items`). -/
+def parseItemsLoc (s : String) (intTy : Option IntType := none) :
+    Except String (List (Item × Loc)) :=
+  match (whitespace *> itemsLoc <* endOfInput).parseString s with
+  | .ok is => .ok (Overflow.items intTy is)
   | .error err => .error (errorAt s err.pos.byteIdx)
 
+/-- Parse a complete program, with its positions. `resolve` keeps the shape of the
+    expression, so the positions stay valid. -/
+def parseLoc (s : String) (intTy : Option IntType := none) : Except String LExpr :=
+  (parseItemsLoc s intTy).map fun is =>
+    ⟨(resolve [] (Item.toExpr (is.map (·.1)))).run' {}, Item.toLoc is⟩
+
 /-- Parse a complete program. -/
-def parse (s : String) : Except String Expr :=
-  (parseLoc s).map (·.expr)
+def parse (s : String) (intTy : Option IntType := none) : Except String Expr :=
+  (parseLoc s intTy).map (·.expr)
 
 /-- Parse a formula of the contract language, such as `0 <= v && v < 10`. -/
 def parseTerm (s : String) : Except String Term :=
@@ -658,9 +667,7 @@ def parseTerm (s : String) : Except String Term :=
 
 /-- Parse a complete program into its top-level items, with their contracts. The
     names are the ones of the source: there is no `resolve`. -/
-def parseItems (s : String) : Except String (List Item) :=
-  match (whitespace *> items <* endOfInput).parseString s with
-  | .ok is => .ok is
-  | .error err => .error (errorAt s err.pos.byteIdx)
+def parseItems (s : String) (intTy : Option IntType := none) : Except String (List Item) :=
+  (parseItemsLoc s intTy).map (·.map (·.1))
 
 end Diva

@@ -1,5 +1,6 @@
 import Diva.AbsInt.Infer
 import Diva.Loc
+import Diva.Overflow
 
 /-!
 # Diagnostics (untrusted)
@@ -75,8 +76,16 @@ def diagnose (H : Hints A) (place : Span → String) : AEnv A → Expr → Loc �
     diagnose H place σ a (l.kid 0) ++ diagnose H place σ b (l.kid 1) ++
       (if vb.within Flat.listV then []
        else [msg l s!"{snippet e}: the tail may not be a list ({vb})"])
-  | σ, .letin x e1 e2, l =>
-    diagnose H place σ e1 (l.kid 0) ++ diagnose H place ((x, aeval H σ e1) :: σ) e2 (l.kid 1)
+  | σ, e@(.letin x e1 e2), l =>
+    let v1 := aeval H σ e1
+    match Overflow.bits? e with
+    -- a check that `Overflow.check` adds: its message is about the operation `e1`
+    | some bits =>
+      diagnose H place σ e1 (l.kid 0) ++
+        (if mayFail H ((x, v1) :: σ) e2 then
+           [msg l s!"{snippet e1}: may overflow {bits}-bit integers (result: {v1})"]
+         else [])
+    | none => diagnose H place σ e1 (l.kid 0) ++ diagnose H place ((x, v1) :: σ) e2 (l.kid 1)
   | σ, .lam x b, l => diagnose H place ((x, AVal.ofFlat (H.param x)) :: σ) b (l.kid 0)
   | σ, e@(.app f a), l =>
     let vf := aeval H σ f

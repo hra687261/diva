@@ -1,5 +1,6 @@
 import Diva.Ast
 import Diva.Desugar
+import Diva.Overflow
 import Diva.Parser
 import Diva.Semantics
 import Diva.Interp
