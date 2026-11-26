@@ -1,0 +1,27 @@
+$ diva ocaml run uncaught.ml
+runtime error: uncaught exception (Neg -2)
+[exit 1]
+
+$ diva ocaml check uncaught.ml
+uncaught.ml:10:10-20: `check (-2)`: may raise an exception that isn't caught (Neg)
+uncaught.ml:13:12-47: `try raise Not_found with Neg n -> n`: may raise an exception that isn't caught (Not_found)
+[exit 1]
+
+$ diva ocaml opt uncaught.ml
+(let check = (fun x -> (if (x < 0) then (raise (Neg x)) else x)) in (let safe = (try (check -1) with %exn -> (match %exn with Neg n -> n | _ -> (raise %exn))) in (let bad = (check -2) in (let wrong = (try (raise Not_found) with %exn -> (match %exn with Neg n -> n | _ -> (raise %exn))) in wrong))))
+[exit 0]
+
+$ diva ocaml hints uncaught.ml
+x#0 : [-2, -1]
+Neg : [-2, -1]
+Not_found : ()
+[exit 0]
+
+$ diva ocaml cert --check uncaught.ml
+the program may fail, so there is no certificate (see `diva check`)
+[exit 1]
+
+$ diva ocaml prove --check -o prove.lean uncaught.ml
+no function has a contract: write one in a `(*@ ... *)` comment after a function
+[exit 1]
+

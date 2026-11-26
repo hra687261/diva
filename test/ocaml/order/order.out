@@ -3,22 +3,24 @@ $ diva ocaml run order.ml
 [exit 0]
 
 $ diva ocaml check order.ml
-order.ml:7:17-24: `raise A`: not analysed yet, so it may fail
-order.ml:8:17-24: `raise B`: not analysed yet, so it may fail
-order.ml:9:14-19: `a - b`: the operands may not be integers (⊤ and ⊤)
-order.ml:9:14-19: `a - b`: may overflow 63-bit integers (result: [-∞, +∞])
-order.ml:11:3-45: `try sub (f ()) (g ()) with A -> 1 | B -> 2`: not analysed yet, so it may fail
-[exit 1]
+no runtime error found, but not proved: the analysis of arrays, refs and exceptions isn't proved yet
+[exit 0]
 
 $ diva ocaml opt order.ml
 (let f = (fun _ -> (raise A)) in (let g = (fun _ -> (raise B)) in (let sub = (fun a -> (fun b -> (let %r = (a - b) in (let _ = (assert (if (-4611686018427387904 <= %r) then (%r <= 4611686018427387903) else false)) in %r)))) in (try (let %t2 = (g ()) in (let %t1 = (f ()) in ((sub %t1) %t2))) with %exn -> (match %exn with A _ -> 1 | _ -> (match %exn with B _ -> 2 | _ -> (raise %exn)))))))
 [exit 0]
 
 $ diva ocaml hints order.ml
+_#0 : ()
+A : ()
+_#1 : ()
+B : ()
+a#2 : ⊥
+b#3 : ⊥
 [exit 0]
 
 $ diva ocaml cert --check order.ml
-the program may fail, so there is no certificate (see `diva check`)
+the analysis of arrays, refs and exceptions isn't proved yet, so there is no certificate (see `diva check`)
 [exit 1]
 
 $ diva ocaml prove --check -o prove.lean order.ml

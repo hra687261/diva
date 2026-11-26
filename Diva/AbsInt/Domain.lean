@@ -136,7 +136,7 @@ def div : Itv → Itv → Itv
   | _, _ => top
 
 /-- `[a, b] mod k` for a non-zero constant `k` (the result has the sign of the
-    dividend, like OCaml): within `±(|k| - 1)`, and in `[0, min (|k| - 1) b]`
+    dividend: `mod` truncates): within `±(|k| - 1)`, and in `[0, min (|k| - 1) b]`
     when `a ≥ 0`. -/
 def mod : Itv → Itv → Itv
   | bot, _ | _, bot => bot

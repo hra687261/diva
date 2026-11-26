@@ -12,8 +12,8 @@ holds after the run (`wp_sound`).
 
 `K` is about a `Callee`, not only a value: the value of `e`, or a function of `Γ`
 after its first arguments. This is how `wp` handles a call `f a₁ ... aₙ` of a
-function with `n` parameters. As in OCaml, `f a₁ a₂` is `(f a₁) a₂`, and `f a₁`
-gives a closure.
+function with `n` parameters. Functions are curried: `f a₁ a₂` is `(f a₁) a₂`, and
+`f a₁` gives a closure.
 - At the name `f`, `wp` finds `f` in `Γ` by its name: `.start g`.
 - Each argument gives the next `Callee`. The last one runs the body: `wp` asks for
   the precondition of `g` on all the arguments, and then assumes its postcondition.

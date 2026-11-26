@@ -2,7 +2,7 @@ import Diva.Commands
 
 open Diva Commands
 
-/-! The analysis of arrays and refs (`aevalStore`, `mayFailStore`), in `diva check`. It isn't
+/-! The analysis of arrays and refs (`aevalExt`, `mayFailExt`), in `diva check`. It isn't
 proved yet: `check` says so when only this analysis shows that a program can't fail. -/
 
 -- a ref: its contents are the hint `!0`, which the inference finds
@@ -31,5 +31,5 @@ proved yet: `check` says so when only this analysis shows that a program can't f
 
 -- the exit code follows the analysis of the store, but `cert` needs the proved checker
 #guard (check "let r = ref 0 in !r").code == 0
-#guard cert "let r = ref 0 in !r" == { err := ["the analysis of arrays and refs isn't proved \
-  yet, so there is no certificate (see `diva check`)"], code := 1 }
+#guard cert "let r = ref 0 in !r" == { err := ["the analysis of arrays, refs and \
+  exceptions isn't proved yet, so there is no certificate (see `diva check`)"], code := 1 }

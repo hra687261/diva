@@ -20,9 +20,7 @@ namespace Diva.AbsInt
 open AbsDomain NumDomain
 
 /-- A product (one component per kind) rather than one constructor per kind, because
-    a value may be of several kinds (the core language is untyped), and even
-    well-typed OCaml mixes them once compiled to Lambda (`None` is `0`, `Some x` a
-    block). -/
+    a value may be of several kinds: the core language is untyped. -/
 structure Flat (A : Type) where
   int  : A      -- the integers it may be (`bot`: none)
   tt   : Bool   -- may be `true`
@@ -37,6 +35,10 @@ structure Flat (A : Type) where
   refs : List Nat := []
   /-- The allocation sites of the arrays it may be, as `refs`. -/
   arrs : List Nat := []
+  /-- The constructors of the tagged values it may be: `C` for `exn C v`, for the
+      analysis of exceptions (see `aevalM`). `mem` doesn't use them: `exn` gives the
+      tagged values it may be. -/
+  tags : List String := []
   deriving Inhabited
 
 namespace Flat
@@ -44,10 +46,11 @@ namespace Flat
 variable {A : Type} [NumDomain A]
 
 /-- No value at all. -/
-def bot : Flat A := ⟨AbsDomain.bot, false, false, false, false, false, false, false, [], []⟩
+def bot : Flat A :=
+  ⟨AbsDomain.bot, false, false, false, false, false, false, false, [], [], []⟩
 
 /-- Any value. -/
-def top : Flat A := ⟨AbsDomain.top, true, true, true, true, true, true, true, [], []⟩
+def top : Flat A := ⟨AbsDomain.top, true, true, true, true, true, true, true, [], [], []⟩
 
 def ofInt (i : A) : Flat A := { (bot : Flat A) with int := i }
 /-- A boolean that may be `true` (`t`) or `false` (`f`). -/
@@ -60,18 +63,29 @@ def exnV : Flat A := { (bot : Flat A) with exn := true }
 def join (a b : Flat A) : Flat A :=
   ⟨AbsDomain.join a.int b.int, a.tt || b.tt, a.ff || b.ff, a.unit || b.unit,
    a.list || b.list, a.fn || b.fn, a.loc || b.loc, a.exn || b.exn,
-   (a.refs ++ b.refs).eraseDups, (a.arrs ++ b.arrs).eraseDups⟩
+   (a.refs ++ b.refs).eraseDups, (a.arrs ++ b.arrs).eraseDups, (a.tags ++ b.tags).eraseDups⟩
+
+/-- The sites or constructors of `xs` that `b` also has: those of `ys`, or all of
+    them if `any` (`b` may be any array or ref, or any tagged value). -/
+def common [BEq α] (xs ys : List α) (any : Bool) : List α :=
+  xs.filter fun x => any || ys.contains x
 
 /-- The values that both `a` and `b` describe. -/
 def meet (a b : Flat A) : Flat A :=
   ⟨AbsDomain.meet a.int b.int, a.tt && b.tt, a.ff && b.ff, a.unit && b.unit,
    a.list && b.list, a.fn && b.fn, a.loc && b.loc, a.exn && b.exn,
-   a.refs.filter b.refs.contains, a.arrs.filter b.arrs.contains⟩
+   common a.refs b.refs b.loc ++ common b.refs [] (a.loc && !b.loc),
+   common a.arrs b.arrs b.loc ++ common b.arrs [] (a.loc && !b.loc),
+   common a.tags b.tags b.exn ++ common b.tags [] (a.exn && !b.exn)⟩
 
+/-- `a` describes no more values than `b`. A site or a constructor of `a` must be in
+    `b`, unless `b` may be any array or ref (`loc`), or any tagged value (`exn`). -/
 def leq (a b : Flat A) : Bool :=
   AbsDomain.leq a.int b.int && (!a.tt || b.tt) && (!a.ff || b.ff) && (!a.unit || b.unit) &&
   (!a.list || b.list) && (!a.fn || b.fn) && (!a.loc || b.loc) && (!a.exn || b.exn) &&
-  a.refs.all b.refs.contains && a.arrs.all b.arrs.contains
+  (common a.refs b.refs b.loc).length == a.refs.length &&
+  (common a.arrs b.arrs b.loc).length == a.arrs.length &&
+  (common a.tags b.tags b.exn).length == a.tags.length
 
 /-- Concretisation: the values `a` describes. -/
 def mem (a : Flat A) : Value → Prop
@@ -109,10 +123,15 @@ theorem mem_join_r {a b : Flat A} {v : Value} (h : b.mem v) : (a.join b).mem v :
   case bool c => cases c <;> simp_all [mem, join]
   all_goals simp_all [mem, join]
 
+/-- `a ≤ b` gives `a.int ≤ b.int`. -/
+theorem leq_int {a b : Flat A} (hl : a.leq b = true) : AbsDomain.leq a.int b.int = true := by
+  simp only [leq, Bool.and_eq_true] at hl
+  simp_all
+
 theorem mem_leq {a b : Flat A} {v : Value} (h : a.mem v) (hl : a.leq b = true) : b.mem v := by
-  simp only [leq, Bool.and_eq_true, Bool.or_eq_true, Bool.not_eq_true'] at hl
   cases v
-  case int n => exact leq_sound h hl.1.1.1.1.1.1.1.1.1
+  case int n => exact leq_sound h (leq_int hl)
+  all_goals simp only [leq, Bool.and_eq_true, Bool.or_eq_true, Bool.not_eq_true'] at hl
   case bool c => cases c <;> simp_all [mem]
   all_goals simp_all [mem]
 
@@ -181,7 +200,7 @@ instance [ToString A] : ToString (Flat A) where
       (if a.unit then ["()"] else []) ++ (if a.list then ["list"] else []) ++
       (if a.fn then ["fun"] else []) ++ (if a.loc then ["loc"] else []) ++
       (if a.exn then ["exn"] else []) ++
-      a.refs.map (s!"ref !{·}") ++ a.arrs.map (s!"array !{·}")
+      a.refs.map (s!"ref !{·}") ++ a.arrs.map (s!"array !{·}") ++ a.tags
     if parts.isEmpty then "⊥" else " | ".intercalate parts
 
 end Flat
@@ -197,6 +216,10 @@ structure Summary (A : Type) where
   rest : List (Flat A)
   res : Flat A
   fails : Bool
+  /-- The exceptions the call may raise, for the analysis of exceptions (see `aevalM`).
+      With this analysis, `fails` says only whether the call may stop with an error that
+      isn't an exception. The proofs don't use `raises`. -/
+  raises : Flat A
   deriving Inhabited
 
 /-- The closure `clos s x b ρ` satisfies the summary `S`, when `S.rest` is empty. -/
@@ -251,7 +274,8 @@ where
     if S.pre.leq T.pre && T.pre.leq S.pre && Flat.leqs S.rest T.rest &&
         Flat.leqs T.rest S.rest then
       { toFlat := a.toFlat.join b.toFlat,
-        sum := some ⟨S.pre, S.rest, S.res.join T.res, S.fails || T.fails⟩ }
+        sum := some ⟨S.pre, S.rest, S.res.join T.res, S.fails || T.fails,
+          S.raises.join T.raises⟩ }
     else ofFlat (a.flat.join b.flat)
   | some S, none => { toFlat := a.toFlat.join b.toFlat, sum := some S }
   | none, s => { toFlat := a.toFlat.join b.toFlat, sum := s }

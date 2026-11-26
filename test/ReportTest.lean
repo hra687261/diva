@@ -41,8 +41,19 @@ private def check (s : String) : Option (List String) :=
 #guard check "let g f = f 1 in g (fun x -> x + 1)" = some [
   "`(f 1)`: calls a function the analysis knows nothing about",
   "`(x + 1)`: the operands may not be integers (⊤ and 1)",
-  "`(g (fun x -> (x + 1)))`: the function called may fail"]
+  "`(g (fun x -> (x + 1)))`: the function called may fail",
+  "`(g (fun x -> (x + 1)))`: may raise an exception that isn't caught (exn)"]
 -- TODO: add type-checking and low-effort form of type inference/unification
 
--- not analysed yet
-#guard check "raise E" = some ["`(raise E)`: not analysed yet, so it may fail"]
+-- exceptions (not proved yet): an exception that isn't caught is reported at its
+-- top-level item
+#guard check "raise E" = some ["`(raise E)`: may raise an exception that isn't caught (E)"]
+#guard check "try raise (E 1) with E x -> x + 1" = some [Report.unprovedSafe]
+#guard check "let f x = if x < 0 then raise Neg else x in try f 1 with Neg -> 0" =
+  some [Report.unprovedSafe]
+-- one summary for all calls: `f` may raise `Neg`, so `f 1` may too
+#guard check "let f x = if x < 0 then raise Neg else x in f 1; try f (0 - 1) with Neg -> 0" =
+  some ["`(f 1)`: may raise an exception that isn't caught (Neg)"]
+-- the handler gets the argument of the exception
+#guard check "try raise (E 0) with E x -> 10 / x" =
+  some ["`(10 / x)`: possible division by zero (divisor: 0)"]
