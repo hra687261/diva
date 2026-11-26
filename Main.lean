@@ -22,16 +22,16 @@ def fileName (p : Parsed) : String :=
   let path := p.positionalArg! "file" |>.as! String
   if path == "-" then "<stdin>" else path
 
-/-- The OCaml front end: `ocaml-frontend`, next to the `diva` executable, where
+/-- The OCaml frontend: `ocaml-frontend`, next to the `diva` executable, where
     `frontend/ocaml/build.sh` puts it. -/
 def frontendPath : IO String := do
   let app ← IO.appPath
   let p := (app.parent.getD ".") / "ocaml-frontend"
   unless ← p.pathExists do
-    throw (IO.userError "the OCaml front end isn't built: run frontend/ocaml/build.sh")
+    throw (IO.userError "the OCaml frontend isn't built: run frontend/ocaml/build.sh")
   return p.toString
 
-/-- How the commands read the file. Under `diva ocaml`, the OCaml front end
+/-- How the commands read the file. Under `diva ocaml`, the OCaml frontend
     translates the file, and the commands read its S-expressions (`Sexp.items`).
     Otherwise, DIVA's parser reads the file. -/
 def fileReader (p : Parsed) : IO Reader := do
@@ -381,7 +381,7 @@ def synthCmd : Cmd := `[Cli|
 def ocamlCmd : Cmd := `[Cli|
   ocaml VIA runDiva;
   "Run a command on an OCaml file: the OCaml compiler type-checks it, and DIVA's \
-   OCaml front end translates it (see `frontend/ocaml`). (WIP)"
+   OCaml frontend translates it (see `frontend/ocaml`). (WIP)"
   SUBCOMMANDS:
     runCmd;
     printCmd;

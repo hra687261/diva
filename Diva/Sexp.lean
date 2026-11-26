@@ -3,7 +3,7 @@ import Diva.Parser
 /-!
 # Programs as S-expressions (untrusted)
 
-The OCaml front end (`frontend/ocaml/frontend.ml`) prints the program that it
+The OCaml frontend (`frontend/ocaml/frontend.ml`) prints the program that it
 translates as S-expressions. This module reads them into the top-level items of a
 program, with their positions, as DIVA's parser does (`Reader`).
 
@@ -15,7 +15,7 @@ ITEM    ::= (let "f" EXPR [SPEC])        let f = e
 SPEC    ::= "(*@ ... *)"                  the text of the contract
 ```
 
-The text of a contract may start with spaces and newlines. The front end adds them
+The text of a contract may start with spaces and newlines. The frontend adds them
 so that the positions in the contract are those of the file.
 
 Each `EXPR` is one constructor of `Expr`, with the part of the source it comes from:

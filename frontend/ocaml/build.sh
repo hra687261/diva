@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the OCaml front end with dune, and copy it to .lake/build/bin/ocaml-frontend,
+# Build the OCaml frontend with dune, and copy it to .lake/build/bin/ocaml-frontend,
 # next to `diva`. Needs OCaml 5.4 and dune (`nix develop` gives them).
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)

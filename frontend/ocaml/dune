@@ -1,4 +1,4 @@
-; The OCaml front end. `compiler-libs.common` is the OCaml compiler's
+; The OCaml frontend. `compiler-libs.common` is the OCaml compiler's
 ; parser and type checker.
 
 (executable

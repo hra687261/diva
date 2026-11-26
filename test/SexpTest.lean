@@ -3,18 +3,18 @@ import Diva.Sexp
 
 open Diva Commands
 
-/-! The S-expressions of the OCaml front end, written by hand. -/
+/-! The S-expressions of the OCaml frontend, written by hand. -/
 
 /-- The OCaml file. -/
 private def src := "let f x = 10 / x\nlet _ = f 0"
 
-/-- Its program, as the front end prints it. The numbers are byte offsets in `src`:
+/-- Its program, as the frontend prints it. The numbers are byte offsets in `src`:
     `10 / x` is the bytes 10 to 16. -/
 private def sexp := "(program
   (let \"f\" (lam 6 16 \"x\" (binop 10 16 div (int 10 12 10) (var 15 16 \"x\"))))
   (expr (app 25 28 (var 25 26 \"f\") (int 27 28 0))))"
 
-/-- The reader of the front end, for the program `s`. -/
+/-- The reader of the frontend, for the program `s`. -/
 private def read (s : String) : Reader := fun _ => Sexp.items s
 
 -- the commands work on the program read, with the positions in `src`
@@ -41,11 +41,11 @@ private def err (s : String) : String :=
 #guard err "(program (let f (int 0 1 2)))" == "`f` is not a name in quotes"
 #guard err "(program (expr (int 0 1 2))" == "a list has no `)`"
 #guard err "(program (expr (foo 0 1)))" == "`(foo 0 1)` is not an expression"
--- the position of an error in a contract is in its text: the front end puts spaces and
+-- the position of an error in a contract is in its text: the frontend puts spaces and
 -- newlines before the comment, so that the position is the one in the file
 #guard err "(program (let \"f\" (int 0 1 2) \"(*@ requires *)\"))" == "1:4: parse error"
 
--- `(overflow START STOP BITS E)`: the front end checks that `E` fits in `BITS` bits
+-- `(overflow START STOP BITS E)`: the frontend checks that `E` fits in `BITS` bits
 #guard (check "" (read := read "(program
   (expr (overflow 0 5 8 (binop 0 5 add (int 0 3 127) (int 4 5 1)))))")).out ==
   ["`(127 + 1)`: may overflow 8-bit integers (result: 128)"]

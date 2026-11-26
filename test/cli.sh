@@ -11,11 +11,11 @@
 # line, and scripts `*.sh` that these commands use.
 #
 # The tests in `test/ocaml/` are the same, but every command is run as `diva ocaml CMD`:
-# they are read by the OCaml front end.
+# they are read by the OCaml frontend.
 set -u
 export PATH=$HOME/.elan/bin:$PATH
 lake build diva >/dev/null || exit 1
-# the OCaml front end, if dune is installed (`nix develop`). Without it, the tests in
+# the OCaml frontend, if dune is installed (`nix develop`). Without it, the tests in
 # `test/ocaml/` are skipped.
 if command -v dune >/dev/null; then frontend/ocaml/build.sh || exit 1; fi
 diva=$PWD/.lake/build/bin/diva

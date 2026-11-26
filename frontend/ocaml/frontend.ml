@@ -1,4 +1,4 @@
-(* The OCaml front end of DIVA (untrusted).
+(* The OCaml frontend of DIVA (untrusted).
 
    [ocaml-frontend FILE.ml] parses and type-checks FILE.ml with the OCaml compiler's own
    libraries ([compiler-libs]), translates it to DIVA's core language, and prints the

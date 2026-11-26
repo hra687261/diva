@@ -642,7 +642,7 @@ def errorAt (s : String) (off : Nat) : String :=
 
 /-- How a command gets the program from the text of a file: its top-level items with
     their positions, or an error. DIVA's parser is one (`parseItemsLoc`). The OCaml
-    front end is another (`Sexp.items`). -/
+    frontend is another (`Sexp.items`). -/
 abbrev Reader := String → Except String (List (Item × Loc))
 
 /-- Parse a complete program into its top-level items, with their positions. -/
