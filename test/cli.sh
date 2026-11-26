@@ -11,7 +11,8 @@
 # line, and scripts `*.sh` that these commands use.
 #
 # The tests in `test/ocaml/` are the same, but every command is run as `diva ocaml CMD`:
-# they are read by the OCaml frontend.
+# they are read by the OCaml frontend. Then `test/diff.sh` runs the programs of
+# `test/diff/` under OCaml and under DIVA, and compares their results.
 set -u
 export PATH=$HOME/.elan/bin:$PATH
 lake build diva >/dev/null || exit 1
@@ -66,5 +67,12 @@ for test in $(find test/cli test/ocaml -name "*.ml" | sort); do
   fi
   rm -rf "$work"
 done
+
+# the differential tests, if OCaml is installed
+if [ -x .lake/build/bin/ocaml-frontend ] && command -v ocaml >/dev/null; then
+  test/diff.sh || fails=$((fails + 1))
+else
+  echo "skip test/diff (no OCaml)"
+fi
 
 [ "$fails" -eq 0 ] && echo "all passed" || { echo "$fails failed"; exit 1; }
