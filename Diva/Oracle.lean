@@ -56,9 +56,9 @@ def render (H : Hints A) : String :=
   "\n".intercalate (H.map fun (x, a) => s!"  {x} : {a}")
 
 /-- The program `e`, whose free variables `σ` describes, is safe with the hints
-    `fixed`, and the ones inferred. -/
-def verifies (σ : AEnv A) (e : Expr) (fixed : Hints A) : Bool :=
-  !mayFail (inferHints σ e fixed) σ e
+    `fixed`, and the ones inferred (`depth` is that of `inferHints`). -/
+def verifies (σ : AEnv A) (e : Expr) (fixed : Hints A) (depth : Nat := 5) : Bool :=
+  !mayFail (inferHints σ e fixed (depth := depth)) σ e
 
 /-- `s` with two spaces at the start of each line. -/
 private def indent (s : String) : String :=
@@ -69,7 +69,7 @@ private def indent (s : String) : String :=
     round). With `src`, the question also shows the source, and the places where the
     program may fail have their positions in it. -/
 def prompt (σ : AEnv A) (e : Expr) (fixed : Hints A) (rejected : Option String)
-    (src : Option Source := none) : String :=
+    (src : Option Source := none) (depth : Nat := 5) : String :=
   let rejected := match rejected with
     | none => ""
     | some why => s!"\nYour previous answer was rejected: {why}\n"
@@ -94,12 +94,12 @@ unique name):
 
 Where it may fail{positions}:
 
-{"\n".intercalate ((Report.report σ e fixed loc place code).map ("  " ++ ·))}
+{"\n".intercalate ((Report.report σ e fixed loc place code depth).map ("  " ++ ·))}
 
 What DIVA knows about the values (`x` is the parameter `x`, `$f` is the result of the
 function `f`):
 
-{render (inferHints σ e fixed)}
+{render (inferHints σ e fixed (depth := depth))}
 {rejected}
 Give facts about these values that rule out these failures. Each fact is checked: a
 wrong one is rejected. If the program can really fail, give no fact.
@@ -120,22 +120,23 @@ structure Round (A : Type) where
 
 /-- Ask `oracle` for hints, at most `rounds` times, until the program `e` is safe with
     them. `σ` describes the free variables of `e`. `src` is the source of `e`, for the
-    positions in the questions. Returns the rounds. If `e` is safe
-    without hints, the oracle isn't asked. -/
+    positions in the questions. `depth` is that of `inferHints`. Returns the rounds.
+    If `e` is safe without hints, the oracle isn't asked. -/
 def consult [Monad m] (oracle : String → m String) (σ : AEnv A) (e : Expr)
-    (rounds : Nat := 3) (src : Option Source := none) : m (List (Round A)) :=
-  if verifies σ e [] then return [] else go rounds [] none
+    (rounds : Nat := 3) (src : Option Source := none) (depth : Nat := 5) :
+    m (List (Round A)) :=
+  if verifies σ e [] depth then return [] else go rounds [] none
 where
   go : Nat → Hints A → Option String → m (List (Round A))
     | 0, _, _ => return []
     | k + 1, fixed, rejected => do
-      let answer ← oracle (prompt σ e fixed rejected src)
+      let answer ← oracle (prompt σ e fixed rejected src depth)
       match parseFacts (hintKeys e).eraseDups answer with
       | .error msg =>
         return { hints := [], error := some msg, accepted := false } ::
           (← go k [] (some s!"it isn't in the format: {msg}"))
       | .ok hints =>
-        if verifies σ e hints then return [{ hints, accepted := true }]
+        if verifies σ e hints depth then return [{ hints, accepted := true }]
         if hints.isEmpty then return [{ hints, accepted := false }]
         return { hints, accepted := false } ::
           (← go k hints (some s!"the checker rejected these facts:\n{render hints}"))

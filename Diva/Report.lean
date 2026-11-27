@@ -177,12 +177,7 @@ def diagnose (H : Hints A) (place code : Span → String) :
     diagnose H place code σ a (l.kid 0) ++
       (if aa.arrsOnly then [] else [msg l s!"{snippet code e l}: may not be an array ({aa})"])
   -- exceptions (as in `mayFailExt`)
-  | σ, e@(.ctor c a), l =>
-    let va := aevalExt H σ a
-    diagnose H place code σ a (l.kid 0) ++
-      (if fitsArg H c va then []
-       else [msg l s!"{snippet code e l}: the argument ({va}) is not in the hints of `{c}` \
-         ({H.argV c})"])
+  | σ, .ctor _ a, l => diagnose H place code σ a (l.kid 0)
   | σ, e@(.raise v), l =>
     let vv := aevalExt H σ v
     diagnose H place code σ v (l.kid 0) ++
@@ -196,7 +191,7 @@ def diagnose (H : Hints A) (place code : Span → String) :
     diagnose H place code σ s (l.kid 0) ++
       (if vs.ctorsOnly then []
        else [msg l s!"{snippet code e l}: may not match an exception or a constructor ({vs})"]) ++
-      (if vs.mayBeCtor c then diagnose H place code (hitEnv H σ s vs c x) h (l.kid 1) else []) ++
+      (if vs.mayBeCtor c then diagnose H place code (hitEnv σ s vs c x) h (l.kid 1) else []) ++
       (if vs.mayBeOtherCtor c then diagnose H place code (σ.bind s (vs.withoutCtor c)) m (l.kid 2)
        else [])
 where
@@ -249,18 +244,18 @@ def unprovedSafe : String :=
     defining them (`[]` for a complete program). `inferHints` infers the hints, but
     uses the hints of `fixed` unchanged. The report still checks the hints of
     `fixed`. `l` has the positions of `e`, `place` prints a span (`""` for none), and
-    `code` gives the source text of a span (`""` for none).
+    `code` gives the source text of a span (`""` for none). `depth` is that of `inferHints`.
 
     If the checker (`mayFail`) proves that `e` can't fail, the report says so.
     Otherwise it follows the analysis with arrays, refs and exceptions (`mayFailExt`), which
     isn't proved yet: the places where it says `e` may fail or raise an exception that
     isn't caught, or `unprovedSafe`. -/
 def report (σ : AEnv A) (e : Expr) (fixed : Hints A := []) (l : Loc := default)
-    (place : Span → String := fun _ => "") (code : Span → String := fun _ => "") :
-    List String :=
+    (place : Span → String := fun _ => "") (code : Span → String := fun _ => "")
+    (depth : Nat := 5) : List String :=
   -- the hints that the checker can confirm, then those of the analysis that isn't proved
-  let H := inferHints σ e fixed
-  let HS := inferHints σ e fixed (ext := true)
+  let H := inferHints σ e fixed (depth := depth)
+  let HS := inferHints σ e fixed (ext := true) (depth := depth)
   if !mayFail H σ e then ["no runtime error is possible"]
   else if mayFailExt HS σ e then
     match diagnose HS place code σ e l ++ uncaught HS place code σ e l with

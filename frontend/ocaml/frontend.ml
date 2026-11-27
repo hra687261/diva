@@ -460,7 +460,8 @@ let pat_name (p : pattern) =
 
 (* A value of a variant type, such as [option], and an exception are constructors applied
    to an argument: [C] is [Ctor ("C", unit)], [C a] is [Ctor ("C", a)], and [C (a, b)] is
-   [Ctor ("C", (a, b))]. A tuple [(a, b)] is [Ctor ("%2", [a; b])]. *)
+   [Ctor ("C", (a, b))]. A tuple [(a, b)] is [Ctor ("%2", [a; b])]: DIVA's analysis describes each of its
+   components. *)
 
 (* The name of the constructor [cd]. DIVA tells constructors apart by their name
    only, so two constructors with the same name are rejected. *)
@@ -879,9 +880,8 @@ and pat_uses (p : pattern) =
   | Tpat_or (_, q, _) -> pat_uses q
   | _ -> 0
 
-(* a tuple: its constructor, then a [match] on each component *)
-and tuple_uses ps =
-  1 + List.length ps + List.fold_left (fun n p -> n + pat_uses p) 0 ps
+(* a tuple: only its components can fail to match (see [tuple_pattern]) *)
+and tuple_uses ps = List.fold_left (fun n p -> n + pat_uses p) 0 ps
 
 (* The test of the pattern [p] on the value of the name [v]: [ok] if it matches, with the
    names of [p] bound, else [ko]. [ko] is copied: it must be small. Its names are names
@@ -941,8 +941,11 @@ and pattern (p : pattern) v ok ko =
   | Tpat_array _ -> unsupported loc "array patterns"
   | _ -> unsupported loc "this pattern"
 
-(* The test of the tuple pattern [(p1, ..., pn)] on [v]. *)
+(* The test of the tuple pattern [(p1, ..., pn)] on [v]. A value of a tuple type is
+   always a tuple of [n] components, so the tests of its constructor and of the length
+   of its list never fail: they raise [Match_failure], instead of copying [ko]. *)
 and tuple_pattern loc ps v ok ko =
+  let bad = match_failure loc in
   let l = fresh () in
   let rec components l = function
     | [] -> ok
@@ -950,10 +953,10 @@ and tuple_pattern loc ps v ok ko =
         let h = name_for p in
         let t = if ps = [] then "_" else fresh () in
         mk loc
-          (MatchList (var loc l, ko, h, t, pattern p h (components t ps) ko))
+          (MatchList (var loc l, bad, h, t, pattern p h (components t ps) ko))
   in
   mk loc
-    (CtorCase (var loc v, tuple_ctor (List.length ps), l, components l ps, ko))
+    (CtorCase (var loc v, tuple_ctor (List.length ps), l, components l ps, bad))
 
 (* The name for the value that the pattern [p] tests: the name of [p] if it is a name,
    else a new name. *)

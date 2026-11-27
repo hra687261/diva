@@ -31,6 +31,9 @@ the file and prints.
   contract (or of all the functions, if none has one), and Lean checks the file of `prove` (`specOracle`).
 - `synth`: an LLM writes the code of the functions whose body is `assert false`, and
   Lean proves that it meets their contracts (`synthOracle`).
+
+The commands that infer hints take `depth`: how deep the hints describe the parts of
+lists and other ADT values (see `inferHints`).
 -/
 
 namespace Diva.Commands
@@ -89,25 +92,26 @@ def print (src : String) (file : Option String := none)
     of arrays, refs, exceptions and the elements of lists (`mayFailExt`), which isn't
     proved yet. The message then says so. -/
 def check (src : String) (file : Option String := none)
-    (read : Reader := parseItemsLoc) : Result :=
+    (read : Reader := parseItemsLoc) (depth : Nat := 5) : Result :=
   match read.lexpr src with
   | .error msg => parseError file msg
   | .ok ⟨e, l⟩ =>
-    let H := inferHints ([] : AEnv Itv) e
-    let HS := inferHints ([] : AEnv Itv) e (ext := true)
+    let H := inferHints ([] : AEnv Itv) e (depth := depth)
+    let HS := inferHints ([] : AEnv Itv) e (ext := true) (depth := depth)
     let msgs := Report.report ([] : AEnv Itv) e (l := l) (place := place src file)
-      (code := Span.text src)
+      (code := Span.text src) (depth := depth)
     { out := msgs, code := if mayFail H [] e && mayFailExt HS [] e then 1 else 0 }
 
 /-- `diva check --oracle`: parse the program `src`, and ask `oracle` for hints, at most
     `rounds` times, until the program is safe with them (`Oracle.consult`). Print each
     round, then what `check` prints with the last hints, with the positions in `file`. -/
 def checkOracle [Monad m] (oracle : String → m String) (rounds : Nat) (src : String)
-    (file : Option String := none) (read : Reader := parseItemsLoc) : m Result :=
+    (file : Option String := none) (read : Reader := parseItemsLoc) (depth : Nat := 5) :
+    m Result :=
   match read.lexpr src with
   | .error msg => return parseError file msg
   | .ok ⟨e, l⟩ => do
-    let rs ← Oracle.consult oracle ([] : AEnv Itv) e rounds (file.map fun f => ⟨f, src, l⟩)
+    let rs ← Oracle.consult oracle ([] : AEnv Itv) e rounds (file.map fun f => ⟨f, src, l⟩) depth
     let shown := rs.zipIdx.flatMap fun (r, i) =>
       [s!"round {i + 1}: the oracle proposes"] ++
         (match r.error with
@@ -116,9 +120,10 @@ def checkOracle [Monad m] (oracle : String → m String) (rounds : Nat) (src : S
            if r.hints.isEmpty then ["  nothing"] else r.hints.map fun (x, a) => s!"  {x} : {a}") ++
         [if r.accepted then "accepted" else "rejected"]
     let fixed := (rs.getLast?.map (·.hints)).getD []
-    let H := inferHints ([] : AEnv Itv) e fixed
-    let HS := inferHints ([] : AEnv Itv) e fixed (ext := true)
-    return { out := shown ++ Report.report ([] : AEnv Itv) e fixed l (place src file) (Span.text src),
+    let H := inferHints ([] : AEnv Itv) e fixed (depth := depth)
+    let HS := inferHints ([] : AEnv Itv) e fixed (ext := true) (depth := depth)
+    let msgs := Report.report ([] : AEnv Itv) e fixed l (place src file) (Span.text src) depth
+    return { out := shown ++ msgs,
              code := if mayFail H [] e && mayFailExt HS [] e then 1 else 0 }
 
 /-- `diva opt`: parse the program `src`, optimise it using what the analysis knows
@@ -129,48 +134,50 @@ def checkOracle [Monad m] (oracle : String → m String) (rounds : Nat) (src : S
     optimiser knows the precondition. If the analysis proves that the program never
     fails, the checks (`assert`) are erased: they always hold. -/
 def opt (src : String) (infer : Bool := false) (file : Option String := none)
-    (read : Reader := parseItemsLoc) : Result :=
+    (read : Reader := parseItemsLoc) (depth : Nat := 5) : Result :=
   match read.items src with
   | .error msg => parseError file msg
   | .ok items =>
-    let items := if infer then (SpecOfHints.inferContracts items).1 else items
+    let items := if infer then (SpecOfHints.inferContracts items depth).1 else items
     let e := (resolve [] (Item.toExpr items)).run' {}
-    let H := inferHints ([] : AEnv Itv) e
+    let H := inferHints ([] : AEnv Itv) e (depth := depth)
     { out := [Report.clean (toString (Opt.opt H (!mayFail H [] e) [] e))] }
 
 /-- `diva opt --cert`: like `opt`, but print the certificate of the optimisation
     (`Cert.optCertificate`): a Lean file stating that the program and its optimised
     version are equivalent. -/
 def optCert (src : String) (infer : Bool := false) (file : Option String := none)
-    (read : Reader := parseItemsLoc) : Result :=
+    (read : Reader := parseItemsLoc) (depth : Nat := 5) : Result :=
   match read.items src with
   | .error msg => parseError file msg
   | .ok items =>
-    let items := if infer then (SpecOfHints.inferContracts items).1 else items
+    let items := if infer then (SpecOfHints.inferContracts items depth).1 else items
     let e := (resolve [] (Item.toExpr items)).run' {}
-    { out := [Cert.optCertificate (inferHints ([] : AEnv Itv) e) e] }
+    { out := [Cert.optCertificate (inferHints ([] : AEnv Itv) e (depth := depth)) e] }
 
 /-- `diva hints`: parse the program `src`, infer its hints, and print them, one per
     line, as `name : values`. A hint gives the values that a function parameter can
     take, or that a function can return: `$f` is the result of the function `f`.
     Names keep their `#n` suffix: it makes them unique, and hints are keyed by name. -/
 def hints (src : String) (file : Option String := none)
-    (read : Reader := parseItemsLoc) : Result :=
+    (read : Reader := parseItemsLoc) (depth : Nat := 5) : Result :=
   withParse file src (read := read) fun e =>
-    { out := (inferHints ([] : AEnv Itv) e (ext := true)).map fun (x, a) => s!"{x} : {a}" }
+    let H := inferHints ([] : AEnv Itv) e (ext := true) (depth := depth)
+    { out := H.map fun (x, a) => s!"{x} : {a}" }
 
 /-- `diva cert`: parse the program `src`, and print its certificate
     (`Cert.certificate`): a Lean file stating that the program never fails, with the
     hints inferred for it. If the analysis says that the program may fail, there is
     no certificate: print why and exit with code 1. -/
 def cert (src : String) (file : Option String := none)
-    (read : Reader := parseItemsLoc) : Result :=
+    (read : Reader := parseItemsLoc) (depth : Nat := 5) : Result :=
   withParse file src (read := read) fun e =>
-    let H := inferHints ([] : AEnv Itv) e
+    let H := inferHints ([] : AEnv Itv) e (depth := depth)
     match Cert.certificate H e with
     | some c => { out := [c] }
     | none =>
-      let why := if mayFailExt (inferHints ([] : AEnv Itv) e (ext := true)) [] e then "the program may fail"
+      let HS := inferHints ([] : AEnv Itv) e (ext := true) (depth := depth)
+      let why := if mayFailExt HS [] e then "the program may fail"
         else "the analysis of arrays, refs, exceptions and the elements of lists isn't proved yet"
       { err := [s!"{why}, so there is no certificate (see `diva check`)"], code := 1 }
 
@@ -180,11 +187,11 @@ def cert (src : String) (file : Option String := none)
     with code 1. With `infer`, each function without a contract gets the contract that
     the analysis infers (`SpecOfHints.inferContracts`). -/
 def prove (src : String) (infer : Bool := false) (file : Option String := none)
-    (read : Reader := parseItemsLoc) : Result :=
+    (read : Reader := parseItemsLoc) (depth : Nat := 5) : Result :=
   match read.items src with
   | .error msg => parseError file msg
   | .ok items =>
-    let (items, inferred) := if infer then SpecOfHints.inferContracts items else (items, [])
+    let (items, inferred) := if infer then SpecOfHints.inferContracts items depth else (items, [])
     match Prove.file items (inferred := inferred) with
     | .ok f => { out := [f] }
     | .error msg => { err := [msg], code := 1 }

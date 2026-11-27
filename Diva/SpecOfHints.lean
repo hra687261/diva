@@ -66,10 +66,10 @@ def contractOf (H : Hints Itv) (b : Binding) (f : Option String) (xs : List Stri
 /-- `items`, where each function without a contract gets a contract, and the names of
     these functions. The contract comes from abstract interpretation:
     the intervals that `inferHints` (`diva hints`) infers for the parameters and the
-    result become `requires` and `ensures`. -/
-def inferContracts (items : List Item) : List Item × List String :=
+    result become `requires` and `ensures`. `depth` is that of `inferHints`. -/
+def inferContracts (items : List Item) (depth : Nat := 5) : List Item × List String :=
   let e := (resolve [] (Item.toExpr items)).run' {}
-  let H := inferHints ([] : AEnv Itv) e
+  let H := inferHints ([] : AEnv Itv) e (depth := depth)
   let pairs := (items.zip (topDecls e)).map fun (i, d) =>
     match i, d with
     | .decl b none, some (f, xs) =>

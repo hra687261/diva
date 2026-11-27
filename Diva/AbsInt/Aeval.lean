@@ -259,57 +259,15 @@ def fitsAt [NumDomain A] (H : Hints A) (ss : List Nat) (v : AVal A) : Bool :=
 
 /-! ## Constructors and exceptions (untrusted, see `aevalM`)
 
-A value `C v` is the constructor `C` applied to the argument `v`. Exceptions and the
-values of sum types of the source language are such values. The analysis describes a
-value `C v` by its constructor `C` (`Flat.ctors`). The hint `C` describes the arguments
-of all the values `C v`.
+An ADT value `C v` is a constructor `C` applied to an argument `v`: an exception, a
+variant or a tuple. The analysis describes it by `C` (`Flat.ctors`) and `v` (`Flat.args`).
+The tuple `(a, b)` is `%2` applied to the list `[a; b]`, described element by element
+(`Flat.items`).
 -/
 
-/-- The arguments `v` of the values `c v` (key `c`). -/
-def Hints.arg [NumDomain A] (H : Hints A) (c : String) : Flat A :=
-  (H.lookup c).getD Flat.top
-
-/-- The number of components of the tuples of constructor `c`: `n` if `c` is `%n`. A
-    tuple `(a, b)` is the constructor `%2` applied to `[a; b]`. -/
-def tupleArity (c : String) : Option Nat :=
-  if c.startsWith "%" then (String.ofList (c.toList.drop 1)).toNat? else none
-
-/-- The `i`-th components of the tuples of constructor `c` (key `c.i`). -/
-def Hints.comp [NumDomain A] (H : Hints A) (c : String) (i : Nat) : Flat A :=
-  (H.lookup s!"{c}.{i}").getD Flat.top
-
-/-- The arguments `v` of the values `c v`, as the hints describe them.
-    For a tuple, the list of its components, each described by its own hint. -/
-def Hints.argV [NumDomain A] (H : Hints A) (c : String) : AVal A :=
-  match tupleArity c with
-  | some n => AVal.itemsOf ((List.range n).map (H.comp c))
-  | none => AVal.ofFlat (H.arg c)
-
-/-- `v` is in the arguments of `c` that the hints describe. -/
-def fitsArg [NumDomain A] (H : Hints A) (c : String) (v : AVal A) : Bool :=
-  match tupleArity c, v.items with
-  | some n, some ws => ws.length == n && ws.zipIdx.all fun (w, i) => w.leq (H.comp c i)
-  | some _, none => false
-  | none, _ => v.flat.leq (H.arg c)
-
-/-- The keys of the hints of the arguments of `c`: `c`, or `c.0` ... `c.(n-1)` for a
-    tuple of `n` components. -/
-def argKeys (c : String) : List String :=
-  match tupleArity c with
-  | some n => (List.range n).map (s!"{c}.{·}")
-  | none => [c]
-
-/-- What the hints of the arguments of `c` must cover, for the argument `v`: a claim on
-    each of their keys. -/
-def argClaims [NumDomain A] (c : String) (v : AVal A) : List (String × Flat A) :=
-  match tupleArity c, v.items with
-  | some n, some ws => if ws.length == n then ws.zipIdx.map fun (w, i) => (s!"{c}.{i}", w)
-                       else (argKeys c).map (·, Flat.top)
-  | some _, none => (argKeys c).map (·, Flat.top)
-  | none, _ => [(c, v.flat)]
-
 /-- The values `C v` that `a` may be. -/
-def AVal.ctorPart [NumDomain A] (a : AVal A) : Flat A := { Flat.bot with ctor := a.ctor, ctors := a.ctors }
+def AVal.ctorPart [NumDomain A] (a : AVal A) : Flat A :=
+  { Flat.bot with ctor := a.ctor, ctors := a.ctors, args := a.args }
 
 /-- `a` is only values `C v`. -/
 def AVal.ctorsOnly [NumDomain A] (a : AVal A) : Bool := a.flat.leq a.ctorPart
@@ -324,12 +282,12 @@ def AVal.mayBeOtherCtor [NumDomain A] (a : AVal A) (c : String) : Bool :=
 /-- `a`, except the values `c v`. If `a` may be any value `C v` (`a.ctor`),
     the result still may be a value `c v`. -/
 def AVal.withoutCtor [NumDomain A] (a : AVal A) (c : String) : AVal A :=
-  AVal.ofFlat { a.flat with ctors := a.ctors.erase c }
+  AVal.ofFlat { a.flat with ctors := a.ctors.erase c, args := a.args.filter (·.1 != c) }
 
-/-- The argument `v` of a value `c v` that `a` describes: the hints of
-    `c` (`Hints.argV`), or any value if `a` may be any value `C v`. -/
-def ctorArg [NumDomain A] (H : Hints A) (a : AVal A) (c : String) : AVal A :=
-  if a.ctor then AVal.top else H.argV c
+/-- The argument `v` of a value `c v` that `a` describes, or any value if `a` may be
+    any value `C v`. -/
+def ctorArg [NumDomain A] (a : AVal A) (c : String) : AVal A :=
+  if a.ctor then AVal.top else AVal.ofFlat ((a.args.lookup c).getD Flat.top)
 
 /-- The exceptions a call of `af` on `aa` may raise: those of the summary of `af`, or
     any exception if the call isn't known (`af` may be any closure, or `aa` isn't in the
@@ -346,9 +304,10 @@ def callRaises [NumDomain A] (opt : Bool) (af aa : AVal A) : Flat A :=
 /-- The environment of the branch `C x -> h` of `match s with C x -> h | _ -> m`, where
     `vs` describes `s`: `x` is the argument of `C`, and `s`, if it is a name, is a
     value `C v`. -/
-def hitEnv [NumDomain A] (H : Hints A) (σ : AEnv A) (s : Expr) (vs : AVal A) (c x : String) :
+def hitEnv [NumDomain A] (σ : AEnv A) (s : Expr) (vs : AVal A) (c x : String) :
     AEnv A :=
-  (x, ctorArg H vs c) :: σ.bind s (AVal.ofFlat { Flat.bot with ctors := [c] })
+  (x, ctorArg vs c) ::
+    σ.bind s (AVal.ofFlat { Flat.bot with ctors := [c], args := vs.args.filter (·.1 == c) })
 
 mutual
 
@@ -422,7 +381,9 @@ def aevalM [NumDomain A] (opt ext : Bool) (H : Hints A) (σ : AEnv A) : Expr →
       (if (aevalM opt ext H σ c).tt then (σ.assume c true).map (aevalM opt ext H · t) else none)
       (if (aevalM opt ext H σ c).ff then (σ.assume c false).map (aevalM opt ext H · e) else none)
   | .assert _ => AVal.unitV
-  | .ctor c _ => if ext then AVal.ofFlat { Flat.bot with ctors := [c] } else AVal.ctorV
+  | .ctor c v =>
+    if ext then AVal.ofFlat { Flat.bot with ctors := [c], args := [(c, (aevalM opt ext H σ v).flat)] }
+    else AVal.ctorV
   | .raise _ => AVal.bot   -- never gives a value
   | .matchList s n x xs c =>
     -- a branch is taken only if the list may be `[]`, or may have a first element
@@ -461,7 +422,7 @@ def aevalM [NumDomain A] (opt ext : Bool) (H : Hints A) (σ : AEnv A) : Expr →
     if ext then
       let vs := aevalM opt ext H σ s
       joinOpt
-        (if vs.mayBeCtor c then some (aevalM opt ext H (hitEnv H σ s vs c x) h) else none)
+        (if vs.mayBeCtor c then some (aevalM opt ext H (hitEnv σ s vs c x) h) else none)
         (if vs.mayBeOtherCtor c then some (aevalM opt ext H (σ.bind s (vs.withoutCtor c)) m)
          else none)
     else AVal.top
@@ -529,9 +490,7 @@ def mayFailM [NumDomain A] (opt ext : Bool) (H : Hints A) (σ : AEnv A) : Expr �
       (vs.mayBeNil && mayFailM opt ext H σ n) ||
       (!vs.heads.leq Flat.bot &&
         mayFailM opt ext H ((xs, vs.tails) :: (x, AVal.ofFlat vs.heads) :: σ) c)
-  | .ctor c e =>
-    if ext then mayFailM opt ext H σ e || !fitsArg H c (aevalM opt ext H σ e)
-    else mayFailM opt ext H σ e
+  | .ctor _ e => mayFailM opt ext H σ e
   -- the store, only with `ext` (as in `aevalM`). Each write checks that the value is
   -- in the contents of the sites written to. An array has a length of its site's
   -- hint, and an index must be in bounds.
@@ -584,7 +543,7 @@ def mayFailM [NumDomain A] (opt ext : Bool) (H : Hints A) (σ : AEnv A) : Expr �
     if ext then
       let vs := aevalM opt ext H σ s
       mayFailM opt ext H σ s || !vs.ctorsOnly ||
-        (vs.mayBeCtor c && mayFailM opt ext H (hitEnv H σ s vs c x) h) ||
+        (vs.mayBeCtor c && mayFailM opt ext H (hitEnv σ s vs c x) h) ||
         (vs.mayBeOtherCtor c && mayFailM opt ext H (σ.bind s (vs.withoutCtor c)) m)
     else true
 
@@ -636,7 +595,7 @@ def raisesM [NumDomain A] (opt ext : Bool) (H : Hints A) (σ : AEnv A) : Expr �
   | .ctorCase s c x h m =>
     let vs := aevalM opt ext H σ s
     ((raisesM opt ext H σ s).join
-      (if vs.mayBeCtor c then raisesM opt ext H (hitEnv H σ s vs c x) h else Flat.bot)).join
+      (if vs.mayBeCtor c then raisesM opt ext H (hitEnv σ s vs c x) h else Flat.bot)).join
       (if vs.mayBeOtherCtor c then raisesM opt ext H (σ.bind s (vs.withoutCtor c)) m
        else Flat.bot)
   | .binop _ a b | .cons a b | .get a b | .assign a b | .alloc _ a b =>
@@ -777,10 +736,9 @@ theorem mem_flat {a : AVal A} {v : Value} (h : a.mem v) : a.flat.mem v := by
 /-- A list described by `a.elems` is described by an `AVal` whose `elems` and
     `mayNil` are those of `join a b`. -/
 theorem mem_elems_l {a b : AVal A} {t : Flat A} {s : Option (Summary A)} {e : Flat A}
-    {is : Option (List (Flat A))} {v : Value} (he : a.elems = some e) (hm : e.listMem v) (hn : v = .nil → a.mayNil = true) :
+    {v : Value} (he : a.elems = some e) (hm : e.listMem v) (hn : v = .nil → a.mayNil = true) :
     ({ toFlat := t, sum := s, elems := Option.merge Flat.join a.elems b.elems,
-       mayNil := (a.elems.isSome && a.mayNil) || (b.elems.isSome && b.mayNil),
-       items := is } : AVal A).mem v := by
+       mayNil := (a.elems.isSome && a.mayNil) || (b.elems.isSome && b.mayNil) } : AVal A).mem v := by
   rw [he]
   -- `[]` only if `a.mayNil`
   cases b.elems with
@@ -792,10 +750,9 @@ theorem mem_elems_l {a b : AVal A} {t : Flat A} {s : Option (Summary A)} {e : Fl
 /-- A list described by `b.elems` is described by an `AVal` whose `elems` and
     `mayNil` are those of `join a b`. -/
 theorem mem_elems_r {a b : AVal A} {t : Flat A} {s : Option (Summary A)} {e : Flat A}
-    {is : Option (List (Flat A))} {v : Value} (he : b.elems = some e) (hm : e.listMem v) (hn : v = .nil → b.mayNil = true) :
+    {v : Value} (he : b.elems = some e) (hm : e.listMem v) (hn : v = .nil → b.mayNil = true) :
     ({ toFlat := t, sum := s, elems := Option.merge Flat.join a.elems b.elems,
-       mayNil := (a.elems.isSome && a.mayNil) || (b.elems.isSome && b.mayNil),
-       items := is } : AVal A).mem v := by
+       mayNil := (a.elems.isSome && a.mayNil) || (b.elems.isSome && b.mayNil) } : AVal A).mem v := by
   rw [he]
   -- `[]` only if `b.mayNil`
   cases a.elems with

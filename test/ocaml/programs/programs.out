@@ -22,9 +22,8 @@ $ diva ocaml opt programs.ml
 $ diva ocaml hints programs.ml
 %t1#1 : list of [1, 3]
 $length#0 : [0, +∞]
-l#2 : list of ⊥
-Empty : ()
-l#3 : list of ⊥
+l#2 : []
+l#3 : []
 n#4 : 4
 !0 : [0, +∞]
 i#6 : [1, 5]

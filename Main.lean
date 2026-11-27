@@ -95,6 +95,11 @@ def askCommand (cmd : String) (timeout : Option Nat) (question : String) : IO St
 def rounds (p : Parsed) : Nat :=
   (p.flag? "rounds").map (·.as! Nat) |>.getD 3
 
+/-- The value of the flag `--depth`: how deep the hints describe the parts of lists and
+    other ADT values (5 by default, see `inferHints`). -/
+def depth (p : Parsed) : Nat :=
+  (p.flag? "depth").map (·.as! Nat) |>.getD 5
+
 /-- The oracle that runs the shell command `cmd` for each question, and returns its
     answer. If the flag `--timeout N` is given, `cmd` is stopped after `N` seconds.
     Each question is logged, with its number. -/
@@ -110,13 +115,13 @@ def oracleOf (p : Parsed) (cmd : String) : IO (String → IO String) := do
 def runCheck (p : Parsed) : IO UInt32 :=
   match p.flag? "oracle" with
   | none => do
-    runWith (Commands.check (file := some (fileName p)) (read := ← reader p)) p
+    runWith (Commands.check (depth := depth p) (file := some (fileName p)) (read := ← reader p)) p
   | some cmd => do
-    runWith' (Commands.checkOracle (← oracleOf p (cmd.as! String)) (rounds p)
+    runWith' (Commands.checkOracle (← oracleOf p (cmd.as! String)) (rounds p) (depth := depth p)
       (file := some (fileName p)) (read := ← reader p)) p
 
 def runHints (p : Parsed) : IO UInt32 := do
-  runWith (Commands.hints (file := some (fileName p)) (read := ← reader p)) p
+  runWith (Commands.hints (depth := depth p) (file := some (fileName p)) (read := ← reader p)) p
 
 /-- The folder of Diva's compiled modules (`.olean` files): `../lib/lean`, starting from
     the folder of the `diva` executable. `lake build` puts them there, in `.lake/build`.
@@ -184,7 +189,7 @@ def writeAndCheck (cmd : String → Commands.Result) (stdin ok : String) (p : Pa
 /-- `diva cert`: write the certificate, a Lean file stating that the program never
     fails. -/
 def runCert (p : Parsed) : IO UInt32 := do
-  writeAndCheck (Commands.cert (file := some (fileName p)) (read := ← reader p)) "cert.lean"
+  writeAndCheck (Commands.cert (depth := depth p) (file := some (fileName p)) (read := ← reader p)) "cert.lean"
     "certificate checked by Lean: the program never fails" p
 
 /-- `diva opt`: print the optimised program. With `--cert`, write the certificate of the
@@ -192,16 +197,16 @@ def runCert (p : Parsed) : IO UInt32 := do
 def runOpt (p : Parsed) : IO UInt32 := do
   let infer := p.hasFlag "infer"
   if p.hasFlag "cert" then
-    writeAndCheck (Commands.optCert (infer := infer) (file := some (fileName p)) (read := ← reader p)) "opt.lean"
+    writeAndCheck (Commands.optCert (infer := infer) (depth := depth p) (file := some (fileName p)) (read := ← reader p)) "opt.lean"
       "certificate checked by Lean: the optimised program is equivalent to the program" p
-  else runWith (Commands.opt (infer := infer) (file := some (fileName p)) (read := ← reader p)) p
+  else runWith (Commands.opt (infer := infer) (depth := depth p) (file := some (fileName p)) (read := ← reader p)) p
 
 /-- `diva prove`: write a Lean file stating that the functions meet their contracts.
     With `--oracle CMD`, the command `CMD` completes the proofs that Lean doesn't accept. -/
 def runProve (p : Parsed) : IO UInt32 :=
   match p.flag? "oracle" with
   | none => do
-    writeAndCheck (Commands.prove (infer := p.hasFlag "infer") (file := some (fileName p)) (read := ← reader p))
+    writeAndCheck (Commands.prove (infer := p.hasFlag "infer") (depth := depth p) (file := some (fileName p)) (read := ← reader p))
       "prove.lean"
       "checked by Lean: the functions meet their contracts, and the top-level expressions don't fail" p
   | some cmd => do
@@ -252,6 +257,9 @@ def quietDoc := "Don't print the lines `[diva] ...` that say what diva is doing.
 
 def roundsDoc := "How many times to ask the oracle (3 by default)."
 
+def depthDoc :=
+  "How deep the inferred hints describe the parts of lists and other ADT values (5 by default). Deeper hints are more precise for nested data, but the inference is slower."
+
 def timeoutDoc :=
   "How many seconds to wait for each answer of the oracle (no limit by default). If the time is up, the oracle is stopped, and `diva` stops with an error."
 
@@ -282,6 +290,7 @@ def checkCmd : Cmd := `[Cli|
   check VIA runCheck;
   "Say where the program may fail. Exits with 1 if it may fail."
   FLAGS:
+    depth : Nat; depthDoc
     oracle : String; checkOracleDoc
     rounds : Nat; roundsDoc
     timeout : Nat; timeoutDoc
@@ -294,6 +303,7 @@ def optCmd : Cmd := `[Cli|
   opt VIA runOpt;
   "Optimize the program and print it."
   FLAGS:
+    depth : Nat; depthDoc
     infer; "Give each function without a contract the contract that the analysis infers (see `diva hints`). Its `requires` is checked at run time, and the optimizer uses it."
     cert; "Write a certificate instead: a Lean file stating that the optimized program is equivalent to the program."
     check; "With `--cert`, also run Lean on the certificate. Exits with 1 if Lean rejects it."
@@ -307,6 +317,7 @@ def hintsCmd : Cmd := `[Cli|
   hints VIA runHints;
   "Print the hints inferred for the program."
   FLAGS:
+    depth : Nat; depthDoc
     quiet; quietDoc
   ARGS:
     file : String; "The program (`-` reads the standard input)."
@@ -317,6 +328,7 @@ def certCmd : Cmd := `[Cli|
   "Write a certificate: a Lean file stating that the program never fails. \
    Exits with 1 if the program may fail."
   FLAGS:
+    depth : Nat; depthDoc
     check; "Also run Lean on the certificate. Exits with 1 if Lean rejects it."
     o, output : String; "The certificate file to write. By default `<name>.lean` for `<name>.ml`, `cert.lean` for `-`."
     quiet; quietDoc
@@ -332,6 +344,7 @@ def proveCmd : Cmd := `[Cli|
   "Write a Lean file stating that the functions meet their contracts, written in \
    `(*@ requires ... ensures ... *)` comments. Exits with 1 if there is no contract."
   FLAGS:
+    depth : Nat; depthDoc
     check; "Also run Lean on the file. Exits with 1 if Lean rejects it."
     infer; "Give each function without a contract the contract that the analysis infers (see `diva hints`)."
     o, output : String; "The file to write. By default `<name>.lean` for `<name>.ml`, `prove.lean` for `-`."

@@ -12,12 +12,9 @@ $ diva ocaml opt exceptions.ml
 
 $ diva ocaml hints exceptions.ml
 x#0 : [-5, 500]
-Neg : [-5, -1]
-Too_big : ()
 x#1 : [-5, 500]
 x#2 : -3
 x#3 : [7, 8]
-Failure : ()
 x#4 : [7, 8]
 [exit 0]
 

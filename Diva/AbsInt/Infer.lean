@@ -15,9 +15,7 @@ and `opt` use them. The claims are:
 - `(x, a)`: an argument `a` passed to a function of parameter `x`;
 - `($f, r)`: the result `r` of the body of `f`, assuming `H`'s claims;
 - `(!s, v)`: a value `v` written to a ref or an array of the allocation site `s`, and
-  `(!s.length, n)`: the length `n` of an array created at `s`;
-- `(C, v)`: the argument `v` of a value `C v` (an exception, for example), and
-  `(%n.i, v)`: the `i`-th component `v` of a tuple of `n` components.
+  `(!s.length, n)`: the length `n` of an array created at `s`.
 
 `up` grows the hints from `⊥`, with widening, until they cover all their claims.
 `down` then shrinks them back to their claims, as long as they still cover them,
@@ -37,18 +35,6 @@ namespace Diva.AbsInt
 open AbsDomain
 
 variable {A : Type} [NumDomain A]
-
-/-- Widening: the integers of `a` and `b` are widened, and so are the integers of the
-    elements of their lists (`elem.int`). The other components are joined: they are
-    finite. -/
-def Flat.widen (a b : Flat A) : Flat A :=
-  let j := a.join b
-  { j with
-    int := AbsDomain.widen a.int b.int,
-    elem := j.elem.map fun e =>
-      match a.elem with
-      | some x => { e with int := AbsDomain.widen x.int e.int }
-      | none => e }
 
 /-- The parameters of the nested `fun`s at the start of `b`.
     For `fun y -> fun z -> e` it gives `[y, z]`. If `b` is not a `fun`, it gives `[]`. -/
@@ -124,8 +110,8 @@ def claims (ext : Bool) (H : Hints A) (C : Callees) (σ : AEnv A) : Expr → Lis
       claims ext H C σ i ++ claims ext H C σ v
   | .deref a | .len a | .assert a | .raise a => claims ext H C σ a
   | .get a i => claims ext H C σ a ++ claims ext H C σ i
-  -- `C v`: a claim on the arguments of `C`
-  | .ctor c v => argClaims c (aevalM true ext H σ v) ++ claims ext H C σ v
+  -- `C v`: the claims of `v`
+  | .ctor _ v => claims ext H C σ v
   | .tryw a k h =>
     let ea := raisesM true ext H σ a
     claims ext H C σ a ++
@@ -133,13 +119,12 @@ def claims (ext : Bool) (H : Hints A) (C : Callees) (σ : AEnv A) : Expr → Lis
   | .ctorCase s c x h m =>
     let vs := aevalM true ext H σ s
     claims ext H C σ s ++
-      (if vs.mayBeCtor c then claims ext H ((x, []) :: C) (hitEnv H σ s vs c x) h else []) ++
+      (if vs.mayBeCtor c then claims ext H ((x, []) :: C) (hitEnv σ s vs c x) h else []) ++
       (if vs.mayBeOtherCtor c then claims ext H C (σ.bind s (vs.withoutCtor c)) m else [])
   | .int _ | .bool _ | .unit | .var _ | .nil => []
 
 /-- The hint keys of `e`: its parameters, `$f` for each recursive function `f`, for
-    each allocation site `s`, `!s` (the contents) and, for an array, `!s.length`, and
-    each constructor `C`, its arguments (`argKeys`). -/
+    each allocation site `s`, `!s` (the contents) and, for an array, `!s.length`. -/
 def hintKeys : Expr → List String
   | .lam x b => x :: hintKeys b
   | .letrec f x b e2 => x :: ("$" ++ f) :: hintKeys b ++ hintKeys e2
@@ -150,7 +135,7 @@ def hintKeys : Expr → List String
   | .assign a b | .get a b => hintKeys a ++ hintKeys b
   | .set a i v => hintKeys a ++ hintKeys i ++ hintKeys v
   | .deref a | .len a | .assert a | .raise a => hintKeys a
-  | .ctor c v => argKeys c ++ hintKeys v
+  | .ctor _ v => hintKeys v
   | .tryw a _ h => hintKeys a ++ hintKeys h
   | .ctorCase s _ _ h m => hintKeys s ++ hintKeys h ++ hintKeys m
   | .int _ | .bool _ | .unit | .var _ | .nil => []
@@ -181,21 +166,22 @@ def covers (ext : Bool) (fixed H : Hints A) (σ : AEnv A) (e : Expr) (keep : Boo
 
 /-- Grow `H` until it covers its claims (or `n` rounds pass): by joins in the first `delay`
     rounds, then with widening. The joins find the hints of claims that depend on each
-    other, such as `%2.0` and `%2.1` for `(a, b)` and `(b, a)`, before widening makes them
-    `top`.
+    other, such as those of `x` and `y` for `f x = g (x + 1)` and `g y = f y`, before
+    widening makes them `top`. The parts of the hints deeper than `depth` levels are
+    forgotten, so that the hints stay finite.
 
     A key without claims keeps its hint: the code that would claim something on it may
     not be reached yet, because the hints of the code around it are still too small. For
     example, the parameter of a loop inside another loop gets claims only once the
     parameter of the outer loop has some values. -/
-def up (ext : Bool) (fixed : Hints A) (σ : AEnv A) (e : Expr) (delay : Nat) : Nat → Hints A → Hints A
+def up (ext : Bool) (fixed : Hints A) (σ : AEnv A) (e : Expr) (depth delay : Nat) : Nat → Hints A → Hints A
   | 0, H => H
   | n + 1, H =>
     if covers ext fixed H σ e (keep := true) then H
     else
       let H' := (H.zip (collect ext H σ e (keep := true))).map fun ((k, old), (_, now)) =>
-        (k, if delay > 0 then old.join now else old.widen now)
-      up ext fixed σ e (delay - 1) n (pin fixed H')
+        (k, (if delay > 0 then old.join now else old.widen now).trunc depth)
+      up ext fixed σ e depth (delay - 1) n (pin fixed H')
 
 /-- `H`, where each key without claims gets the hint that `collect` gives it: `top` for a
     parameter, `bot` for a result. After `up`, these keys are those of code that nothing
@@ -215,15 +201,17 @@ def down (ext : Bool) (fixed : Hints A) (σ : AEnv A) (e : Expr) : Nat → Hints
 /-- The hints for the program `e`: the values of each parameter and of each function
     result. `σ` gives the values of the variables that `e` uses without defining them.
     The hints of `fixed` (given by the user or an LLM) are used unchanged. A hint that
-    allows any value (`top`) is left out, because a missing hint means `top`. -/
+    allows any value (`top`) is left out, because a missing hint means `top`.
+    The hints describe the parts of lists and other ADT values down to `depth`
+    levels. -/
 def inferHints (σ : AEnv A) (e : Expr) (fixed : Hints A := []) (rounds : Nat := 10)
-    (ext : Bool := false) :
+    (ext : Bool := false) (depth : Nat := 5) :
     Hints A :=
   let H₀ := pin fixed ((hintKeys e).eraseDups.map (·, Flat.bot))
   -- `up` again: with `top` for the parameters of the functions that nothing calls, the
   -- code of these functions is reached, and its keys get claims
-  let H₁ := up ext fixed σ e 3 rounds H₀
-  let H₂ := up ext fixed σ e 3 rounds (pin fixed (unreached ext H₁ σ e))
+  let H₁ := up ext fixed σ e depth 3 rounds H₀
+  let H₂ := up ext fixed σ e depth 3 rounds (pin fixed (unreached ext H₁ σ e))
   let H := down ext fixed σ e rounds H₂
   H.filter fun (_, a) => !Flat.top.leq a
 
