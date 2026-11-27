@@ -12,6 +12,7 @@ def program : Diva.Expr :=
 def hints : Diva.AbsInt.Hints Diva.AbsInt.Itv := [
   ("x#0", { int := (.range (.fin 3) (.fin 3)), tt := false, ff := false, unit := false, list := false, fn := false, loc := false, ctor := false }),
   ("x#1", { int := (.range (.fin 3) (.fin 3)), tt := false, ff := false, unit := false, list := false, fn := false, loc := false, ctor := false }),
+  ("x#2", { int := .bot, tt := false, ff := false, unit := false, list := false, fn := false, loc := false, ctor := false }),
   ("x#3", { int := (.range (.fin 3) (.fin 3)), tt := false, ff := false, unit := false, list := false, fn := false, loc := false, ctor := false })]
 
 /-- The program never fails, whatever the starting store. -/

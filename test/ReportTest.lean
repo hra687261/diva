@@ -41,10 +41,10 @@ private def check (s : String) : Option (List String) :=
 
 -- a function given as an argument: in the copy of `g`, `f` is that function
 #guard check "let g f = f 1 in g (fun x -> x + 1)" = some [Report.unprovedSafe]
--- without a copy, the analysis knows nothing about a function given as an argument
+-- without a copy, the analysis knows nothing about a function given as an argument. No
+-- call of `fun x -> ...` is known, so its body isn't reported, but `f 1` is
 #guard check "let rec g f = f 1 in g (fun x -> x + 1)" = some [
   "`(f 1)`: calls a function the analysis knows nothing about",
-  "`(x + 1)`: the operands may not be integers (⊤ and 1)",
   "`(g (fun x -> (x + 1)))`: the function called may fail",
   "`(g (fun x -> (x + 1)))`: may raise an exception that isn't caught (ctor)"]
 

@@ -104,8 +104,8 @@ private def analyseI (s : String) : Option String :=
 #guard analyseI "let f = fun y -> y + 1 in f (f x)"     = some "[1, +∞]"
 -- a function reached through another variable
 #guard analyseI "let g = fun y -> y in let h = g in h 3" = some "3"
--- a parameter that no call reaches: no hint (anything)
-#guard hintsOf "fun y -> y"                             = some "[]"
+-- a parameter that no call reaches: no value (the body never runs)
+#guard hintsOf "fun y -> y"                             = some "[y#0: ⊥]"
 
 -- recursive functions: the precondition covers the recursive calls too
 #guard hintsOf countdown                                = some "[y#1: [0, 10], $f#0: 0]"

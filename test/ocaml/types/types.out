@@ -3,21 +3,25 @@ runtime error: division by zero
 [exit 1]
 
 $ diva ocaml check types.ml
-types.ml:8:57-62: `w * h`: may overflow 63-bit integers (result: [-∞, +∞])
-types.ml:9:37-42: `x + 1`: may overflow 63-bit integers (result: [-∞, +∞])
-types.ml:13:8-14: `10 / 0`: possible division by zero (divisor: 0)
-types.ml:13:8-14: `10 / 0`: may overflow 63-bit integers (result: [-∞, +∞])
+types.ml:24:8-14: `10 / 0`: possible division by zero (divisor: 0)
+types.ml:24:8-14: `10 / 0`: may overflow 63-bit integers (result: [-∞, +∞])
 [exit 1]
 
 $ diva ocaml opt types.ml
-(let z = (let %r = (10 / 0) in (let _ = (assert (if (-4611686018427387904 <= %r) then (%r <= 4611686018427387903) else false)) in %r)) in z)
+(let rec div2 n = (if (n < 2) then 0 else (let %r = (1 + (div2 (let %r = (n - 2) in (let _ = (assert (%r <= 4611686018427387903)) in %r)))) in (let _ = (assert (if (-4611686018427387904 <= %r) then (%r <= 4611686018427387903) else false)) in %r))) in (let r = (ref 1) in (let _ = (r := 0) in (let z = (let %r = (10 / 0) in (let _ = (assert (if (-4611686018427387904 <= %r) then (%r <= 4611686018427387903) else false)) in %r)) in z))))
 [exit 0]
 
 $ diva ocaml hints types.ml
-b#0 : bool
-s#1 : Circle [-∞, +∞] | Rect ([-∞, +∞], [-∞, +∞])
-l#2 : list of [-∞, +∞]
-c#3 : [0, 255]
+b#0 : ⊥
+s#1 : ⊥
+l#2 : ⊥
+c#3 : ⊥
+n#5 : ⊥
+$div2#4 : ⊥
+n#6 : ⊥
+n#7 : ⊥
+!0 : [0, 1]
+x#8 : ⊥
 [exit 0]
 
 $ diva ocaml cert --check types.ml
@@ -26,5 +30,46 @@ the program may fail, so there is no certificate (see `diva check`)
 
 $ diva ocaml prove --check -o prove.lean types.ml
 no function has a contract: write one in a `(*@ ... *)` comment after a function
+[exit 1]
+
+$ diva ocaml check --entry negate,area,first,code types.ml
+types.ml:24:8-14: `10 / 0`: possible division by zero (divisor: 0)
+types.ml:24:8-14: `10 / 0`: may overflow 63-bit integers (result: [-∞, +∞])
+types.ml:9:57-62: `w * h`: may overflow 63-bit integers (result: [-∞, +∞])
+types.ml:10:37-42: `x + 1`: may overflow 63-bit integers (result: [-∞, +∞])
+[exit 1]
+
+$ diva ocaml hints --entry negate,area,first,code types.ml
+b#0 : bool
+s#1 : Circle [-∞, +∞] | Rect ([-∞, +∞], [-∞, +∞])
+l#2 : list of [-∞, +∞]
+c#3 : [0, 255]
+n#5 : ⊥
+$div2#4 : ⊥
+n#6 : ⊥
+n#7 : ⊥
+!0 : [0, 1]
+x#8 : ⊥
+[exit 0]
+
+$ diva ocaml check --entry quad,half types.ml
+types.ml:14:47-54: `(n - 2)`: may overflow 63-bit integers (result: [0, +∞])
+types.ml:14:38-54: `1 + div2 (n - 2)`: may overflow 63-bit integers (result: [1, +∞])
+types.ml:24:8-14: `10 / 0`: possible division by zero (divisor: 0)
+types.ml:24:8-14: `10 / 0`: may overflow 63-bit integers (result: [-∞, +∞])
+types.ml:15:13-19: `div2 n`: the function called may fail
+types.ml:15:13-23: `div2 n * 4`: may overflow 63-bit integers (result: [0, +∞])
+types.ml:16:13-19: `div2 n`: the function called may fail
+[exit 1]
+
+$ diva ocaml check --entry inv types.ml
+types.ml:24:8-14: `10 / 0`: possible division by zero (divisor: 0)
+types.ml:24:8-14: `10 / 0`: may overflow 63-bit integers (result: [-∞, +∞])
+types.ml:21:12-18: `x / !r`: possible division by zero (divisor: [0, 1])
+types.ml:21:12-18: `x / !r`: may overflow 63-bit integers (result: [-∞, +∞])
+[exit 1]
+
+$ diva ocaml check --entry nope types.ml
+no top-level function `nope`
 [exit 1]
 

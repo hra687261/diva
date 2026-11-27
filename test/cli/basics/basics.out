@@ -5,7 +5,6 @@ $ diva run basics.ml
 $ diva check basics.ml
 basics.ml:9:53-56: `f x`: calls a function the analysis knows nothing about
 basics.ml:11:50-60: `x + sum xs`: the operands may not be integers (⊤ and [-∞, +∞])
-basics.ml:15:28-33: `x * x`: the operands may not be integers (⊤ and ⊤)
 basics.ml:15:14-46: `map (fun x -> x * x) (range 1 5)`: the function called may fail
 basics.ml:16:12-23: `sum squares`: the function called may fail
 basics.ml:21:0-9: `assert ok` may fail
@@ -29,6 +28,7 @@ $sum#7 : [-∞, +∞]
 a#10 : [1, 6]
 $range#9 : list of [1, 5]
 b#11 : 5
+x#12 : ⊥
 [exit 0]
 
 $ diva cert --check basics.ml

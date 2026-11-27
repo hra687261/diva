@@ -101,6 +101,11 @@ def askCommand (cmd : String) (timeout : Option Nat) (question : String) : IO St
 def rounds (p : Parsed) : Nat :=
   (p.flag? "rounds").map (·.as! Nat) |>.getD 3
 
+/-- The value of the flag `--entry f,g`: the functions that other code may call (none by
+    default, see `withEntries`). -/
+def entries (p : Parsed) : List String :=
+  ((p.flag? "entry").map (·.as! (Array String))).getD #[] |>.toList
+
 /-- The value of the flag `--depth`: how deep the hints describe the parts of lists and
     other ADT values (5 by default, see `inferHints`). -/
 def depth (p : Parsed) : Nat :=
@@ -123,16 +128,16 @@ def runCheck (p : Parsed) : IO UInt32 :=
   | none => do
     let (read, types) ← fileReader p
     runWith (Commands.check (unroll := unroll p) (depth := depth p) (file := some (fileName p))
-      (read := read) (types := types)) p
+      (read := read) (types := types) (entries := entries p)) p
   | some cmd => do
     let (read, types) ← fileReader p
     runWith' (Commands.checkOracle (unroll := unroll p) (← oracleOf p (cmd.as! String)) (rounds p)
-      (depth := depth p) (file := some (fileName p)) (read := read) (types := types)) p
+      (depth := depth p) (file := some (fileName p)) (read := read) (types := types) (entries := entries p)) p
 
 def runHints (p : Parsed) : IO UInt32 := do
   let (read, types) ← fileReader p
   runWith (Commands.hints (unroll := unroll p) (depth := depth p) (file := some (fileName p))
-    (read := read) (types := types)) p
+    (read := read) (types := types) (entries := entries p)) p
 
 /-- The folder of Diva's compiled modules (`.olean` files): `../lib/lean`, starting from
     the folder of the `diva` executable. `lake build` puts them there, in `.lake/build`.
@@ -274,6 +279,9 @@ def depthDoc :=
 def unrollDoc :=
   "The largest `n` of a comparison `length l op n` in a contract that is checked by matching `l` against `n` or `n + 1` elements, rather than by computing `length l` (4 by default). The analysis is more precise on these matches."
 
+def entryDoc :=
+  "Functions that other code may call, as in a library, separated by commas: after the top-level code, each one is checked for all the arguments of its OCaml type (with `diva ocaml`), or for any argument. Without it, a function that nothing calls never runs, so it can't fail."
+
 def timeoutDoc :=
   "How many seconds to wait for each answer of the oracle (no limit by default). If the time is up, the oracle is stopped, and `diva` stops with an error."
 
@@ -306,6 +314,7 @@ def checkCmd : Cmd := `[Cli|
   check VIA runCheck;
   "Say where the program may fail. Exits with 1 if it may fail."
   FLAGS:
+    entry : Array String; entryDoc
     unroll : Nat; unrollDoc
     depth : Nat; depthDoc
     oracle : String; checkOracleDoc
@@ -335,6 +344,7 @@ def hintsCmd : Cmd := `[Cli|
   hints VIA runHints;
   "Print the hints inferred for the program."
   FLAGS:
+    entry : Array String; entryDoc
     unroll : Nat; unrollDoc
     depth : Nat; depthDoc
     quiet; quietDoc

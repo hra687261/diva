@@ -1,0 +1,5 @@
+check --entry negate,area,first,code
+hints --entry negate,area,first,code
+check --entry quad,half
+check --entry inv
+check --entry nope

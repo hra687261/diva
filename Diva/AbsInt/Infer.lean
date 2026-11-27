@@ -140,20 +140,15 @@ def hintKeys : Expr → List String
   | .ctorCase s _ _ h m => hintKeys s ++ hintKeys h ++ hintKeys m
   | .int _ | .bool _ | .unit | .var _ | .nil => []
 
-/-- The hint of a key that no code claims anything on. A parameter that no call reaches
-    may be called from anywhere: `top`, or a value of its type if `types` gives it
-    (`TypeHints.lean`). A function's result that nothing claims (dead code) is `bot`. -/
-def unclaimed (types : Hints A) (k : String) : Flat A :=
-  if k.startsWith "$" then Flat.bot else (types.lookup k).getD Flat.top
-
 /-- For each key of `H`, the join of its claims. A key without claims keeps its hint in
-    `H` if `keep`, else it gets `unclaimed types`. -/
-def collect (ext : Bool) (H : Hints A) (σ : AEnv A) (e : Expr) (keep : Bool := false)
-    (types : Hints A := []) : Hints A :=
+    `H` if `keep`, else it gets `bot`: no code reaches it, such as the parameter of a
+    function that nothing calls. -/
+def collect (ext : Bool) (H : Hints A) (σ : AEnv A) (e : Expr) (keep : Bool := false) :
+    Hints A :=
   let cs := claims ext H [] σ e
   H.map fun (k, old) =>
     match cs.filter (·.1 == k) with
-    | [] => (k, if keep then old else unclaimed types k)
+    | [] => (k, if keep then old else Flat.bot)
     | ps => (k, ps.foldl (fun acc p => acc.join p.2) Flat.bot)
 
 /-- `H`, with the hints of `fixed` replacing those of `H` for the same keys. For example,
@@ -164,9 +159,9 @@ def pin (fixed H : Hints A) : Hints A :=
 
 /-- `H` covers all its claims, except those on the keys of `fixed`. With `keep`, a key
     without claims is covered. -/
-def covers (ext : Bool) (fixed H : Hints A) (σ : AEnv A) (e : Expr) (keep : Bool := false)
-    (types : Hints A := []) : Bool :=
-  (collect ext H σ e keep types).all fun (k, a) =>
+def covers (ext : Bool) (fixed H : Hints A) (σ : AEnv A) (e : Expr) (keep : Bool := false) :
+    Bool :=
+  (collect ext H σ e keep).all fun (k, a) =>
     (fixed.lookup k).isSome || a.leq ((H.lookup k).getD Flat.top)
 
 /-- Grow `H` until it covers its claims (or `n` rounds pass): by joins in the first `delay`
@@ -188,36 +183,26 @@ def up (ext : Bool) (fixed : Hints A) (σ : AEnv A) (e : Expr) (depth delay : Na
         (k, (if delay > 0 then old.join now else old.widen now).trunc depth)
       up ext fixed σ e depth (delay - 1) n (pin fixed H')
 
-/-- `H`, where each key without claims gets `unclaimed types`. After `up`, these keys are
-    those of code that nothing reaches, such as the parameter of a function that nothing
-    calls. -/
-def unreached (ext : Bool) (types H : Hints A) (σ : AEnv A) (e : Expr) : Hints A :=
-  let cs := claims ext H [] σ e
-  H.map fun (k, a) => if cs.any (·.1 == k) then (k, a) else (k, unclaimed types k)
-
 /-- Shrink `H` to its claims, as long as they still cover theirs (`n` rounds). -/
-def down (ext : Bool) (types fixed : Hints A) (σ : AEnv A) (e : Expr) :
+def down (ext : Bool) (fixed : Hints A) (σ : AEnv A) (e : Expr) :
     Nat → Hints A → Hints A
   | 0, H => H
   | n + 1, H =>
-    let H' := pin fixed (collect ext H σ e (types := types))
-    if covers ext fixed H' σ e (types := types) then down ext types fixed σ e n H' else H
+    let H' := pin fixed (collect ext H σ e)
+    if covers ext fixed H' σ e then down ext fixed σ e n H' else H
 
 /-- The hints for the program `e`: the values of each parameter and of each function
     result. `σ` gives the values of the variables that `e` uses without defining them.
-    The hints of `fixed` (given by the user or an LLM) are used unchanged. `types` gives
-    the types of parameters, for those that no code reaches (`unclaimed`). A hint that
-    allows any value (`top`) is left out, because a missing hint means `top`.
+    The hints of `fixed` (given by the user or an LLM) are used unchanged.
+    A key that no code reaches, such as the parameter of a function that nothing
+    calls, gets `bot`. A hint that allows any value (`top`) is left out, because
+    a missing hint means `top`.
     The hints describe the parts of lists and other ADT values down to `depth`
     levels. -/
 def inferHints (σ : AEnv A) (e : Expr) (fixed : Hints A := []) (rounds : Nat := 10)
-    (ext : Bool := false) (types : Hints A := []) (depth : Nat := 5) : Hints A :=
+    (ext : Bool := false) (depth : Nat := 5) : Hints A :=
   let H₀ := pin fixed ((hintKeys e).eraseDups.map (·, Flat.bot))
-  -- `up` again: with `unclaimed` for the parameters of the functions that nothing calls, the
-  -- code of these functions is reached, and its keys get claims
-  let H₁ := up ext fixed σ e depth 3 rounds H₀
-  let H₂ := up ext fixed σ e depth 3 rounds (pin fixed (unreached ext types H₁ σ e))
-  let H := down ext types fixed σ e rounds H₂
+  let H := down ext fixed σ e rounds (up ext fixed σ e depth 3 rounds H₀)
   H.filter fun (_, a) => !Flat.top.leq a
 
 end Diva.AbsInt

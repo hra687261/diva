@@ -106,7 +106,10 @@ def diagnose (H : Hints A) (place code : Span → String) :
          else [])
     | none =>
       diagnose H place code σ e1 (l.kid 0) ++ diagnose H place code ((x, v1) :: σ) e2 (l.kid 1)
-  | σ, .lam x b, l => diagnose H place code ((x, AVal.ofFlat (H.param x)) :: σ) b (l.kid 0)
+  -- a body that no call reaches (its parameter has no value) can't fail
+  | σ, .lam x b, l =>
+    if (H.param x).leq Flat.bot then []
+    else diagnose H place code ((x, AVal.ofFlat (H.param x)) :: σ) b (l.kid 0)
   | σ, e@(.app f a), l =>
     let vf := aevalExt H σ f
     let va := aevalExt H σ a
@@ -123,7 +126,9 @@ def diagnose (H : Hints A) (place code : Span → String) :
         [msg l s!"`{clean f}`: the result of its body is not in the claimed result \
           ({H.result f}), so its calls are unknown"]
       else []
-    diagnose H place code ((x, AVal.ofFlat P) :: (f, AVal.summary S) :: σ) b (l.kid 0) ++ rejected ++
+    (if P.leq Flat.bot then []
+     else diagnose H place code ((x, AVal.ofFlat P) :: (f, AVal.summary S) :: σ) b (l.kid 0)) ++
+      rejected ++
       diagnose H place code ((f, vf) :: σ) e2 (l.kid 1)
   | σ, .ite c t e, l =>
     let vc := aevalExt H σ c
@@ -249,17 +254,17 @@ def unprovedSafe : String :=
 
 /-- `e` with its calls replaced by copies of the functions called (`Inline.expand`), and
     the hints of the analysis that isn't proved yet for it. `l` has the positions of
-    `e`. `types` and `depth` are those of `inferHints`. -/
+    `e`. `depth` is that of `inferHints`. -/
 def unprovedHints (σ : AEnv A) (e : Expr) (fixed : Hints A := []) (l : Loc := default)
-    (types : Hints A := []) (depth : Nat := 5) : LExpr × Hints A :=
+    (depth : Nat := 5) : LExpr × Hints A :=
   let e' := Inline.expand [] e l
-  (e', inferHints σ e'.expr fixed (ext := true) (types := types) (depth := depth))
+  (e', inferHints σ e'.expr fixed (ext := true) (depth := depth))
 
 /-- Whether `e` may fail, or raise an exception that it doesn't catch, by the analysis that
     isn't proved yet (`mayFailExt`), with its calls replaced by copies (see `unprovedHints`). -/
-def mayFailUnproved (σ : AEnv A) (e : Expr) (fixed : Hints A := []) (types : Hints A := [])
-    (depth : Nat := 5) : Bool :=
-  let (e', HS) := unprovedHints σ e fixed (types := types) (depth := depth)
+def mayFailUnproved (σ : AEnv A) (e : Expr) (fixed : Hints A := []) (depth : Nat := 5) :
+    Bool :=
+  let (e', HS) := unprovedHints σ e fixed (depth := depth)
   mayFailExt HS σ e'.expr
 
 /-- What `diva check` prints for the program `e`: where `e` may fail, or that it
@@ -267,8 +272,7 @@ def mayFailUnproved (σ : AEnv A) (e : Expr) (fixed : Hints A := []) (types : Hi
     defining them (`[]` for a complete program). `inferHints` infers the hints, but
     uses the hints of `fixed` unchanged. The report still checks the hints of
     `fixed`. `l` has the positions of `e`, `place` prints a span (`""` for none), and
-    `code` gives the source text of a span (`""` for none). `types` and `depth` are those of
-    `inferHints`.
+    `code` gives the source text of a span (`""` for none). `depth` is that of `inferHints`.
 
     If the checker (`mayFail`) proves that `e` can't fail, the report says so.
     Otherwise it follows the analysis with arrays, refs and exceptions (`mayFailExt`), which
@@ -276,10 +280,10 @@ def mayFailUnproved (σ : AEnv A) (e : Expr) (fixed : Hints A := []) (types : Hi
     isn't caught, or `unprovedSafe`. -/
 def report (σ : AEnv A) (e : Expr) (fixed : Hints A := []) (l : Loc := default)
     (place : Span → String := fun _ => "") (code : Span → String := fun _ => "")
-    (types : Hints A := []) (depth : Nat := 5) : List String :=
+    (depth : Nat := 5) : List String :=
   -- the hints that the checker can confirm, then those of the analysis that isn't proved
-  let H := inferHints σ e fixed (types := types) (depth := depth)
-  let (⟨e', l'⟩, HS) := unprovedHints σ e fixed l types depth
+  let H := inferHints σ e fixed (depth := depth)
+  let (⟨e', l'⟩, HS) := unprovedHints σ e fixed l depth
   if !mayFail H σ e then ["no runtime error is possible"]
   else if mayFailExt HS σ e' then
     -- a copy of a function gives its messages again: they are kept once

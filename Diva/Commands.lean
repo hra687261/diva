@@ -90,36 +90,44 @@ def print (src : String) (file : Option String := none)
   withParse file src (read := read) (unroll := unroll) fun e =>
     { out := [Report.clean (toString e)] }
 
+/-- The program that `read` reads in `src`, with a call of each entry point of `entries`,
+    and the values of the arguments of these calls (`withEntries`). The values come from
+    the types of the parameters, `types` (from the OCaml frontend). -/
+def readEntries (read : Reader) (src : String) (file : Option String) (unroll : Nat)
+    (types : List TypeHint) (entries : List String) : Except Result (LExpr × AEnv Itv) :=
+  match read.lexpr src unroll with
+  | .error msg => .error (parseError file msg)
+  | .ok ⟨e, l⟩ => (withEntries entries types e l).mapError fun msg => { err := [msg], code := 1 }
+
 /-- `diva check`: parse the program `src`, and print the places where the analysis
     says it may fail, with their positions in `file` (see `Report.report`). Exit with
     code 0 if the program can't fail, and 1 if it may. Code 0 may come from the analysis
     of arrays, refs, exceptions and the elements of lists (`mayFailExt`), which isn't
-    proved yet. The message then says so. `types` gives the types of the parameters
-    (from the OCaml frontend), for those that no code reaches. -/
+    proved yet. The message then says so. The functions of `entries` are checked for all
+    the arguments of their types (`readEntries`). -/
 def check (src : String) (file : Option String := none)
-    (read : Reader := parseItemsLoc) (types : List TypeHint := []) (depth : Nat := 5)
-    (unroll : Nat := 4) : Result :=
-  match read.lexpr src unroll with
-  | .error msg => parseError file msg
-  | .ok ⟨e, l⟩ =>
-    let T := typeHints types e l
-    let H := inferHints ([] : AEnv Itv) e (types := T) (depth := depth)
-    let msgs := Report.report ([] : AEnv Itv) e (l := l) (place := place src file)
-      (code := Span.text src) (types := T) (depth := depth)
-    let fails := Report.mayFailUnproved ([] : AEnv Itv) e [] T depth
-    { out := msgs, code := if mayFail H [] e && fails then 1 else 0 }
+    (read : Reader := parseItemsLoc) (types : List TypeHint := []) (entries : List String := [])
+    (depth : Nat := 5) (unroll : Nat := 4) : Result :=
+  match readEntries read src file unroll types entries with
+  | .error r => r
+  | .ok (⟨e, l⟩, σ) =>
+    let H := inferHints σ e (depth := depth)
+    let msgs := Report.report σ e (l := l) (place := place src file) (code := Span.text src)
+      (depth := depth)
+    let fails := Report.mayFailUnproved σ e (depth := depth)
+    { out := msgs, code := if mayFail H σ e && fails then 1 else 0 }
 
 /-- `diva check --oracle`: parse the program `src`, and ask `oracle` for hints, at most
     `rounds` times, until the program is safe with them (`Oracle.consult`). Print each
     round, then what `check` prints with the last hints, with the positions in `file`. -/
 def checkOracle [Monad m] (oracle : String → m String) (rounds : Nat) (src : String)
     (file : Option String := none) (read : Reader := parseItemsLoc)
-    (types : List TypeHint := []) (depth : Nat := 5) (unroll : Nat := 4) : m Result :=
-  match read.lexpr src unroll with
-  | .error msg => return parseError file msg
-  | .ok ⟨e, l⟩ => do
-    let T := typeHints types e l
-    let rs ← Oracle.consult oracle ([] : AEnv Itv) e rounds (file.map fun f => ⟨f, src, l⟩) depth
+    (types : List TypeHint := []) (entries : List String := []) (depth : Nat := 5)
+    (unroll : Nat := 4) : m Result :=
+  match readEntries read src file unroll types entries with
+  | .error r => return r
+  | .ok (⟨e, l⟩, σ) => do
+    let rs ← Oracle.consult oracle σ e rounds (file.map fun f => ⟨f, src, l⟩) depth
     let shown := rs.zipIdx.flatMap fun (r, i) =>
       [s!"round {i + 1}: the oracle proposes"] ++
         (match r.error with
@@ -128,10 +136,10 @@ def checkOracle [Monad m] (oracle : String → m String) (rounds : Nat) (src : S
            if r.hints.isEmpty then ["  nothing"] else r.hints.map fun (x, a) => s!"  {x} : {a}") ++
         [if r.accepted then "accepted" else "rejected"]
     let fixed := (rs.getLast?.map (·.hints)).getD []
-    let H := inferHints ([] : AEnv Itv) e fixed (types := T) (depth := depth)
-    let msgs := Report.report ([] : AEnv Itv) e fixed l (place src file) (Span.text src) T depth
-    let fails := Report.mayFailUnproved ([] : AEnv Itv) e fixed T depth
-    return { out := shown ++ msgs, code := if mayFail H [] e && fails then 1 else 0 }
+    let H := inferHints σ e fixed (depth := depth)
+    let msgs := Report.report σ e fixed l (place src file) (Span.text src) depth
+    let fails := Report.mayFailUnproved σ e fixed depth
+    return { out := shown ++ msgs, code := if mayFail H σ e && fails then 1 else 0 }
 
 /-- `diva opt`: parse the program `src`, optimise it using what the analysis knows
     about its values, and print the optimised program. With `infer`, each function
@@ -167,15 +175,15 @@ def optCert (src : String) (infer : Bool := false) (file : Option String := none
 /-- `diva hints`: parse the program `src`, infer its hints, and print them, one per
     line, as `name : values`. A hint gives the values that a function parameter can
     take, or that a function can return: `$f` is the result of the function `f`.
-    Names keep their `#n` suffix: it makes them unique, and hints are keyed by name. -/
+    Names keep their `#n` suffix: it makes them unique, and hints are keyed by name.
+    With `entries`, as for `check`. -/
 def hints (src : String) (file : Option String := none)
-    (read : Reader := parseItemsLoc) (types : List TypeHint := []) (depth : Nat := 5)
-    (unroll : Nat := 4) : Result :=
-  match read.lexpr src unroll with
-  | .error msg => parseError file msg
-  | .ok ⟨e, l⟩ =>
-    let T := typeHints types e l
-    let H := inferHints ([] : AEnv Itv) e (ext := true) (types := T) (depth := depth)
+    (read : Reader := parseItemsLoc) (types : List TypeHint := []) (entries : List String := [])
+    (depth : Nat := 5) (unroll : Nat := 4) : Result :=
+  match readEntries read src file unroll types entries with
+  | .error r => r
+  | .ok (⟨e, _⟩, σ) =>
+    let H := inferHints σ e (ext := true) (depth := depth)
     { out := H.map fun (x, a) => s!"{x} : {a}" }
 
 /-- `diva cert`: parse the program `src`, and print its certificate

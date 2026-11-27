@@ -1,16 +1,12 @@
-import Diva.AbsInt.AVal
-import Diva.Loc
+import Diva.AbsInt.Aeval
+import Diva.Desugar
 
 /-!
-# Types as hints (untrusted)
+# Entry points (untrusted)
 
-The OCaml frontend gives the type of each parameter (`Ty`). The parameters of a function
-that nothing calls get the hint of their type, rather than any value (`Infer.unreached`).
-So `let neg b = not b` is analysed with `b` a boolean. This trusts the OCaml type checker.
-The other parameters get their hints from the calls.
-
-These hints change only `diva hints` and the reports: the body of a function that nothing
-calls can't make the program fail (`mayFail`).
+The check starts from the top-level code, which OCaml always runs. With `--entry f,g`,
+`f` and `g` are also called after it (`withEntries`), with any arguments of their
+parameters' OCaml types (`Ty`), which trusts the OCaml type checker.
 -/
 
 namespace Diva
@@ -95,5 +91,42 @@ partial def typeHints {A : Type} [AbsInt.NumDomain A] [Inhabited A] (ts : List T
     | .letrec _ x _ _ => find (l.kid 0).span x
     | _ => []
   here ++ (e.kids.zipIdx.flatMap fun (k, i) => typeHints ts k (l.kid i))
+
+/-- The top-level functions of `e` (after `resolve`), with their parameters. `l` has the
+    positions of `e`: the span of each function is that of its declaration. -/
+def topFns : Expr → Loc → List (String × List String × Span)
+  | .letrec f x b r, l => (f, x :: lamParams b, l.span) :: topFns r (l.kid 1)
+  | .letin f a r, l =>
+    (if lamParams a |>.isEmpty then [] else [(f, lamParams a, l.span)]) ++ topFns r (l.kid 1)
+  | _, _ => []
+
+/-- `e` with `let _ = c in` before its last expression, after its top-level code. `lc`
+    has the positions of `c`, and `l` those of `e`. -/
+def atEnd (c : Expr) (lc : Loc) : Expr → Loc → LExpr
+  | .letrec f x b r, l =>
+    let r' := atEnd c lc r (l.kid 1)
+    ⟨.letrec f x b r'.expr, .node l.span [l.kid 0, r'.loc]⟩
+  | .letin x a r, l =>
+    let r' := atEnd c lc r (l.kid 1)
+    ⟨.letin x a r'.expr, .node l.span [l.kid 0, r'.loc]⟩
+  | r, l => ⟨.letin "_" c r, .node l.span [lc, l]⟩
+
+/-- `e`, then a call of each function of `fs`, with free names as arguments. `σ` gives
+    these names the values of the types `ts`. `l` has the positions of `e`. -/
+def withEntries {A : Type} [AbsInt.NumDomain A] [Inhabited A] (fs : List String)
+    (ts : List TypeHint) (e : Expr) (l : Loc) : Except String (LExpr × AbsInt.AEnv A) := do
+  let T : List (String × AbsInt.Flat A) := typeHints ts e l
+  let fns := topFns e l
+  let mut out : LExpr := ⟨e, l⟩
+  let mut σ : AbsInt.AEnv A := []
+  for name in fs do
+    -- the last declaration of `name`: the one that the end of the program sees
+    let some (f, xs, _) := (fns.filter (sourceName ·.1 == name)).getLast?
+      | throw s!"no top-level function `{name}`"
+    let args := xs.zipIdx.map fun (x, i) => (s!"%{name}.{i}", x)
+    let call := args.foldl (fun c (a, _) => Expr.app c (.var a)) (.var f)
+    out := atEnd call (.leaf Span.prelude) out.expr out.loc
+    σ := σ ++ args.map fun (a, x) => (a, AbsInt.AVal.ofFlat ((T.lookup x).getD AbsInt.Flat.top))
+  return (out, σ)
 
 end Diva
