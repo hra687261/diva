@@ -75,7 +75,6 @@ type item =
 
 (* A type, for DIVA's inference ([Diva/TypeHints.lean]). *)
 type ty =
-  | Ty_int
   | Ty_range of int64 * int64  (** the integers from [lo] to [hi] *)
   | Ty_bool
   | Ty_unit
@@ -265,7 +264,6 @@ let item_to_sexp = function
 (* [t] as [int], [(range LO HI)], [bool], [unit], [exn], [fun], [(list T)],
    [(tuple T ...)], [(variant ("C") ("D" T))] or [any]. *)
 let rec ty_to_sexp = function
-  | Ty_int -> Atom "int"
   | Ty_range (lo, hi) ->
       List
         [ Atom "range"; Atom (Int64.to_string lo); Atom (Int64.to_string hi) ]
@@ -355,7 +353,8 @@ let rec type_of env depth (t : Types.type_expr) =
   if depth = 0 then Ty_any
   else
     match Types.get_desc (Ctype.expand_head env t) with
-    | Tconstr (p, [], _) when Path.same p Predef.path_int -> Ty_int
+    | Tconstr (p, [], _) when Path.same p Predef.path_int ->
+        Ty_range (Int64.of_int min_int, Int64.of_int max_int)
     | Tconstr (p, [], _) when Path.same p Predef.path_char -> Ty_range (0L, 255L)
     | Tconstr (p, [], _) when Path.same p Predef.path_int32 ->
         Ty_range (Int64.of_int32 Int32.min_int, Int64.of_int32 Int32.max_int)

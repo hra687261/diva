@@ -35,14 +35,14 @@ no function has a contract: write one in a `(*@ ... *)` comment after a function
 $ diva ocaml check --entry negate,area,first,code types.ml
 types.ml:24:8-14: `10 / 0`: possible division by zero (divisor: 0)
 types.ml:24:8-14: `10 / 0`: may overflow 63-bit integers (result: [-∞, +∞])
-types.ml:9:57-62: `w * h`: may overflow 63-bit integers (result: [-∞, +∞])
-types.ml:10:37-42: `x + 1`: may overflow 63-bit integers (result: [-∞, +∞])
+types.ml:9:57-62: `w * h`: may overflow 63-bit integers (result: [-21267647932558653961849226946058125312, 21267647932558653966460912964485513216])
+types.ml:10:37-42: `x + 1`: may overflow 63-bit integers (result: [-4611686018427387903, 4611686018427387904])
 [exit 1]
 
 $ diva ocaml hints --entry negate,area,first,code types.ml
 b#0 : bool
-s#1 : Circle [-∞, +∞] | Rect ([-∞, +∞], [-∞, +∞])
-l#2 : list of [-∞, +∞]
+s#1 : Circle [-4611686018427387904, 4611686018427387903] | Rect ([-4611686018427387904, 4611686018427387903], [-4611686018427387904, 4611686018427387903])
+l#2 : list of [-4611686018427387904, 4611686018427387903]
 c#3 : [0, 255]
 n#5 : ⊥
 $div2#4 : ⊥
@@ -53,7 +53,6 @@ x#8 : ⊥
 [exit 0]
 
 $ diva ocaml check --entry quad,half types.ml
-types.ml:14:47-54: `(n - 2)`: may overflow 63-bit integers (result: [0, +∞])
 types.ml:14:38-54: `1 + div2 (n - 2)`: may overflow 63-bit integers (result: [1, +∞])
 types.ml:24:8-14: `10 / 0`: possible division by zero (divisor: 0)
 types.ml:24:8-14: `10 / 0`: may overflow 63-bit integers (result: [-∞, +∞])
