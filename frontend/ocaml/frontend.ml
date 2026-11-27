@@ -555,13 +555,13 @@ let rec expr (e : expression) : expr =
       let a = expr a in
       seq loc a (expr b)
   | Texp_assert (c, _) -> mk loc (Assert (expr c))
-  | Texp_match (s, cases, [], _) ->
+  | Texp_match (s, cases, [], partial) ->
       let value (c : computation case) =
         match split_pattern c.c_lhs with
         | Some p, None -> { c with c_lhs = p }
         | _ -> unsupported c.c_lhs.pat_loc "`exception` patterns"
       in
-      match_ loc s (List.map value cases)
+      match_ ~total:(partial = Total) loc s (List.map value cases)
   | Texp_try (a, cases, []) ->
       let k = "%exn" in
       let a = expr a in
@@ -656,9 +656,13 @@ and lams loc params body =
   | [] -> (
       match body with
       | Tfunction_body b -> expr b
-      | Tfunction_cases { cases; loc = cloc; _ } ->
+      | Tfunction_cases { cases; loc = cloc; partial; _ } ->
           let x = fresh () in
-          mk loc (Lam (x, match_cases cloc x cases (match_failure cloc))))
+          mk loc
+            (Lam
+               ( x,
+                 match_cases ~total:(partial = Total) cloc x cases
+                   (match_failure cloc) )))
 
 (* [let rec f x = b]: the name of the function, its first parameter, and the rest. *)
 and rec_fun vb =
@@ -793,7 +797,7 @@ and apply ?(checked = true) loc f args =
       | _ -> call ())
 
 (* [match s with cases]. *)
-and match_ loc s cases =
+and match_ ?(total = false) loc s cases =
   (* the name of [s] in the tests: [s] itself if it is a name that no case hides *)
   let bound =
     List.concat_map
@@ -803,16 +807,16 @@ and match_ loc s cases =
   match s.exp_desc with
   | Texp_ident (Path.Pident id, _, _) when not (List.mem (Ident.name id) bound)
     ->
-      match_cases loc (Ident.name id) cases (match_failure loc)
+      match_cases ~total loc (Ident.name id) cases (match_failure loc)
   | _ ->
       let v = fresh () in
       let s = expr s in
-      letin loc v s (match_cases loc v cases (match_failure loc))
+      letin loc v s (match_cases ~total loc v cases (match_failure loc))
 
 (* The cases of a [match] on the name [v]. [final] is what happens if no case matches:
    it is copied, so it must be small. [[] -> n | x :: xs -> c] (in any order) is DIVA's
    [match] on lists. *)
-and match_cases loc v cases final =
+and match_cases ?(total = false) loc v cases final =
   let ctor (c : value case) =
     match (c.c_lhs.pat_desc, c.c_guard) with
     | Tpat_construct (_, cd, ps, _), None -> Some (cd.cstr_name, ps)
@@ -834,21 +838,24 @@ and match_cases loc v cases final =
           mk loc
             (MatchList (var loc v, n, pat_name x, pat_name xs, expr cons.c_rhs))
       | _ -> assert false)
-  | _ -> case_list loc v cases final
+  | _ -> case_list total loc v cases final
 
 (* The cases, tried one after the other. When a case doesn't match, the next ones are
    tried: they are the code [next], or, if [next] would be copied, a function [%tN] that
-   the case calls. *)
-and case_list loc v cases final =
+   the case calls. If OCaml says that the cases match every value ([total]), the last
+   case matches when the others don't: if it binds no name, it isn't tested. *)
+and case_list total loc v cases final =
   match cases with
   | [] -> final
+  | [ c ] when total && c.c_guard = None && pat_bound_idents c.c_lhs = [] ->
+      expr c.c_rhs
   | c :: rest ->
       let next, define =
         if rest = [] then (final, fun e -> e)
-        else if uses c <= 1 then (case_list loc v rest final, fun e -> e)
+        else if uses c <= 1 then (case_list total loc v rest final, fun e -> e)
         else
           let k = fresh () in
-          let f = mk loc (Lam ("_", case_list loc v rest final)) in
+          let f = mk loc (Lam ("_", case_list total loc v rest final)) in
           (app loc (var loc k) (unit loc), fun e -> letin loc k f e)
       in
       let ok =

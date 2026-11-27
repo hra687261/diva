@@ -56,6 +56,8 @@ structure Flat (A : Type) where
   /-- The arguments `v` of the values `C v`, for the constructors `C` of `ctors`. A
       constructor without an entry may have any argument. -/
   args : List (String × Flat A) := []
+  /-- If `list`: the lists it describes may be `[]`. -/
+  empty : Bool := true
   deriving Inhabited
 
 namespace Flat
@@ -64,17 +66,18 @@ variable {A : Type} [NumDomain A]
 
 /-- No value at all. -/
 def bot : Flat A :=
-  ⟨AbsDomain.bot, false, false, false, false, false, false, false, [], [], [], none, none, []⟩
+  ⟨AbsDomain.bot, false, false, false, false, false, false, false, [], [], [], none, none, [],
+   false⟩
 
 /-- Any value. -/
 def top : Flat A :=
-  ⟨AbsDomain.top, true, true, true, true, true, true, true, [], [], [], none, none, []⟩
+  ⟨AbsDomain.top, true, true, true, true, true, true, true, [], [], [], none, none, [], true⟩
 
 def ofInt (i : A) : Flat A := { (bot : Flat A) with int := i }
 /-- A boolean that may be `true` (`t`) or `false` (`f`). -/
 def bools (t f : Bool) : Flat A := { (bot : Flat A) with tt := t, ff := f }
 def unitV : Flat A := { (bot : Flat A) with unit := true }
-def listV : Flat A := { (bot : Flat A) with list := true }
+def listV : Flat A := { (bot : Flat A) with list := true, empty := true }
 def fnV : Flat A := { (bot : Flat A) with fn := true }
 def ctorV : Flat A := { (bot : Flat A) with ctor := true }
 
@@ -83,7 +86,7 @@ def joinBase (a b : Flat A) : Flat A :=
   ⟨AbsDomain.join a.int b.int, a.tt || b.tt, a.ff || b.ff, a.unit || b.unit,
    a.list || b.list, a.fn || b.fn, a.loc || b.loc, a.ctor || b.ctor,
    (a.refs ++ b.refs).eraseDups, (a.arrs ++ b.arrs).eraseDups, (a.ctors ++ b.ctors).eraseDups,
-   none, none, []⟩
+   none, none, [], (a.list && a.empty) || (b.list && b.empty)⟩
 
 /-
 The functions on the parts are recursive. Lean accepts their recursion only if they take
@@ -95,8 +98,8 @@ mutual
 
 /-- The values that `a` or `b` describe. -/
 def join : Flat A → Flat A → Flat A
-  | a@⟨_, _, _, _, la, _, _, xa, _, _, ta, ea, ia, aa⟩,
-    b@⟨_, _, _, _, lb, _, _, xb, _, _, tb, eb, ib, ab⟩ =>
+  | a@⟨_, _, _, _, la, _, _, xa, _, _, ta, ea, ia, aa, _⟩,
+    b@⟨_, _, _, _, lb, _, _, xb, _, _, tb, eb, ib, ab, _⟩ =>
     { joinBase a b with
       elem := joinElem la lb ea eb, items := joinItems la lb ia ib,
       args := joinArgs xa xb ta tb aa ab }
@@ -165,7 +168,7 @@ def meet (a b : Flat A) : Flat A :=
    common a.ctors b.ctors b.ctor ++ common b.ctors [] (a.ctor && !b.ctor),
    if a.list && b.list then (a.elem <|> b.elem) else none,
    if a.list && b.list then (a.items <|> b.items) else none,
-   if a.args.isEmpty then b.args else a.args⟩
+   if a.args.isEmpty then b.args else a.args, a.empty && b.empty⟩
 
 /-- `leq` without the parts of lists and of ADT values. -/
 def leqBase (a b : Flat A) : Bool :=
@@ -181,9 +184,9 @@ mutual
     `b`, unless `b` may be any array or ref (`loc`), or any constructor (`ctor`). The
     parts of the lists and of the ADT values of `a` must be among those of `b`. -/
 def leq : Flat A → Flat A → Bool
-  | a@⟨_, _, _, _, la, _, _, _, _, _, ta, ea, ia, aa⟩,
-    b@⟨_, _, _, _, _, _, _, _, _, _, _, eb, ib, ab⟩ =>
-    leqBase a b && (!la || (leqElem ea eb && leqItems ia ib)) &&
+  | a@⟨_, _, _, _, la, _, _, _, _, _, ta, ea, ia, aa, na⟩,
+    b@⟨_, _, _, _, _, _, _, _, _, _, _, eb, ib, ab, nb⟩ =>
+    leqBase a b && (!la || ((!na || nb) && leqElem ea eb && leqItems ia ib)) &&
       leqArgs ab aa && ta.all fun c => (aa.lookup c).isSome || (ab.lookup c).isNone
 termination_by structural a _ => a
 
@@ -215,7 +218,8 @@ termination_by structural xs => xs
 end
 
 theorem leq_eq (a b : Flat A) :
-    a.leq b = (leqBase a b && (!a.list || (leqElem a.elem b.elem && leqItems a.items b.items)) &&
+    a.leq b = (leqBase a b &&
+      (!a.list || ((!a.empty || b.empty) && leqElem a.elem b.elem && leqItems a.items b.items)) &&
       leqArgs b.args a.args && a.ctors.all fun c => (a.args.lookup c).isSome ||
         (b.args.lookup c).isNone) := by
   cases a
@@ -227,7 +231,7 @@ mutual
 /-- Widening: the integers of `a` and `b` are widened, and so are the integers of their
     parts (`elem`, `items`, `args`). The other components are joined: they are finite. -/
 def widen : Flat A → Flat A → Flat A
-  | a@⟨ia, _, _, _, _, _, _, _, _, _, _, ea, isa, aa⟩, b =>
+  | a@⟨ia, _, _, _, _, _, _, _, _, _, _, ea, isa, aa, _⟩, b =>
     let j := a.join b
     { j with
       int := AbsDomain.widen ia b.int, elem := widenOpt ea j.elem,
@@ -380,8 +384,8 @@ def str [ToString A] : Nat → Flat A → String
       match a.list, a.items, a.elem with
       | false, _, _ => []
       | true, some ws, _ => [s!"[{"; ".intercalate (ws.map sub)}]"]
-      | true, none, some e => [s!"list of {sub e}"]
-      | true, none, none => ["list"]
+      | true, none, some e => [s!"{if a.empty then "" else "non-empty "}list of {sub e}"]
+      | true, none, none => [if a.empty then "list" else "non-empty list"]
     let tag (c : String) : String :=
       match a.args.lookup c with
       -- a constructor without argument has the argument `()`
@@ -461,7 +465,9 @@ def listOf (e : Flat A) (mayNil : Bool := true) : AVal A :=
 /-- Forget the summary and the elements: "any closure" and "any list". -/
 def flat (a : AVal A) : Flat A :=
   let elem := flatElem a
-  { a.toFlat with fn := a.fn || a.sum.isSome, list := a.list || a.elems.isSome, elem }
+  { a.toFlat with
+    fn := a.fn || a.sum.isSome, list := a.list || a.elems.isSome, elem,
+    empty := (a.list && a.toFlat.empty) || (a.elems.isSome && a.mayNil) }
 where
   /-- The elements of the lists of `a`, for `Flat.elem`: those of `a.toFlat` and of
       `a.elems`. -/
@@ -532,15 +538,15 @@ def itemsOf (ws : List (Flat A)) : AVal A :=
 def consI (h t : AVal A) : AVal A :=
   if t.list then
     match t.flat.elem with
-    | some e => ofFlat { Flat.listV with elem := some (e.join h.flat) }
-    | none => listV
+    | some e => ofFlat { Flat.listV with elem := some (e.join h.flat), empty := false }
+    | none => ofFlat { Flat.listV with empty := false }
   else { cons h t with items := t.items.map (h.flat :: ·) }
 
-/-- `mayBeNil`, using `items` if `a` has them. -/
+/-- `mayBeNil`, using `items` if `a` has them, and `Flat.empty` if it may be any list. -/
 def mayBeNilI (a : AVal A) : Bool :=
   match a.items with
   | some ws => ws.isEmpty
-  | none => a.mayBeNil
+  | none => (a.list && a.toFlat.empty) || (a.elems.isSome && a.mayNil)
 
 /-- `heads`, using `items` if `a` has them, and the elements of `a.toFlat` if it may be
     any list. -/
