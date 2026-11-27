@@ -26,8 +26,7 @@ proved yet: `check` says so when only this analysis shows that a program can't f
 #guard (check "let f a = a.(0) in f (Array.make 3 1) + f (Array.make 1 2)").out ==
   [Report.unprovedSafe]
 #guard (check "let f a i = a.(i) in f (Array.make 3 1) 3").out ==
-  ["`a.(i)`: the index (3) may be out of bounds (length: 3)",
-   "`f (Array.make 3 1) 3`: the function called may fail"]
+  ["`a.(i)`: the index (3) may be out of bounds (length: 3) (in the call `f (Array.make 3 1) 3`)"]
 
 -- the exit code follows the analysis of the store, but `cert` needs the proved checker
 #guard (check "let r = ref 0 in !r").code == 0

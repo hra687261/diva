@@ -3,9 +3,8 @@ runtime error: division by zero
 [exit 1]
 
 $ diva check buggy.ml
-buggy.ml:7:16-31: `sum l / count l`: possible division by zero (divisor: [0, +∞])
-buggy.ml:9:8-25: `average [1; 2; 3]`: the function called may fail
-buggy.ml:10:8-18: `average []`: the function called may fail
+buggy.ml:7:16-31: `sum l / count l`: possible division by zero (divisor: [0, +∞]) (in the call `average [1; 2; 3]`)
+buggy.ml:7:16-31: `sum l / count l`: possible division by zero (divisor: [0, +∞]) (in the call `average []`)
 [exit 1]
 
 $ diva opt buggy.ml

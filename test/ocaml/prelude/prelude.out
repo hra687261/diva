@@ -12,7 +12,6 @@ prelude.ml:13:20-52: `n + s + List.nth m 0 + List.hd r`: may overflow 63-bit int
 prelude.ml:13:20-56: `n + s + List.nth m 0 + List.hd r + f`: may overflow 63-bit integers (result: [-∞, +∞])
 prelude.ml:13:20-60: `n + s + List.nth m 0 + List.hd r + f + h`: may overflow 63-bit integers (result: [-∞, +∞])
 prelude.ml:13:19-65: `(n + s + List.nth m 0 + List.hd r + f + h + o)`: may overflow 63-bit integers (result: [-∞, +∞])
-prelude.ml:11:8-17: `List.hd l`: may raise an exception that isn't caught (Failure)
 prelude.ml:13:19-65: `(n + s + List.nth m 0 + List.hd r + f + h + o)`: may raise an exception that isn't caught (Failure)
 [exit 1]
 

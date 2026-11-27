@@ -3,7 +3,7 @@ runtime error: uncaught exception (Neg -2)
 [exit 1]
 
 $ diva ocaml check uncaught.ml
-uncaught.ml:10:10-20: `check (-2)`: may raise an exception that isn't caught (Neg [-2, -1])
+uncaught.ml:10:10-20: `check (-2)`: may raise an exception that isn't caught (Neg -2)
 uncaught.ml:13:12-47: `try raise Not_found with Neg n -> n`: may raise an exception that isn't caught (Not_found)
 [exit 1]
 

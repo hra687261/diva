@@ -4,11 +4,10 @@ $ diva ocaml run programs.ml
 
 $ diva ocaml check programs.ml
 programs.ml:8:14-26: `1 + length t`: may overflow 63-bit integers (result: [1, +∞])
-programs.ml:17:9-15: `!s + i`: may overflow 63-bit integers (result: [1, +∞])
-programs.ml:16:2-18:6: `for i = 1 to n do s := !s + i done`: the function called may fail
 programs.ml:22:24-40: `n * fact (n - 1)`: may overflow 63-bit integers (result: [2, +∞])
 programs.ml:27:50-56: `fact 5`: the function called may fail
-programs.ml:27:39-47: `sum_to 4`: the function called may fail
+programs.ml:17:9-15: `!s + i`: may overflow 63-bit integers (result: [1, +∞]) (in the call `sum_to 4`)
+programs.ml:16:2-18:6: `for i = 1 to n do s := !s + i done`: the function called may fail (in the call `sum_to 4`)
 programs.ml:27:13-21: `length l`: the function called may fail
 programs.ml:27:13-36: `length l + safe_head []`: may overflow 63-bit integers (result: [0, +∞])
 programs.ml:27:13-47: `length l + safe_head [] + sum_to 4`: may overflow 63-bit integers (result: [0, +∞])

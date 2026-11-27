@@ -4,8 +4,7 @@ runtime error: assertion failed
 
 $ diva ocaml check overflow.ml
 overflow.ml:6:38-53: `n + sum (n - 1)`: may overflow 63-bit integers (result: [1, +∞])
-overflow.ml:11:25-39: `Int32.add x 1l`: may overflow 32-bit integers (result: 2147483648)
-overflow.ml:13:25-47: `(next32 Int32.max_int)`: the function called may fail
+overflow.ml:11:25-39: `Int32.add x 1l`: may overflow 32-bit integers (result: 2147483648) (in the call `(next32 Int32.max_int)`)
 overflow.ml:13:3-9: `sum 10`: the function called may fail
 overflow.ml:13:3-47: `sum 10 + Int32.to_int (next32 Int32.max_int)`: may overflow 63-bit integers (result: [2147483648, +∞])
 [exit 1]

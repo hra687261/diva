@@ -21,8 +21,7 @@ private def read (s : String) : Reader := fun _ => Sexp.items s
 #guard run src (read := read sexp) ==
   { err := ["runtime error: division by zero"], code := 1 }
 #guard check src (file := some "f.ml") (read := read sexp) ==
-  { out := ["f.ml:1:10-16: `10 / x`: possible division by zero (divisor: 0)",
-            "f.ml:2:8-11: `f 0`: the function called may fail"],
+  { out := ["f.ml:1:10-16: `10 / x`: possible division by zero (divisor: 0) (in the call `f 0`)"],
     code := 1 }
 
 -- a contract is the text of its comment: `requires` is checked, and erased by `opt`

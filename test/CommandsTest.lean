@@ -12,30 +12,26 @@ open Diva Commands
 
 -- `check`: exit code 1 if the program may fail
 #guard check "let f y = 10 / y in f 3" == { out := ["no runtime error is possible"] }
+-- a message about the copy of a function at a call names the call
 #guard check "let f y = 10 / y in f 0" == {
-  out := ["`10 / y`: possible division by zero (divisor: 0)",
-          "`f 0`: the function called may fail"],
+  out := ["`10 / y`: possible division by zero (divisor: 0) (in the call `f 0`)"],
   code := 1 }
 -- with a file name, each message starts with its position: `file:line:col-col`, with
 -- lines from 1 and columns from 0, as in Lean
 #guard check (file := some "f.ml") "let f y =\n  10 / y\n;; f 0" == {
-  out := ["f.ml:2:2-8: `10 / y`: possible division by zero (divisor: 0)",
-          "f.ml:3:3-6: `f 0`: the function called may fail"],
+  out := ["f.ml:2:2-8: `10 / y`: possible division by zero (divisor: 0) (in the call `f 0`)"],
   code := 1 }
 
 -- a message shows the source text, on one line
 #guard (check "let f y = (10\n  / y) in f 0").out.head? ==
-  some "`10 / y`: possible division by zero (divisor: 0)"
+  some "`10 / y`: possible division by zero (divisor: 0) (in the call `f 0`)"
 -- a check that DIVA adds for a `requires` has no source text: it is printed
 #guard (check (file := some "f.ml") "let f x = 100 / x\n(*@ requires x <> 0 *)\n;; f 0").out ==
-  ["f.ml:1:10-10: `(assert (x <> 0))` may fail",
-   "f.ml:1:10-17: `100 / x`: possible division by zero (divisor: 0)",
-   "f.ml:3:3-6: `f 0`: the function called may fail"]
-
+  ["f.ml:1:10-10: `(assert (x <> 0))` may fail (in the call `f 0`)",
+   "f.ml:1:10-17: `100 / x`: possible division by zero (divisor: 0) (in the call `f 0`)"]
 -- a comment after an expression isn't in its span
 #guard check (file := some "f.ml") "let f y = 10 / y (* y = 0 *)\n;; f 0" == {
-  out := ["f.ml:1:10-16: `10 / y`: possible division by zero (divisor: 0)",
-          "f.ml:2:3-6: `f 0`: the function called may fail"],
+  out := ["f.ml:1:10-16: `10 / y`: possible division by zero (divisor: 0) (in the call `f 0`)"],
   code := 1 }
 
 -- `opt`: the optimised program, without the `#n` suffixes of names

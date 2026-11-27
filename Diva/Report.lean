@@ -1,6 +1,7 @@
 import Diva.AbsInt.Infer
 import Diva.Loc
 import Diva.Overflow
+import Diva.Inline
 
 /-!
 # Diagnostics (untrusted)
@@ -89,6 +90,13 @@ def diagnose (H : Hints A) (place code : Span → String) :
        else [msg l s!"{snippet code e l}: the tail may not be a list ({vb})"])
   | σ, e@(.letin x e1 e2), l =>
     let v1 := aevalExt H σ e1
+    -- a copy of a function at a call (`Inline.copy`): its messages name the call
+    if x == Inline.callMark then
+      let call := match code l.span with
+        | "" => ""
+        | s => s!" (in the call `{s}`)"
+      (diagnose H place code ((x, v1) :: σ) e2 (l.kid 1)).map (· ++ call)
+    else
     match Overflow.bits? e with
     -- a check that `Overflow.check` adds: its message is about the operation `e1`
     | some bits =>
@@ -239,6 +247,21 @@ def unprovedSafe : String :=
   "no runtime error found, but not proved: the analysis of arrays, refs, exceptions and \
     the elements of lists isn't proved yet"
 
+/-- `e` with its calls replaced by copies of the functions called (`Inline.expand`), and
+    the hints of the analysis that isn't proved yet for it. `l` has the positions of
+    `e`. `depth` is that of `inferHints`. -/
+def unprovedHints (σ : AEnv A) (e : Expr) (fixed : Hints A := []) (l : Loc := default)
+    (depth : Nat := 5) : LExpr × Hints A :=
+  let e' := Inline.expand [] e l
+  (e', inferHints σ e'.expr fixed (ext := true) (depth := depth))
+
+/-- Whether `e` may fail, or raise an exception that it doesn't catch, by the analysis that
+    isn't proved yet (`mayFailExt`), with its calls replaced by copies (see `unprovedHints`). -/
+def mayFailUnproved (σ : AEnv A) (e : Expr) (fixed : Hints A := []) (depth : Nat := 5) :
+    Bool :=
+  let (e', HS) := unprovedHints σ e fixed (depth := depth)
+  mayFailExt HS σ e'.expr
+
 /-- What `diva check` prints for the program `e`: where `e` may fail, or that it
     can't fail. `σ` gives the values of the variables that `e` uses without
     defining them (`[]` for a complete program). `inferHints` infers the hints, but
@@ -255,10 +278,11 @@ def report (σ : AEnv A) (e : Expr) (fixed : Hints A := []) (l : Loc := default)
     (depth : Nat := 5) : List String :=
   -- the hints that the checker can confirm, then those of the analysis that isn't proved
   let H := inferHints σ e fixed (depth := depth)
-  let HS := inferHints σ e fixed (ext := true) (depth := depth)
+  let (⟨e', l'⟩, HS) := unprovedHints σ e fixed l depth
   if !mayFail H σ e then ["no runtime error is possible"]
-  else if mayFailExt HS σ e then
-    match diagnose HS place code σ e l ++ uncaught HS place code σ e l with
+  else if mayFailExt HS σ e' then
+    -- a copy of a function gives its messages again: they are kept once
+    match (diagnose HS place code σ e' l' ++ uncaught HS place code σ e' l').eraseDups with
     | [] => ["may fail"]   -- not expected: `diagnose` follows `mayFailExt`
     | ds => ds
   else [unprovedSafe]

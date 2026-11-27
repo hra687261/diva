@@ -97,10 +97,10 @@ def check (src : String) (file : Option String := none)
   | .error msg => parseError file msg
   | .ok ⟨e, l⟩ =>
     let H := inferHints ([] : AEnv Itv) e (depth := depth)
-    let HS := inferHints ([] : AEnv Itv) e (ext := true) (depth := depth)
     let msgs := Report.report ([] : AEnv Itv) e (l := l) (place := place src file)
       (code := Span.text src) (depth := depth)
-    { out := msgs, code := if mayFail H [] e && mayFailExt HS [] e then 1 else 0 }
+    let fails := Report.mayFailUnproved ([] : AEnv Itv) e [] depth
+    { out := msgs, code := if mayFail H [] e && fails then 1 else 0 }
 
 /-- `diva check --oracle`: parse the program `src`, and ask `oracle` for hints, at most
     `rounds` times, until the program is safe with them (`Oracle.consult`). Print each
@@ -121,10 +121,9 @@ def checkOracle [Monad m] (oracle : String → m String) (rounds : Nat) (src : S
         [if r.accepted then "accepted" else "rejected"]
     let fixed := (rs.getLast?.map (·.hints)).getD []
     let H := inferHints ([] : AEnv Itv) e fixed (depth := depth)
-    let HS := inferHints ([] : AEnv Itv) e fixed (ext := true) (depth := depth)
     let msgs := Report.report ([] : AEnv Itv) e fixed l (place src file) (Span.text src) depth
-    return { out := shown ++ msgs,
-             code := if mayFail H [] e && mayFailExt HS [] e then 1 else 0 }
+    let fails := Report.mayFailUnproved ([] : AEnv Itv) e fixed depth
+    return { out := shown ++ msgs, code := if mayFail H [] e && fails then 1 else 0 }
 
 /-- `diva opt`: parse the program `src`, optimise it using what the analysis knows
     about its values, and print the optimised program. With `infer`, each function
@@ -176,8 +175,7 @@ def cert (src : String) (file : Option String := none)
     match Cert.certificate H e with
     | some c => { out := [c] }
     | none =>
-      let HS := inferHints ([] : AEnv Itv) e (ext := true) (depth := depth)
-      let why := if mayFailExt HS [] e then "the program may fail"
+      let why := if Report.mayFailUnproved ([] : AEnv Itv) e [] depth then "the program may fail"
         else "the analysis of arrays, refs, exceptions and the elements of lists isn't proved yet"
       { err := [s!"{why}, so there is no certificate (see `diva check`)"], code := 1 }
 

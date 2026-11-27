@@ -3,9 +3,8 @@ runtime error: assertion failed
 [exit 1]
 
 $ diva check bad_call.ml
-bad_call.ml:3:12-12: `(assert (x <> 0))` may fail
-bad_call.ml:3:12-19: `100 / x`: possible division by zero (divisor: 0)
-bad_call.ml:7:3-8: `inv 0`: the function called may fail
+bad_call.ml:3:12-12: `(assert (x <> 0))` may fail (in the call `inv 0`)
+bad_call.ml:3:12-19: `100 / x`: possible division by zero (divisor: 0) (in the call `inv 0`)
 [exit 1]
 
 $ diva opt bad_call.ml
