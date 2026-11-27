@@ -94,7 +94,7 @@ unique name):
 
 Where it may fail{positions}:
 
-{"\n".intercalate ((Report.report σ e fixed loc place code depth).map ("  " ++ ·))}
+{"\n".intercalate ((Report.report σ e fixed loc place code (depth := depth)).map ("  " ++ ·))}
 
 What DIVA knows about the values (`x` is the parameter `x`, `$f` is the result of the
 function `f`):

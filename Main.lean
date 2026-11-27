@@ -31,20 +31,22 @@ def frontendPath : IO String := do
     throw (IO.userError "the OCaml frontend isn't built: run frontend/ocaml/build.sh")
   return p.toString
 
-/-- How the commands read the file. Under `diva ocaml`, the OCaml frontend
-    translates the file, and the commands read its S-expressions (`Sexp.items`).
-    Otherwise, DIVA's parser reads the file. -/
-def fileReader (p : Parsed) : IO Reader := do
-  unless p.cmd.meta.parentNames.contains "ocaml" do return parseItemsLoc
+/-- How the commands read the file, and the types of its parameters. Under `diva ocaml`,
+    the OCaml frontend translates the file, and the commands read its S-expressions
+    (`Sexp.items`), with the types (`Sexp.types`). Otherwise, DIVA's parser reads the
+    file, and there are no types. -/
+def fileReader (p : Parsed) : IO (Reader × List TypeHint) := do
+  unless p.cmd.meta.parentNames.contains "ocaml" do return (parseItemsLoc, [])
   let path := p.positionalArg! "file" |>.as! String
   if path == "-" then throw (IO.userError "`diva ocaml` needs a file, not `-`")
   let out ← IO.Process.output { cmd := ← frontendPath, args := #[path] }
   if out.exitCode != 0 then throw (IO.userError out.stderr.trimAsciiEnd.toString)
-  return fun _ => Sexp.items out.stdout
+  let types ← IO.ofExcept ((Sexp.types out.stdout).mapError IO.userError)
+  return (fun _ => Sexp.items out.stdout, types)
 
-/-- How the commands read the program (`fileReader`). In DIVA's syntax, integers have no
-    bound. -/
-def reader (p : Parsed) : IO Reader := fileReader p
+/-- How the commands read the program (`fileReader`, without the types). In DIVA's syntax,
+    integers have no bound. -/
+def reader (p : Parsed) : IO Reader := return (← fileReader p).1
 
 /-- The value of the flag `--unroll`: the largest `n` of a comparison `length l op n` of a
     contract that is written as `match`es (4 by default, see `Term.toExpr`). -/
@@ -119,13 +121,18 @@ def oracleOf (p : Parsed) (cmd : String) : IO (String → IO String) := do
 def runCheck (p : Parsed) : IO UInt32 :=
   match p.flag? "oracle" with
   | none => do
-    runWith (Commands.check (unroll := unroll p) (depth := depth p) (file := some (fileName p)) (read := ← reader p)) p
+    let (read, types) ← fileReader p
+    runWith (Commands.check (unroll := unroll p) (depth := depth p) (file := some (fileName p))
+      (read := read) (types := types)) p
   | some cmd => do
-    runWith' (Commands.checkOracle (unroll := unroll p) (← oracleOf p (cmd.as! String)) (rounds p) (depth := depth p)
-      (file := some (fileName p)) (read := ← reader p)) p
+    let (read, types) ← fileReader p
+    runWith' (Commands.checkOracle (unroll := unroll p) (← oracleOf p (cmd.as! String)) (rounds p)
+      (depth := depth p) (file := some (fileName p)) (read := read) (types := types)) p
 
 def runHints (p : Parsed) : IO UInt32 := do
-  runWith (Commands.hints (unroll := unroll p) (depth := depth p) (file := some (fileName p)) (read := ← reader p)) p
+  let (read, types) ← fileReader p
+  runWith (Commands.hints (unroll := unroll p) (depth := depth p) (file := some (fileName p))
+    (read := read) (types := types)) p
 
 /-- The folder of Diva's compiled modules (`.olean` files): `../lib/lean`, starting from
     the folder of the `diva` executable. `lake build` puts them there, in `.lake/build`.

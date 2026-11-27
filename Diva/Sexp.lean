@@ -1,4 +1,5 @@
 import Diva.Parser
+import Diva.TypeHints
 
 /-!
 # Programs as S-expressions (untrusted)
@@ -12,6 +13,7 @@ PROGRAM ::= (program ITEM ...)
 ITEM    ::= (let "f" EXPR [SPEC])        let f = e
           | (letrec "f" "x" EXPR [SPEC])  let rec f x = e
           | (expr EXPR)                   ;; e
+          | (types (START STOP "x" TYPE) ...)  the types of the parameters (`TypeHint`)
 SPEC    ::= "(*@ ... *)"                  the text of the contract
 ```
 
@@ -247,10 +249,43 @@ def item (x : Sexp) : Except String (Item × Loc) := do
     return (.expr e.expr, e.loc)
   | _ => .error s!"`{x.text}` is not a top-level item"
 
-/-- The items of the program printed in `s`. -/
+/-- A type, as the frontend writes it (`Ty`). -/
+partial def ty : Sexp → Except String Ty
+  | .atom "int" => .ok .int
+  | .atom "bool" => .ok .bool
+  | .atom "unit" => .ok .unit
+  | .atom "ctor" => .ok .ctor
+  | .atom "fun" => .ok .fn
+  | .atom "any" => .ok .any
+  | .list [.atom "range", lo, hi] => return .range (← int lo) (← int hi)
+  | .list [.atom "list", t] => return .list (← ty t)
+  | .list (.atom "tuple" :: ts) => return .tuple (← ts.mapM ty)
+  | .list (.atom "variant" :: cs) => return .variant (← cs.mapM ctor)
+  | x => .error s!"`{x.text}` is not a type"
+where
+  ctor : Sexp → Except String (String × Option Ty)
+    | .list [c] => return (← name c, none)
+    | .list [c, t] => return (← name c, some (← ty t))
+    | x => .error s!"`{x.text}` is not a constructor with its type"
+
+/-- The item `(types (START STOP "x" TYPE) ...)`: the types of the parameters. -/
+def typeItem : Sexp → Except String (List TypeHint)
+  | .list (.atom "types" :: ts) => ts.mapM fun
+    | .list [a, b, x, t] => return ⟨← nat a, ← nat b, ← name x, ← ty t⟩
+    | x => .error s!"`{x.text}` is not the type of a parameter"
+  | _ => .ok []
+
+/-- The types of the parameters in the program `s`, from its item `(types ...)`. -/
+def types (s : String) : Except String (List TypeHint) := do
+  match ← parse s with
+  | .list (.atom "program" :: xs) => return (← xs.mapM typeItem).flatten
+  | x => .error s!"`{x.text}` is not a program"
+
+/-- The top-level items of the program `s`. The item `(types ...)` isn't one. -/
 def items (s : String) : Except String (List (Item × Loc)) := do
   match ← parse s with
-  | .list (.atom "program" :: xs) => xs.mapM item
+  | .list (.atom "program" :: xs) =>
+    (xs.filter fun | .list (.atom "types" :: _) => false | _ => true).mapM item
   | x => .error s!"`{x.text}` is not a program"
 
 end Sexp

@@ -73,6 +73,20 @@ type item =
   | Letrec_item of string * string * expr * string option
   | Expr_item of expr
 
+(* A type, for DIVA's inference ([Diva/TypeHints.lean]). *)
+type ty =
+  | Ty_int
+  | Ty_range of int64 * int64  (** the integers from [lo] to [hi] *)
+  | Ty_bool
+  | Ty_unit
+  | Ty_exn
+  | Ty_fun
+  | Ty_list of ty
+  | Ty_tuple of ty list
+  | Ty_variant of (string * ty option) list
+      (** the constructors, with the type of their argument if they have one *)
+  | Ty_any
+
 let op_name = function
   | Add -> "add"
   | Sub -> "sub"
@@ -159,6 +173,11 @@ let used : prelude_fn list ref = ref []
 (* The constructors seen so far, by name: an exception or the type of the variant. *)
 let ctors : (string, string) Hashtbl.t = Hashtbl.create 16
 
+(* The types of the parameters, for DIVA's inference: for the parameter of a function
+   that no code calls, the analysis assumes its type instead of any value. Each one is
+   keyed by the part of the file of its [Lam] and its name. *)
+let types : (Location.t * string * ty) list ref = ref []
+
 (* TODO: maybe use a record to represent the state *)
 
 (**** S-expressions ****)
@@ -184,12 +203,17 @@ let rec print buf = function
         xs;
       Buffer.add_char buf ')'
 
+(* [a] and [b] are the same part of the file: they start and end at the same bytes. *)
+let same_loc (a : Location.t) (b : Location.t) =
+  Int.equal a.loc_start.pos_cnum b.loc_start.pos_cnum
+  && Int.equal a.loc_end.pos_cnum b.loc_end.pos_cnum
+
 (* [e] as [(KIND START STOP args...)], for its part of the file. Code of the prelude has
    no location ([Location.none]) and gets the span [1 0], which DIVA reads as "not in
    the file" ([Span.prelude]). *)
 let rec to_sexp (e : expr) =
   let start, stop =
-    if e.loc = Location.none then (1, 0)
+    if same_loc e.loc Location.none then (1, 0)
     else (e.loc.loc_start.pos_cnum, e.loc.loc_end.pos_cnum)
   in
   let node kind args =
@@ -237,6 +261,42 @@ let item_to_sexp = function
   | Letrec_item (f, x, b, spec) ->
       List ([ Atom "letrec"; Str f; Str x; to_sexp b ] @ spec_sexp spec)
   | Expr_item e -> List [ Atom "expr"; to_sexp e ]
+
+(* [t] as [int], [(range LO HI)], [bool], [unit], [exn], [fun], [(list T)],
+   [(tuple T ...)], [(variant ("C") ("D" T))] or [any]. *)
+let rec ty_to_sexp = function
+  | Ty_int -> Atom "int"
+  | Ty_range (lo, hi) ->
+      List
+        [ Atom "range"; Atom (Int64.to_string lo); Atom (Int64.to_string hi) ]
+  | Ty_bool -> Atom "bool"
+  | Ty_unit -> Atom "unit"
+  | Ty_exn -> Atom "exn"
+  | Ty_fun -> Atom "fun"
+  | Ty_list t -> List [ Atom "list"; ty_to_sexp t ]
+  | Ty_tuple ts -> List (Atom "tuple" :: List.map ty_to_sexp ts)
+  | Ty_variant cs ->
+      let ctor (c, arg) =
+        List
+          (Str c :: (match arg with Some t -> [ ty_to_sexp t ] | None -> []))
+      in
+      List (Atom "variant" :: List.map ctor cs)
+  | Ty_any -> Atom "any"
+
+(* The item [(types (START STOP "x" TYPE) ...)] of the types [ts]. *)
+let types_to_sexp ts =
+  List
+    (Atom "types"
+    :: List.rev_map
+         (fun ((l : Location.t), x, t) ->
+           List
+             [
+               Atom (string_of_int l.loc_start.pos_cnum);
+               Atom (string_of_int l.loc_end.pos_cnum);
+               Str x;
+               ty_to_sexp t;
+             ])
+         ts)
 
 (**** Building expressions ****)
 
@@ -288,6 +348,49 @@ let kind env ty =
   | Tconstr (p, [], _) when Path.same p Predef.path_unit -> `Unit
   | Tvar _ -> `Var
   | _ -> `Other
+
+(* The type [t], down to [depth] levels. A type variable is [Ty_any]. *)
+let rec type_of env depth (t : Types.type_expr) =
+  let sub = type_of env (depth - 1) in
+  if depth = 0 then Ty_any
+  else
+    match Types.get_desc (Ctype.expand_head env t) with
+    | Tconstr (p, [], _) when Path.same p Predef.path_int -> Ty_int
+    | Tconstr (p, [], _) when Path.same p Predef.path_char -> Ty_range (0L, 255L)
+    | Tconstr (p, [], _) when Path.same p Predef.path_int32 ->
+        Ty_range (Int64.of_int32 Int32.min_int, Int64.of_int32 Int32.max_int)
+    | Tconstr (p, [], _) when Path.same p Predef.path_int64 ->
+        Ty_range (Int64.min_int, Int64.max_int)
+    | Tconstr (p, [], _) when Path.same p Predef.path_bool -> Ty_bool
+    | Tconstr (p, [], _) when Path.same p Predef.path_unit -> Ty_unit
+    | Tconstr (p, [], _) when Path.same p Predef.path_exn -> Ty_exn
+    | Tconstr (p, [ a ], _) when Path.same p Predef.path_list -> Ty_list (sub a)
+    | Tconstr (p, [ a ], _) when Path.same p Predef.path_option ->
+        Ty_variant [ ("None", None); ("Some", Some (sub a)) ]
+    | Tconstr (p, _, _) -> (
+        (* a variant type of the program. The arguments that use the parameters of the
+           type are [Ty_any]. *)
+        match Env.find_type p env with
+        | { type_kind = Type_variant (cds, _); _ } ->
+            let ctor (cd : Types.constructor_declaration) =
+              let arg =
+                match cd.cd_args with
+                | Cstr_tuple [] -> None
+                | Cstr_tuple [ a ] -> Some (sub a)
+                | Cstr_tuple ts -> Some (Ty_tuple (List.map sub ts))
+                | Cstr_record _ -> Some Ty_any
+              in
+              (Ident.name cd.cd_id, arg)
+            in
+            Ty_variant (List.map ctor cds)
+        | _ | (exception Not_found) -> Ty_any)
+    | Ttuple ts -> Ty_tuple (List.map (fun (_, t) -> sub t) ts)
+    | Tarrow _ -> Ty_fun
+    | _ -> Ty_any
+
+(* Records that the parameter [x] of the [Lam] at [loc] has the type [t]. *)
+let record_type loc x env t =
+  if not !in_prelude then types := (loc, x, type_of env 3 t) :: !types
 
 (**** Library functions ****)
 
@@ -652,9 +755,12 @@ and lams loc params body =
       match (p.fp_arg_label, p.fp_kind) with
       | Nolabel, Tparam_pat pat -> (
           match simple_name pat with
-          | Some x -> mk loc (Lam (x, lams loc ps body))
+          | Some x ->
+              record_type loc x pat.pat_env pat.pat_type;
+              mk loc (Lam (x, lams loc ps body))
           | None ->
               let v = fresh () in
+              record_type loc v pat.pat_env pat.pat_type;
               mk loc
                 (Lam
                    ( v,
@@ -666,6 +772,9 @@ and lams loc params body =
       | Tfunction_body b -> expr b
       | Tfunction_cases { cases; loc = cloc; partial; _ } ->
           let x = fresh () in
+          (match cases with
+          | c :: _ -> record_type loc x c.c_lhs.pat_env c.c_lhs.pat_type
+          | [] -> ());
           mk loc
             (Lam
                ( x,
@@ -682,7 +791,17 @@ and rec_fun vb =
   match vb.vb_expr.exp_desc with
   | Texp_function _ -> (
       match expr vb.vb_expr with
-      | { desc = Lam (x, b); _ } -> (f, x, b)
+      | { desc = Lam (x, b); loc } ->
+          (* the [Lam] of [x] isn't in the result: the type of [x] is keyed by the part
+             of the file of the body instead *)
+          (match
+             List.find_opt
+               (fun (l, y, _) -> same_loc l loc && String.equal y x)
+               !types
+           with
+          | Some (_, _, t) -> types := (b.loc, x, t) :: !types
+          | None -> ());
+          (f, x, b)
       | _ -> assert false)
   | _ -> unsupported vb.vb_loc "`let rec` of a value that isn't a function"
 
@@ -1145,8 +1264,8 @@ let program src comments prelude (str : structure) =
   List.iter
     (fun x ->
       Buffer.add_string buf "\n  ";
-      print buf (item_to_sexp x))
-    (prelude @ items);
+      print buf x)
+    (List.map item_to_sexp (prelude @ items) @ [ types_to_sexp !types ]);
   Buffer.add_string buf ")\n";
   Buffer.contents buf
 

@@ -50,3 +50,14 @@ private def err (s : String) : String :=
   ["`(127 + 1)`: may overflow 8-bit integers (result: 128)"]
 #guard run "" (read := read "(program
   (expr (overflow 0 5 8 (binop 0 5 add (int 0 3 126) (int 4 5 1)))))") == { out := ["127"] }
+
+-- the types of the parameters (`TypeHints.lean`): the item `(types ...)` isn't a
+-- top-level item, and each type becomes the hint of its parameter
+private def typed := "(program
+  (let \"f\" (lam 6 16 \"b\" (var 15 16 \"b\")))
+  (types (6 16 \"b\" bool) (6 16 \"x\" (variant (\"None\") (\"Some\" (tuple int (range 0 255)))))))"
+#guard (Sexp.items typed).toOption.map List.length == some 1
+#guard ((Sexp.types typed).toOption.getD []).map (·.name) == ["b", "x"]
+#guard ((Sexp.types typed).toOption.getD []).map
+    (fun (t : TypeHint) => toString (Ty.flat (A := AbsInt.Itv) t.ty)) ==
+  ["bool", "None | Some ([-∞, +∞], [0, 255])"]

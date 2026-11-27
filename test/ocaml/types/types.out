@@ -1,0 +1,30 @@
+$ diva ocaml run types.ml
+runtime error: division by zero
+[exit 1]
+
+$ diva ocaml check types.ml
+types.ml:8:57-62: `w * h`: may overflow 63-bit integers (result: [-∞, +∞])
+types.ml:9:37-42: `x + 1`: may overflow 63-bit integers (result: [-∞, +∞])
+types.ml:13:8-14: `10 / 0`: possible division by zero (divisor: 0)
+types.ml:13:8-14: `10 / 0`: may overflow 63-bit integers (result: [-∞, +∞])
+[exit 1]
+
+$ diva ocaml opt types.ml
+(let z = (let %r = (10 / 0) in (let _ = (assert (if (-4611686018427387904 <= %r) then (%r <= 4611686018427387903) else false)) in %r)) in z)
+[exit 0]
+
+$ diva ocaml hints types.ml
+b#0 : bool
+s#1 : Circle [-∞, +∞] | Rect ([-∞, +∞], [-∞, +∞])
+l#2 : list of [-∞, +∞]
+c#3 : [0, 255]
+[exit 0]
+
+$ diva ocaml cert --check types.ml
+the program may fail, so there is no certificate (see `diva check`)
+[exit 1]
+
+$ diva ocaml prove --check -o prove.lean types.ml
+no function has a contract: write one in a `(*@ ... *)` comment after a function
+[exit 1]
+
