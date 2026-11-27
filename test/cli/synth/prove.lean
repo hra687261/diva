@@ -15,10 +15,10 @@ def abs_fn : RecFun where
   ρ := []
   spec := {
     pre := fun
-      | [arg₀] => ∃ x : Int, arg₀ = .int x ∧ True
+      | [arg₀] => ∃ (x : Int), arg₀ = .int x ∧ True
       | _ => False
     post := fun
-      | [arg₀], res₀ => ∃ x r : Int, arg₀ = .int x ∧ res₀ = .int r ∧
+      | [arg₀], res₀ => ∃ (x : Int) (r : Int), arg₀ = .int x ∧ res₀ = .int r ∧
         ((r ≥ 0) ∧ ((r ≥ x) ∧ (r ≥ (0 - x))))
       | _, _ => False }
 
@@ -26,7 +26,7 @@ def abs_fn : RecFun where
 theorem abs_body : abs_fn.BodyOk .none [] := by
   intro va μ ⟨x, hva, hpre⟩
   subst hva
-  simp [abs_fn, wp, BinOp.denote, Value.isBool, List.lookup, callEnv, RecFun.clos]
+  simp [abs_fn, wp, BinOp.denote, Value.isBool, Value.isList, Value.length, Value.lengthNat, Value.isProperList, List.lookup, callEnv, RecFun.clos]
   all_goals split_omega
 
 /-- `abs` meets its contract: every call of `abs` on arguments that satisfy
@@ -38,7 +38,7 @@ theorem abs_correct : abs_fn.Meets :=
     get arguments that satisfy `requires`. If the proof fails, write one by hand. -/
 theorem top1_wp (μ : Store) :
     wp .none [abs_fn] (.app (.var "abs") (.binop .sub (.int 0) (.int 7))) (fun _ _ => True) [("abs", abs_fn.clos)] μ := by
-  simp [abs_fn, wp, BinOp.denote, Value.isBool, List.lookup, callEnv, RecFun.clos]
+  simp [abs_fn, wp, BinOp.denote, Value.isBool, Value.isList, Value.length, Value.lengthNat, Value.isProperList, List.lookup, callEnv, RecFun.clos]
   all_goals split_omega
 
 /-- The top-level expression `(abs (0 - 7))` runs without error. -/

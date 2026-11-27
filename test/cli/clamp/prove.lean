@@ -15,10 +15,10 @@ def clamp_fn : RecFun where
   ρ := []
   spec := {
     pre := fun
-      | [arg₀] => ∃ x : Int, arg₀ = .int x ∧ True
+      | [arg₀] => ∃ (x : Int), arg₀ = .int x ∧ True
       | _ => False
     post := fun
-      | [arg₀], res₀ => ∃ x r : Int, arg₀ = .int x ∧ res₀ = .int r ∧
+      | [arg₀], res₀ => ∃ (x : Int) (r : Int), arg₀ = .int x ∧ res₀ = .int r ∧
         ((r ≥ 0) ∧ (r ≤ 100))
       | _, _ => False }
 
@@ -26,7 +26,7 @@ def clamp_fn : RecFun where
 theorem clamp_body : clamp_fn.BodyOk .none [] := by
   intro va μ ⟨x, hva, hpre⟩
   subst hva
-  simp [clamp_fn, wp, BinOp.denote, Value.isBool, List.lookup, callEnv, RecFun.clos]
+  simp [clamp_fn, wp, BinOp.denote, Value.isBool, Value.isList, Value.length, Value.lengthNat, Value.isProperList, List.lookup, callEnv, RecFun.clos]
   all_goals split_omega
 
 /-- `clamp` meets its contract: every call of `clamp` on arguments that satisfy
@@ -38,7 +38,7 @@ theorem clamp_correct : clamp_fn.Meets :=
     get arguments that satisfy `requires`. If the proof fails, write one by hand. -/
 theorem top1_wp (μ : Store) :
     wp .none [clamp_fn] (.app (.var "clamp") (.int 150)) (fun _ _ => True) [("clamp", clamp_fn.clos)] μ := by
-  simp [clamp_fn, wp, BinOp.denote, Value.isBool, List.lookup, callEnv, RecFun.clos]
+  simp [clamp_fn, wp, BinOp.denote, Value.isBool, Value.isList, Value.length, Value.lengthNat, Value.isProperList, List.lookup, callEnv, RecFun.clos]
   all_goals split_omega
 
 /-- The top-level expression `(clamp 150)` runs without error. -/

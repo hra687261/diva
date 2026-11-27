@@ -26,8 +26,9 @@ induction on the run: the run of a recursive call is a part of the run of `body`
 To prove `Triple P e Q`, prove that `P` implies `wp S [] e Q` (`triple_of_wp`). For
 integer programs, `simp [wp]` then `omega` usually does it.
 
-Supported: literals, names, binary operators, `if`, `let`, `assert`, calls of the
-functions of `Γ` with all their arguments, and `let rec` with one parameter. On any
+Supported: literals, names, binary operators, `if`, `let`, `assert`, lists (`[]`, `::`
+and `match`), calls of the functions of `Γ` with all their arguments, and `let rec` with
+one parameter. On any
 other construct, `wp` is `False`.
 -/
 
@@ -108,6 +109,16 @@ def wp (S : Contracts) : List RecFun → Expr → CPost → Env → Store → Pr
   | _, .int n, K, _, μ => K (.val (.int n)) μ
   | _, .bool b, K, _, μ => K (.val (.bool b)) μ
   | _, .unit, K, _, μ => K (.val .unit) μ
+  | _, .nil, K, _, μ => K (.val .nil) μ
+  | Γ, .cons a b, K, ρ, μ =>
+    wp S Γ a (fun ca μ₁ =>
+      wp S Γ b (fun cb μ₂ => cb.value.isList = true ∧ K (.val (.cons ca.value cb.value)) μ₂)
+        ρ μ₁) ρ μ
+  -- the branch for `[]`, and the branch for `h :: t`, with `x` and `xs` bound
+  | Γ, .matchList s n x xs c, K, ρ, μ =>
+    wp S Γ s (fun cs μ₁ => cs.value.isList = true ∧
+      (cs.value = .nil → wp S Γ n K ρ μ₁) ∧
+      (∀ vh vt, cs.value = .cons vh vt → wp S Γ c K ((xs, vt) :: (x, vh) :: ρ) μ₁)) ρ μ
   -- a function of `Γ`, found by its name, or any other value
   | Γ, .var x, K, ρ, μ =>
     match Γ.find? (·.name == x) with
@@ -218,7 +229,7 @@ theorem wp_sound {S : Contracts} {ρ : Env} {μ : Store} {e : Expr} {r : Outcome
     ∀ Γ K, Verified S Γ → wp S Γ e K ρ μ →
       ∃ c : Callee, r = .ok c.value ∧ c.Valid S ∧ K c μ' := by
   induction h with
-  | int | bool | unit =>
+  | int | bool | unit | nil =>
     intro Γ K _ hw
     exact ⟨.val _, rfl, trivial, hw⟩
   | @var v _ _ x hl =>
@@ -294,6 +305,50 @@ theorem wp_sound {S : Contracts} {ρ : Env} {μ : Store} {e : Expr} {r : Outcome
     intro Γ K hv hw
     obtain ⟨_, ra, _⟩ := iha Γ _ hv hw
     cases ra
+  | cons _ _ _ iha ihb =>
+    intro Γ K hv hw
+    obtain ⟨_, ra, _, hb⟩ := iha Γ _ hv hw
+    cases ra
+    obtain ⟨_, rb, _, _, hq⟩ := ihb Γ _ hv hb
+    cases rb
+    exact ⟨.val _, rfl, trivial, hq⟩
+  | consNotList _ _ hnl iha ihb =>
+    intro Γ K hv hw
+    obtain ⟨_, ra, _, hb⟩ := iha Γ _ hv hw
+    cases ra
+    obtain ⟨_, rb, _, hl, _⟩ := ihb Γ _ hv hb
+    cases rb
+    -- `b` gave a list, by `wp`, and a value that isn't a list, by the run
+    rw [hl] at hnl
+    cases hnl
+  | consErrL _ iha =>
+    intro Γ K hv hw
+    obtain ⟨_, ra, _⟩ := iha Γ _ hv hw
+    cases ra
+  | consErrR _ _ iha ihb =>
+    intro Γ K hv hw
+    obtain ⟨_, ra, _, hb⟩ := iha Γ _ hv hw
+    cases ra
+    obtain ⟨_, rb, _⟩ := ihb Γ _ hv hb
+    cases rb
+  | matchNil _ _ ihs ihn =>
+    intro Γ K hv hw
+    obtain ⟨_, rs, _, _, hn, _⟩ := ihs Γ _ hv hw
+    exact ihn Γ K hv (hn (Callee.value_of_ok rs))
+  | matchCons _ _ ihs ihc =>
+    intro Γ K hv hw
+    obtain ⟨_, rs, _, _, _, hc⟩ := ihs Γ _ hv hw
+    exact ihc Γ K hv (hc _ _ (Callee.value_of_ok rs))
+  | matchNotList _ hnl ihs =>
+    intro Γ K hv hw
+    obtain ⟨_, rs, _, hl, _⟩ := ihs Γ _ hv hw
+    rw [Callee.value_of_ok rs] at hl
+    rw [hl] at hnl
+    cases hnl
+  | matchErr _ ihs =>
+    intro Γ K hv hw
+    obtain ⟨_, rs, _⟩ := ihs Γ _ hv hw
+    cases rs
   | assert _ ihc =>
     intro Γ K hv hw
     obtain ⟨_, _, _, _, hq⟩ := ihc Γ _ hv hw
@@ -405,6 +460,23 @@ theorem wp_sound {S : Contracts} {ρ : Env} {μ : Store} {e : Expr} {r : Outcome
     run `omega` on each part. `repeat'` splits every goal, not only the first one. -/
 macro "split_omega" : tactic =>
   `(tactic| (repeat' (first | (intro) | (apply And.intro))) <;> omega)
+
+/-- Prove a goal about lists and integers, such as the goals that `simp [wp]` leaves for a
+    function on lists. As `split_omega`, and also:
+    - an equation `t = h :: r` that `intro` gives is substituted, then the hypotheses are
+      simplified;
+    - a `match` on a value is split into one goal per case, each one simplified;
+    - a part that isn't arithmetic, such as `l.isProperList = true` from a hypothesis, is
+      proved by `simp_all`.
+
+    The simplifications know the lengths of lists (`Value.lengthNat`). -/
+macro "split_lists" : tactic =>
+  `(tactic| (repeat' (first
+      | (intro h; subst h; try simp_all [Value.lengthNat, Value.isList, Value.isProperList])
+      | (intro)
+      | (apply And.intro)
+      | (split <;> simp_all [Value.lengthNat, Value.isList, Value.isProperList]))) <;>
+    first | omega | simp_all)
 
 /-- A contract holds if its precondition implies the weakest precondition, with the
     contracts `S` of the functions defined by `let rec`. -/

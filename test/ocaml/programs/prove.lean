@@ -27,10 +27,10 @@ def fact_fn : RecFun where
   ρ := [("sum_to", sum_to_val), ("safe_head", safe_head_val), ("head", head_val), ("length", length_val)]
   spec := {
     pre := fun
-      | [arg₀] => ∃ n : Int, arg₀ = .int n ∧ (n ≥ 0)
+      | [arg₀] => ∃ (n : Int), arg₀ = .int n ∧ (n ≥ 0)
       | _ => False
     post := fun
-      | [arg₀], res₀ => ∃ n result : Int, arg₀ = .int n ∧ res₀ = .int result ∧
+      | [arg₀], res₀ => ∃ (n : Int) (result : Int), arg₀ = .int n ∧ res₀ = .int result ∧
         True
       | _, _ => False }
 
@@ -38,7 +38,7 @@ def fact_fn : RecFun where
 theorem fact_body : fact_fn.BodyOk .none [] := by
   intro va μ ⟨n, hva, hpre⟩
   subst hva
-  simp [fact_fn, sum_to_val, safe_head_val, head_val, length_val, wp, BinOp.denote, Value.isBool, List.lookup, callEnv, RecFun.clos]
+  simp [fact_fn, sum_to_val, safe_head_val, head_val, length_val, wp, BinOp.denote, Value.isBool, Value.isList, Value.length, Value.lengthNat, Value.isProperList, List.lookup, callEnv, RecFun.clos]
   all_goals split_omega
 
 /-- `fact` meets its contract: every call of `fact` on arguments that satisfy
@@ -50,7 +50,7 @@ theorem fact_correct : fact_fn.Meets :=
     get arguments that satisfy `requires`. If the proof fails, write one by hand. -/
 theorem top1_wp (μ : Store) :
     wp .none [fact_fn] (.letin "l" (.cons (.int 1) (.cons (.int 2) (.cons (.int 3) .nil))) (.letin "_" (.letin "_" (.letin "%t7" (.app (.var "fact") (.int 5)) (.letin "%t6" (.letin "%t5" (.app (.var "sum_to") (.int 4)) (.letin "%t4" (.letin "%t3" (.app (.var "safe_head") .nil) (.letin "%t2" (.app (.var "length") (.var "l")) (.letin "%r" (.binop .add (.var "%t2") (.var "%t3")) (.letin "_" (.assert (.ite (.binop .le (.int (-4611686018427387904)) (.var "%r")) (.binop .le (.var "%r") (.int 4611686018427387903)) (.bool false))) (.var "%r"))))) (.letin "%r" (.binop .add (.var "%t4") (.var "%t5")) (.letin "_" (.assert (.ite (.binop .le (.int (-4611686018427387904)) (.var "%r")) (.binop .le (.var "%r") (.int 4611686018427387903)) (.bool false))) (.var "%r"))))) (.letin "%r" (.binop .add (.var "%t6") (.var "%t7")) (.letin "_" (.assert (.ite (.binop .le (.int (-4611686018427387904)) (.var "%r")) (.binop .le (.var "%r") (.int 4611686018427387903)) (.bool false))) (.var "%r"))))) .unit) (.letin "_" (.letin "_" .unit .unit) (.ite (.binop .ne (.int 97) (.int 97)) (.raise (.ctor "Failure" .unit)) .unit)))) (fun _ _ => True) [("fact", fact_fn.clos), ("sum_to", sum_to_val), ("safe_head", safe_head_val), ("head", head_val), ("length", length_val)] μ := by
-  simp [fact_fn, sum_to_val, safe_head_val, head_val, length_val, wp, BinOp.denote, Value.isBool, List.lookup, callEnv, RecFun.clos]
+  simp [fact_fn, sum_to_val, safe_head_val, head_val, length_val, wp, BinOp.denote, Value.isBool, Value.isList, Value.length, Value.lengthNat, Value.isProperList, List.lookup, callEnv, RecFun.clos]
   all_goals split_omega
 
 /-- The top-level expression `(let l = (1 :: (2 :: (3 :: []))) in (let _ = (let _ = (let %t7 = (fact 5) in (let %t6 = (let %t5 = (sum_to 4) in (let %t4 = (let %t3 = (safe_head []) in (let %t2 = (length l) in (let %r = (%t2 + %t3) in (let _ = (assert (if (-4611686018427387904 <= %r) then (%r <= 4611686018427387903) else false)) in %r)))) in (let %r = (%t4 + %t5) in (let _ = (assert (if (-4611686018427387904 <= %r) then (%r <= 4611686018427387903) else false)) in %r)))) in (let %r = (%t6 + %t7) in (let _ = (assert (if (-4611686018427387904 <= %r) then (%r <= 4611686018427387903) else false)) in %r)))) in ()) in (let _ = (let _ = () in ()) in (if (97 <> 97) then (raise Failure) else ()))))` runs without error. -/

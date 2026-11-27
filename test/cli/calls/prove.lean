@@ -15,10 +15,10 @@ def double_fn : RecFun where
   ρ := []
   spec := {
     pre := fun
-      | [arg₀] => ∃ x : Int, arg₀ = .int x ∧ (x ≥ 0)
+      | [arg₀] => ∃ (x : Int), arg₀ = .int x ∧ (x ≥ 0)
       | _ => False
     post := fun
-      | [arg₀], res₀ => ∃ x r : Int, arg₀ = .int x ∧ res₀ = .int r ∧
+      | [arg₀], res₀ => ∃ (x : Int) (r : Int), arg₀ = .int x ∧ res₀ = .int r ∧
         (r ≥ 0)
       | _, _ => False }
 
@@ -26,7 +26,7 @@ def double_fn : RecFun where
 theorem double_body : double_fn.BodyOk .none [] := by
   intro va μ ⟨x, hva, hpre⟩
   subst hva
-  simp [double_fn, wp, BinOp.denote, Value.isBool, List.lookup, callEnv, RecFun.clos]
+  simp [double_fn, wp, BinOp.denote, Value.isBool, Value.isList, Value.length, Value.lengthNat, Value.isProperList, List.lookup, callEnv, RecFun.clos]
   all_goals split_omega
 
 /-- `double` meets its contract: every call of `double` on arguments that satisfy
@@ -43,10 +43,10 @@ def quad_fn : RecFun where
   ρ := [("double", double_fn.clos)]
   spec := {
     pre := fun
-      | [arg₀] => ∃ x : Int, arg₀ = .int x ∧ (x ≥ 0)
+      | [arg₀] => ∃ (x : Int), arg₀ = .int x ∧ (x ≥ 0)
       | _ => False
     post := fun
-      | [arg₀], res₀ => ∃ x r : Int, arg₀ = .int x ∧ res₀ = .int r ∧
+      | [arg₀], res₀ => ∃ (x : Int) (r : Int), arg₀ = .int x ∧ res₀ = .int r ∧
         (r ≥ 0)
       | _, _ => False }
 
@@ -54,7 +54,7 @@ def quad_fn : RecFun where
 theorem quad_body : quad_fn.BodyOk .none [double_fn] := by
   intro va μ ⟨x, hva, hpre⟩
   subst hva
-  simp [quad_fn, double_fn, wp, BinOp.denote, Value.isBool, List.lookup, callEnv, RecFun.clos]
+  simp [quad_fn, double_fn, wp, BinOp.denote, Value.isBool, Value.isList, Value.length, Value.lengthNat, Value.isProperList, List.lookup, callEnv, RecFun.clos]
   all_goals split_omega
 
 /-- `quad` meets its contract: every call of `quad` on arguments that satisfy
@@ -66,7 +66,7 @@ theorem quad_correct : quad_fn.Meets :=
     get arguments that satisfy `requires`. If the proof fails, write one by hand. -/
 theorem top1_wp (μ : Store) :
     wp .none [quad_fn, double_fn] (.app (.var "quad") (.int 3)) (fun _ _ => True) [("quad", quad_fn.clos), ("double", double_fn.clos)] μ := by
-  simp [quad_fn, double_fn, wp, BinOp.denote, Value.isBool, List.lookup, callEnv, RecFun.clos]
+  simp [quad_fn, double_fn, wp, BinOp.denote, Value.isBool, Value.isList, Value.length, Value.lengthNat, Value.isProperList, List.lookup, callEnv, RecFun.clos]
   all_goals split_omega
 
 /-- The top-level expression `(quad 3)` runs without error. -/

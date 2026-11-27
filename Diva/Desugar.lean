@@ -10,14 +10,61 @@ start of the function's body.
 
 namespace Diva
 
+/-- `length l` as an expression: a recursive function that counts the elements of `l`. -/
+def lengthExpr (l : Expr) : Expr :=
+  .letrec "%length" "%l"
+    (.matchList (.var "%l") (.int 0) "_" "%rest"
+      (.binop .add (.int 1) (.app (.var "%length") (.var "%rest"))))
+    (.app (.var "%length") l)
+
+/-- `l` has at least `k` elements, as an expression: `k` nested `match`es. -/
+def atLeast : Nat → Expr → Expr
+  | 0, _ => .bool true
+  | k + 1, l => .matchList l (.bool false) "_" "%rest" (atLeast k (.var "%rest"))
+
+/-- `not e`, as the parser reads it. -/
+def notExpr (e : Expr) : Expr := .ite e (.bool false) (.bool true)
+
+/-- `length l op n`, with `n` a small integer (see `Term.toExpr`), as `match`es on `l`
+    (`atLeast`) rather than a call of `lengthExpr`. The analysis follows `match`es
+    exactly, but gives `lengthExpr`'s result for all the lists it is called on.
+
+    TODO: describe the length of lists by an interval in `Flat` (`[]` has length 0, and
+    `x :: l` the length of `l` plus 1). The analysis then gives `length l` for any `n`,
+    without `match`es, `unroll` goes away, and `Flat.empty` is the length 0. -/
+def lengthCmp (op : BinOp) (l : Expr) (n : Nat) : Option Expr :=
+  match op with
+  | .ge => some (atLeast n l)
+  | .gt => some (atLeast (n + 1) l)
+  | .lt => some (notExpr (atLeast n l))
+  | .le => some (notExpr (atLeast (n + 1) l))
+  | .eq => some (.ite (atLeast n l) (notExpr (atLeast (n + 1) l)) (.bool false))
+  | .ne => some (notExpr (.ite (atLeast n l) (notExpr (atLeast (n + 1) l)) (.bool false)))
+  | _ => none
+
+/-- `n op m` is `m (flipCmp op) n`. -/
+def flipCmp : BinOp → BinOp
+  | .le => .ge | .lt => .gt | .ge => .le | .gt => .lt | op => op
+
 /-- The term `t` of a contract as an expression. `ren` renames the names of the
     contract's header to the parameters of the code. `a && b` is `if a then b else false`,
-    as the parser reads `&&`. -/
-def Term.toExpr (ren : List (String × String)) : Term → Expr
+    as the parser reads `&&`, and `a || b` is `if a then true else b`. A comparison
+    `length l op n` with `n` from `0` to `unroll` is written as `match`es (`lengthCmp`). -/
+def Term.toExpr (unroll : Nat) (ren : List (String × String)) : Term → Expr
   | .int n => .int n
+  | .bool b => .bool b
   | .var x => .var ((ren.lookup x).getD x)
-  | .binop op a b => .binop op (a.toExpr ren) (b.toExpr ren)
-  | .and a b => .ite (a.toExpr ren) (b.toExpr ren) (.bool false)
+  | .binop op a b =>
+    let small (n : Int) : Option Nat := if 0 ≤ n && n ≤ unroll then some n.toNat else none
+    let unrolled := match a, b with
+      | .length l, .int n => (small n).bind (lengthCmp op (l.toExpr unroll ren))
+      | .int n, .length l => (small n).bind (lengthCmp (flipCmp op) (l.toExpr unroll ren))
+      | _, _ => none
+    unrolled.getD (.binop op (a.toExpr unroll ren) (b.toExpr unroll ren))
+  | .and a b => .ite (a.toExpr unroll ren) (b.toExpr unroll ren) (.bool false)
+  | .or a b => .ite (a.toExpr unroll ren) (.bool true) (b.toExpr unroll ren)
+  | .not a => notExpr (a.toExpr unroll ren)
+  | .length a => lengthExpr (a.toExpr unroll ren)
 
 /-- `e` with `k` applied inside its leading `fun`s: `fun x -> fun y -> b` gives
     `fun x -> fun y -> k b`. -/
@@ -33,25 +80,26 @@ def lamParams : Expr → List String
 /-- The declaration `b`, where the `requires` of its contract `sp` are checked at the
     start of its body, once all its parameters are given: `requires t` becomes
     `assert t;`. So in the body, after the checks, the precondition holds. A call that
-    breaks the precondition fails, as in Eiffel or SPARK. `ensures` isn't checked. -/
-def Binding.withRequires (b : Binding) : Option Spec → Binding
+    breaks the precondition fails, as in Eiffel or SPARK. `ensures` isn't checked.
+    `unroll` is that of `Term.toExpr`. -/
+def Binding.withRequires (unroll : Nat) (b : Binding) : Option Spec → Binding
   | none => b
   | some sp =>
     let check (params : List String) (body : Expr) : Expr :=
       let ren := sp.params.zip params
-      sp.requires.foldr (fun t e => .letin "_" (.assert (t.toExpr ren)) e) body
+      sp.requires.foldr (fun t e => .letin "_" (.assert (t.toExpr unroll ren)) e) body
     match b with
     | .val f e => .val f (insideLams (check (lamParams e)) e)
     | .recFn f x e => .recFn f x (insideLams (check (x :: lamParams e)) e)
 
 /-- A program is nested `let`s ending in the value of its last item. The `requires` of
-    the contracts are checked at run time (`Binding.withRequires`). -/
-def Item.toExpr : List Item → Expr
+    the contracts are checked at run time (`Binding.withRequires`, with `unroll`). -/
+def Item.toExpr (unroll : Nat) : List Item → Expr
   | [] => .unit
   | [.expr e] => e
-  | .expr e :: r => .letin "_" e (Item.toExpr r)
-  | [.decl b sp] => (b.withRequires sp).bind (.var b.name)
-  | .decl b sp :: r => (b.withRequires sp).bind (Item.toExpr r)
+  | .expr e :: r => .letin "_" e (Item.toExpr unroll r)
+  | [.decl b sp] => (b.withRequires unroll sp).bind (.var b.name)
+  | .decl b sp :: r => (b.withRequires unroll sp).bind (Item.toExpr unroll r)
 
 /-- The positions of `insideLams k e`, from the positions `l` of `e`. `kl` gives the
     positions of `k b` from those of `b`. -/

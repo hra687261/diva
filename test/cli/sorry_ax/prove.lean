@@ -15,10 +15,10 @@ def square_fn : RecFun where
   ρ := []
   spec := {
     pre := fun
-      | [arg₀] => ∃ x : Int, arg₀ = .int x ∧ True
+      | [arg₀] => ∃ (x : Int), arg₀ = .int x ∧ True
       | _ => False
     post := fun
-      | [arg₀], res₀ => ∃ x r : Int, arg₀ = .int x ∧ res₀ = .int r ∧
+      | [arg₀], res₀ => ∃ (x : Int) (r : Int), arg₀ = .int x ∧ res₀ = .int r ∧
         (r ≥ 0)
       | _, _ => False }
 
@@ -38,7 +38,7 @@ theorem square_correct : square_fn.Meets :=
     get arguments that satisfy `requires`. If the proof fails, write one by hand. -/
 theorem top1_wp (μ : Store) :
     wp .none [square_fn] (.app (.var "square") (.int 3)) (fun _ _ => True) [("square", square_fn.clos)] μ := by
-  simp [square_fn, wp, BinOp.denote, Value.isBool, List.lookup, callEnv, RecFun.clos]
+  simp [square_fn, wp, BinOp.denote, Value.isBool, Value.isList, Value.length, Value.lengthNat, Value.isProperList, List.lookup, callEnv, RecFun.clos]
   all_goals split_omega
 
 /-- The top-level expression `(square 3)` runs without error. -/

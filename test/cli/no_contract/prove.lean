@@ -16,10 +16,10 @@ def half_fn : RecFun where
   ρ := []
   spec := {
     pre := fun
-      | [arg₀] => ∃ x : Int, arg₀ = .int x ∧ True
+      | [arg₀] => ∃ (x : Int), arg₀ = .int x ∧ True
       | _ => False
     post := fun
-      | [arg₀], res₀ => ∃ x result : Int, arg₀ = .int x ∧ res₀ = .int result ∧
+      | [arg₀], res₀ => ∃ (x : Int) (result : Int), arg₀ = .int x ∧ res₀ = .int result ∧
         True
       | _, _ => False }
 
@@ -27,7 +27,7 @@ def half_fn : RecFun where
 theorem half_body : half_fn.BodyOk .none [] := by
   intro va μ ⟨x, hva, hpre⟩
   subst hva
-  simp [half_fn, wp, BinOp.denote, Value.isBool, List.lookup, callEnv, RecFun.clos]
+  simp [half_fn, wp, BinOp.denote, Value.isBool, Value.isList, Value.length, Value.lengthNat, Value.isProperList, List.lookup, callEnv, RecFun.clos]
   all_goals split_omega
 
 /-- `half` meets its contract: every call of `half` on arguments that satisfy
@@ -45,10 +45,10 @@ def inv_fn : RecFun where
   ρ := [("half", half_fn.clos)]
   spec := {
     pre := fun
-      | [arg₀] => ∃ x : Int, arg₀ = .int x ∧ True
+      | [arg₀] => ∃ (x : Int), arg₀ = .int x ∧ True
       | _ => False
     post := fun
-      | [arg₀], res₀ => ∃ x result : Int, arg₀ = .int x ∧ res₀ = .int result ∧
+      | [arg₀], res₀ => ∃ (x : Int) (result : Int), arg₀ = .int x ∧ res₀ = .int result ∧
         True
       | _, _ => False }
 
@@ -56,7 +56,7 @@ def inv_fn : RecFun where
 theorem inv_body : inv_fn.BodyOk .none [half_fn] := by
   intro va μ ⟨x, hva, hpre⟩
   subst hva
-  simp [inv_fn, half_fn, wp, BinOp.denote, Value.isBool, List.lookup, callEnv, RecFun.clos]
+  simp [inv_fn, half_fn, wp, BinOp.denote, Value.isBool, Value.isList, Value.length, Value.lengthNat, Value.isProperList, List.lookup, callEnv, RecFun.clos]
   all_goals split_omega
 
 /-- `inv` meets its contract: every call of `inv` on arguments that satisfy
@@ -76,10 +76,10 @@ def f_fn : RecFun where
   ρ := [("unused", unused_val), ("inv", inv_fn.clos), ("half", half_fn.clos)]
   spec := {
     pre := fun
-      | [arg₀] => ∃ x : Int, arg₀ = .int x ∧ True
+      | [arg₀] => ∃ (x : Int), arg₀ = .int x ∧ True
       | _ => False
     post := fun
-      | [arg₀], res₀ => ∃ x r : Int, arg₀ = .int x ∧ res₀ = .int r ∧
+      | [arg₀], res₀ => ∃ (x : Int) (r : Int), arg₀ = .int x ∧ res₀ = .int r ∧
         True
       | _, _ => False }
 
@@ -87,7 +87,7 @@ def f_fn : RecFun where
 theorem f_body : f_fn.BodyOk .none [inv_fn, half_fn] := by
   intro va μ ⟨x, hva, hpre⟩
   subst hva
-  simp [f_fn, unused_val, inv_fn, half_fn, wp, BinOp.denote, Value.isBool, List.lookup, callEnv, RecFun.clos]
+  simp [f_fn, unused_val, inv_fn, half_fn, wp, BinOp.denote, Value.isBool, Value.isList, Value.length, Value.lengthNat, Value.isProperList, List.lookup, callEnv, RecFun.clos]
   all_goals split_omega
 
 /-- `f` meets its contract: every call of `f` on arguments that satisfy
@@ -99,7 +99,7 @@ theorem f_correct : f_fn.Meets :=
     get arguments that satisfy `requires`. If the proof fails, write one by hand. -/
 theorem top1_wp (μ : Store) :
     wp .none [f_fn, inv_fn, half_fn] (.app (.var "f") (.int 3)) (fun _ _ => True) [("f", f_fn.clos), ("unused", unused_val), ("inv", inv_fn.clos), ("half", half_fn.clos)] μ := by
-  simp [f_fn, unused_val, inv_fn, half_fn, wp, BinOp.denote, Value.isBool, List.lookup, callEnv, RecFun.clos]
+  simp [f_fn, unused_val, inv_fn, half_fn, wp, BinOp.denote, Value.isBool, Value.isList, Value.length, Value.lengthNat, Value.isProperList, List.lookup, callEnv, RecFun.clos]
   all_goals split_omega
 
 /-- The top-level expression `(f 3)` runs without error. -/

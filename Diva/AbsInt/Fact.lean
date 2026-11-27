@@ -9,9 +9,8 @@ example, `-5 <= v && v <= -4`. An LLM gives hints as facts. `ofFact` turns a fac
 into an abstract value (`Flat A`), for any numeric domain `A`. So the LLM writes the
 same facts whatever the domain, and whatever the type of the value.
 
-For now the contract language only has integers, so the facts are about integers:
-comparisons of `v` with an integer. A fact about another kind of value (a boolean, a
-list, ...) is a new case of `ofFact`, once the contract language can write it.
+The facts are about integers (comparisons of `v` with an integer), booleans (`v`,
+`not v`, `v = true`) and lists (comparisons of `length v` with an integer).
 -/
 
 namespace Diva.AbsInt
@@ -49,10 +48,25 @@ def flip : BinOp → BinOp
   | .gt => .lt
   | op => op
 
+/-- `a op b`, for a comparison `op`. -/
+def holds (op : BinOp) (a b : Int) : Bool :=
+  match op with
+  | .eq => a == b | .ne => a != b | .lt => a < b | .le => a ≤ b | .gt => a > b | .ge => a ≥ b
+  | _ => false
+
 /-- The values `v` such that the fact `t` holds. `t` is comparisons of `v` with an
-    integer, joined by `&&`. Any other formula is an error. -/
+    integer, a boolean (`v`, `not v`, `v = true`), or a comparison of `length v` with an
+    integer, joined by `&&`. Any other formula is an error. For a list, the fact only
+    says whether it may be `[]`. -/
 def ofFact : Term → Except String (Flat A)
   | .and a b => return Flat.meet (← ofFact a) (← ofFact b)
+  | .var "v" => .ok (Flat.bools true false)
+  | .not (.var "v") => .ok (Flat.bools false true)
+  | .binop .eq (.var "v") (.bool b) | .binop .eq (.bool b) (.var "v") => .ok (Flat.bools b !b)
+  | .binop op (.length (.var "v")) b =>
+    match Term.const? b with
+    | some n => .ok { Flat.listV with empty := holds op 0 n }
+    | none => .error "a fact compares `length v` with an integer"
   | .binop op (.var "v") b =>
     match (Term.const? b).bind (bound op) with
     | some a => .ok (Flat.ofInt a)
@@ -61,6 +75,7 @@ def ofFact : Term → Except String (Flat A)
     match (Term.const? a).bind (bound (flip op)) with
     | some a => .ok (Flat.ofInt a)
     | none => .error "a fact compares `v` with an integer"
-  | _ => .error "a fact compares `v` with an integer, and joins the comparisons with `&&`"
+  | _ => .error "a fact compares `v` or `length v` with an integer, or is `v` or `not v`, \
+    and joins them with `&&`"
 
 end Diva.AbsInt

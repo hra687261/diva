@@ -15,10 +15,10 @@ def abs_fn : RecFun where
   ρ := []
   spec := {
     pre := fun
-      | [arg₀] => ∃ x : Int, arg₀ = .int x ∧ True
+      | [arg₀] => ∃ (x : Int), arg₀ = .int x ∧ True
       | _ => False
     post := fun
-      | [arg₀], res₀ => ∃ x r : Int, arg₀ = .int x ∧ res₀ = .int r ∧
+      | [arg₀], res₀ => ∃ (x : Int) (r : Int), arg₀ = .int x ∧ res₀ = .int r ∧
         ((r ≥ 0) ∧ ((r ≥ x) ∧ (r ≥ (0 - x))))
       | _, _ => False }
 
@@ -26,7 +26,7 @@ def abs_fn : RecFun where
 theorem abs_body : abs_fn.BodyOk .none [] := by
   intro va μ ⟨x, hva, hpre⟩
   subst hva
-  simp [abs_fn, wp, BinOp.denote, Value.isBool, List.lookup, callEnv, RecFun.clos]
+  simp [abs_fn, wp, BinOp.denote, Value.isBool, Value.isList, Value.length, Value.lengthNat, Value.isProperList, List.lookup, callEnv, RecFun.clos]
   all_goals split_omega
 
 /-- `abs` meets its contract: every call of `abs` on arguments that satisfy
@@ -43,10 +43,10 @@ def dist_fn : RecFun where
   ρ := [("abs", abs_fn.clos)]
   spec := {
     pre := fun
-      | [arg₀] => ∃ a : Int, arg₀ = .int a ∧ True
+      | [arg₀] => ∃ (a : Int), arg₀ = .int a ∧ True
       | _ => False
     post := fun
-      | [arg₀], res₀ => ∃ a result : Int, arg₀ = .int a ∧ res₀ = .int result ∧
+      | [arg₀], res₀ => ∃ (a : Int) (result : Int), arg₀ = .int a ∧ res₀ = .int result ∧
         (result ≥ 0)
       | _, _ => False }
 
@@ -54,7 +54,7 @@ def dist_fn : RecFun where
 theorem dist_body : dist_fn.BodyOk .none [abs_fn] := by
   intro va μ ⟨a, hva, hpre⟩
   subst hva
-  simp [dist_fn, abs_fn, wp, BinOp.denote, Value.isBool, List.lookup, callEnv, RecFun.clos]
+  simp [dist_fn, abs_fn, wp, BinOp.denote, Value.isBool, Value.isList, Value.length, Value.lengthNat, Value.isProperList, List.lookup, callEnv, RecFun.clos]
   all_goals split_omega
 
 /-- `dist` meets its contract: every call of `dist` on arguments that satisfy
@@ -66,7 +66,7 @@ theorem dist_correct : dist_fn.Meets :=
     get arguments that satisfy `requires`. If the proof fails, write one by hand. -/
 theorem top1_wp (μ : Store) :
     wp .none [dist_fn, abs_fn] (.app (.var "dist") (.int 3)) (fun _ _ => True) [("dist", dist_fn.clos), ("abs", abs_fn.clos)] μ := by
-  simp [dist_fn, abs_fn, wp, BinOp.denote, Value.isBool, List.lookup, callEnv, RecFun.clos]
+  simp [dist_fn, abs_fn, wp, BinOp.denote, Value.isBool, Value.isList, Value.length, Value.lengthNat, Value.isProperList, List.lookup, callEnv, RecFun.clos]
   all_goals split_omega
 
 /-- The top-level expression `(dist 3)` runs without error. -/

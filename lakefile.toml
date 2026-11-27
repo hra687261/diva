@@ -20,7 +20,7 @@ name = "Diva"
 [[lean_lib]]
 name = "DivaTest"
 srcDir = "test"
-globs = ["ParserTest", "InterpTest", "AbsIntItv", "AbsIntTest", "ReportTest", "OptTest", "CommandsTest", "DeductiveTest", "OracleTest", "ProveOracleTest", "ContractOracleTest", "SynthOracleTest", "OverflowTest", "SexpTest", "StoreTest"]
+globs = ["ParserTest", "InterpTest", "AbsIntItv", "AbsIntTest", "ReportTest", "OptTest", "CommandsTest", "DeductiveTest", "OracleTest", "ProveOracleTest", "ContractOracleTest", "SynthOracleTest", "OverflowTest", "SexpTest", "StoreTest", "ContractTest"]
 
 [[lean_exe]]
 name = "diva"

@@ -16,10 +16,10 @@ def mul_fn : RecFun where
   ρ := []
   spec := {
     pre := fun
-      | [arg₀, arg₁] => ∃ a b : Int, arg₀ = .int a ∧ arg₁ = .int b ∧ (a ≥ 0)
+      | [arg₀, arg₁] => ∃ (a : Int) (b : Int), arg₀ = .int a ∧ arg₁ = .int b ∧ (a ≥ 0)
       | _ => False
     post := fun
-      | [arg₀, arg₁], res₀ => ∃ a b r : Int, arg₀ = .int a ∧ arg₁ = .int b ∧ res₀ = .int r ∧
+      | [arg₀, arg₁], res₀ => ∃ (a : Int) (b : Int) (r : Int), arg₀ = .int a ∧ arg₁ = .int b ∧ res₀ = .int r ∧
         (r ≥ 0)
       | _, _ => False }
 
@@ -27,7 +27,7 @@ def mul_fn : RecFun where
 theorem mul_body : mul_fn.BodyOk .none [] := by
   intro va₀ va₁ μ ⟨a, b, hva₀, hva₁, hpre⟩
   subst hva₀ hva₁
-  simp [mul_fn, wp, BinOp.denote, Value.isBool, List.lookup, callEnv, RecFun.clos]
+  simp [mul_fn, wp, BinOp.denote, Value.isBool, Value.isList, Value.length, Value.lengthNat, Value.isProperList, List.lookup, callEnv, RecFun.clos]
   all_goals split_omega
 
 /-- `mul` meets its contract: every call of `mul` on arguments that satisfy
@@ -45,10 +45,10 @@ def max_fn : RecFun where
   ρ := [("mul", mul_fn.clos)]
   spec := {
     pre := fun
-      | [arg₀, arg₁] => ∃ a b : Int, arg₀ = .int a ∧ arg₁ = .int b ∧ True
+      | [arg₀, arg₁] => ∃ (a : Int) (b : Int), arg₀ = .int a ∧ arg₁ = .int b ∧ True
       | _ => False
     post := fun
-      | [arg₀, arg₁], res₀ => ∃ a b r : Int, arg₀ = .int a ∧ arg₁ = .int b ∧ res₀ = .int r ∧
+      | [arg₀, arg₁], res₀ => ∃ (a : Int) (b : Int) (r : Int), arg₀ = .int a ∧ arg₁ = .int b ∧ res₀ = .int r ∧
         ((r ≥ a) ∧ (r ≥ b))
       | _, _ => False }
 
@@ -56,7 +56,7 @@ def max_fn : RecFun where
 theorem max_body : max_fn.BodyOk .none [mul_fn] := by
   intro va₀ va₁ μ ⟨a, b, hva₀, hva₁, hpre⟩
   subst hva₀ hva₁
-  simp [max_fn, mul_fn, wp, BinOp.denote, Value.isBool, List.lookup, callEnv, RecFun.clos]
+  simp [max_fn, mul_fn, wp, BinOp.denote, Value.isBool, Value.isList, Value.length, Value.lengthNat, Value.isProperList, List.lookup, callEnv, RecFun.clos]
   all_goals split_omega
 
 /-- `max` meets its contract: every call of `max` on arguments that satisfy
@@ -74,10 +74,10 @@ def max3_fn : RecFun where
   ρ := [("max", max_fn.clos), ("mul", mul_fn.clos)]
   spec := {
     pre := fun
-      | [arg₀, arg₁, arg₂] => ∃ a b c : Int, arg₀ = .int a ∧ arg₁ = .int b ∧ arg₂ = .int c ∧ True
+      | [arg₀, arg₁, arg₂] => ∃ (a : Int) (b : Int) (c : Int), arg₀ = .int a ∧ arg₁ = .int b ∧ arg₂ = .int c ∧ True
       | _ => False
     post := fun
-      | [arg₀, arg₁, arg₂], res₀ => ∃ a b c r : Int, arg₀ = .int a ∧ arg₁ = .int b ∧ arg₂ = .int c ∧ res₀ = .int r ∧
+      | [arg₀, arg₁, arg₂], res₀ => ∃ (a : Int) (b : Int) (c : Int) (r : Int), arg₀ = .int a ∧ arg₁ = .int b ∧ arg₂ = .int c ∧ res₀ = .int r ∧
         ((r ≥ a) ∧ ((r ≥ b) ∧ (r ≥ c)))
       | _, _ => False }
 
@@ -85,7 +85,7 @@ def max3_fn : RecFun where
 theorem max3_body : max3_fn.BodyOk .none [max_fn, mul_fn] := by
   intro va₀ va₁ va₂ μ ⟨a, b, c, hva₀, hva₁, hva₂, hpre⟩
   subst hva₀ hva₁ hva₂
-  simp [max3_fn, max_fn, mul_fn, wp, BinOp.denote, Value.isBool, List.lookup, callEnv, RecFun.clos]
+  simp [max3_fn, max_fn, mul_fn, wp, BinOp.denote, Value.isBool, Value.isList, Value.length, Value.lengthNat, Value.isProperList, List.lookup, callEnv, RecFun.clos]
   all_goals split_omega
 
 /-- `max3` meets its contract: every call of `max3` on arguments that satisfy
@@ -103,10 +103,10 @@ def area_fn : RecFun where
   ρ := [("max3", max3_fn.clos), ("max", max_fn.clos), ("mul", mul_fn.clos)]
   spec := {
     pre := fun
-      | [arg₀, arg₁] => ∃ w h : Int, arg₀ = .int w ∧ arg₁ = .int h ∧ True
+      | [arg₀, arg₁] => ∃ (w : Int) (h : Int), arg₀ = .int w ∧ arg₁ = .int h ∧ True
       | _ => False
     post := fun
-      | [arg₀, arg₁], res₀ => ∃ w h r : Int, arg₀ = .int w ∧ arg₁ = .int h ∧ res₀ = .int r ∧
+      | [arg₀, arg₁], res₀ => ∃ (w : Int) (h : Int) (r : Int), arg₀ = .int w ∧ arg₁ = .int h ∧ res₀ = .int r ∧
         (r ≥ 0)
       | _, _ => False }
 
@@ -114,7 +114,7 @@ def area_fn : RecFun where
 theorem area_body : area_fn.BodyOk .none [max3_fn, max_fn, mul_fn] := by
   intro va₀ va₁ μ ⟨w, h, hva₀, hva₁, hpre⟩
   subst hva₀ hva₁
-  simp [area_fn, max3_fn, max_fn, mul_fn, wp, BinOp.denote, Value.isBool, List.lookup, callEnv, RecFun.clos]
+  simp [area_fn, max3_fn, max_fn, mul_fn, wp, BinOp.denote, Value.isBool, Value.isList, Value.length, Value.lengthNat, Value.isProperList, List.lookup, callEnv, RecFun.clos]
   all_goals split_omega
 
 /-- `area` meets its contract: every call of `area` on arguments that satisfy
@@ -126,7 +126,7 @@ theorem area_correct : area_fn.Meets :=
     get arguments that satisfy `requires`. If the proof fails, write one by hand. -/
 theorem top1_wp (μ : Store) :
     wp .none [area_fn, max3_fn, max_fn, mul_fn] (.app (.app (.var "area") (.app (.app (.app (.var "max3") (.int 1)) (.int 5)) (.int 2))) (.int 3)) (fun _ _ => True) [("area", area_fn.clos), ("max3", max3_fn.clos), ("max", max_fn.clos), ("mul", mul_fn.clos)] μ := by
-  simp [area_fn, max3_fn, max_fn, mul_fn, wp, BinOp.denote, Value.isBool, List.lookup, callEnv, RecFun.clos]
+  simp [area_fn, max3_fn, max_fn, mul_fn, wp, BinOp.denote, Value.isBool, Value.isList, Value.length, Value.lengthNat, Value.isProperList, List.lookup, callEnv, RecFun.clos]
   all_goals split_omega
 
 /-- The top-level expression `((area (((max3 1) 5) 2)) 3)` runs without error. -/

@@ -15,10 +15,10 @@ def sum_fn : RecFun where
   ρ := []
   spec := {
     pre := fun
-      | [arg₀] => ∃ n : Int, arg₀ = .int n ∧ ((0 ≤ n) ∧ (n ≤ 1000))
+      | [arg₀] => ∃ (n : Int), arg₀ = .int n ∧ ((0 ≤ n) ∧ (n ≤ 1000))
       | _ => False
     post := fun
-      | [arg₀], res₀ => ∃ n r : Int, arg₀ = .int n ∧ res₀ = .int r ∧
+      | [arg₀], res₀ => ∃ (n : Int) (r : Int), arg₀ = .int n ∧ res₀ = .int r ∧
         ((0 ≤ r) ∧ (r ≤ (1000 * n)))
       | _, _ => False }
 
@@ -26,7 +26,7 @@ def sum_fn : RecFun where
 theorem sum_body : sum_fn.BodyOk .none [] := by
   intro va μ ⟨n, hva, hpre⟩
   subst hva
-  simp [sum_fn, wp, BinOp.denote, Value.isBool, List.lookup, callEnv, RecFun.clos]
+  simp [sum_fn, wp, BinOp.denote, Value.isBool, Value.isList, Value.length, Value.lengthNat, Value.isProperList, List.lookup, callEnv, RecFun.clos]
   all_goals split_omega
 
 /-- `sum` meets its contract: every call of `sum` on arguments that satisfy
@@ -41,7 +41,7 @@ def next32_val : Value := .clos none "x" (.letin "%r" (.binop .add (.var "x") (.
     get arguments that satisfy `requires`. If the proof fails, write one by hand. -/
 theorem top1_wp (μ : Store) :
     wp .none [sum_fn] (.letin "%t2" (.app (.var "next32") (.int 2147483647)) (.letin "%t1" (.app (.var "sum") (.int 10)) (.letin "%r" (.binop .add (.var "%t1") (.var "%t2")) (.letin "_" (.assert (.ite (.binop .le (.int (-4611686018427387904)) (.var "%r")) (.binop .le (.var "%r") (.int 4611686018427387903)) (.bool false))) (.var "%r"))))) (fun _ _ => True) [("next32", next32_val), ("sum", sum_fn.clos)] μ := by
-  simp [next32_val, sum_fn, wp, BinOp.denote, Value.isBool, List.lookup, callEnv, RecFun.clos]
+  simp [next32_val, sum_fn, wp, BinOp.denote, Value.isBool, Value.isList, Value.length, Value.lengthNat, Value.isProperList, List.lookup, callEnv, RecFun.clos]
   all_goals split_omega
 
 /-- The top-level expression `(let %t2 = (next32 2147483647) in (let %t1 = (sum 10) in (let %r = (%t1 + %t2) in (let _ = (assert (if (-4611686018427387904 <= %r) then (%r <= 4611686018427387903) else false)) in %r))))` runs without error. -/

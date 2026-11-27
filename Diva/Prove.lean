@@ -16,7 +16,8 @@ For the `i`-th top-level expression `;; e` after these functions, the file has:
   in `e` must get arguments that satisfy `requires`;
 - `topi_safe`: `e` runs without error (`Holds.of_wp`).
 
-The parameters and the result of a function with a contract are integers. A function
+The parameters and the result of a function with a contract are integers, booleans or
+lists: their kind comes from how the contract uses them (`kindOf`). A function
 without a contract that a function with a contract calls gets the empty contract: no
 `requires` and no `ensures`. Its proof says that it doesn't fail. The other functions
 without a contract are written as values (`f_val`), because the functions defined
@@ -33,18 +34,42 @@ def binOp : BinOp → String
   | .add => "+" | .sub => "-" | .mul => "*" | .div => "/" | .mod => "%"
   | .eq => "=" | .ne => "≠" | .lt => "<" | .le => "≤" | .gt => ">" | .ge => "≥"
 
-/-- `t` as a Lean term: an `Int`, or a `Prop` for comparisons and `&&`. -/
-def term : Term → String
+mutual
+
+/-- `t` as a Lean `Int`. `kinds` gives the kind of each name. -/
+partial def intTerm (kinds : String → Kind) : Term → String
   | .int n => Cert.int n
   | .var x => x
-  | .binop op a b => s!"({term a} {binOp op} {term b})"
-  | .and a b => s!"({term a} ∧ {term b})"
+  | .length a => s!"(Diva.Value.length {intTerm kinds a})"
+  | .binop op a b =>
+    if op.isCmp then propTerm kinds (.binop op a b)
+    else s!"({intTerm kinds a} {binOp op} {intTerm kinds b})"
+  | t => propTerm kinds t
 
-/-- The terms `ts` joined by `∧`, or `True` if there are none. -/
-def conj (ts : List Term) : String :=
+/-- `t` as a Lean `Prop`: a boolean `b` is `b = true`, and `=` on booleans is `↔`. -/
+partial def propTerm (kinds : String → Kind) : Term → String
+  | .bool b => if b then "True" else "False"
+  | .var x => s!"({x} = true)"
+  | .and a b => s!"({propTerm kinds a} ∧ {propTerm kinds b})"
+  | .or a b => s!"({propTerm kinds a} ∨ {propTerm kinds b})"
+  | .not a => s!"(¬ {propTerm kinds a})"
+  | .binop op a b =>
+    let bools := match a.kind? <|> b.kind?, a, b with
+      | some k, _, _ => k == .bool
+      | none, .var x, _ => kinds x == .bool
+      | none, _, _ => false
+    if bools && op == .eq then s!"({propTerm kinds a} ↔ {propTerm kinds b})"
+    else if bools && op == .ne then s!"(¬ ({propTerm kinds a} ↔ {propTerm kinds b}))"
+    else s!"({intTerm kinds a} {binOp op} {intTerm kinds b})"
+  | t => intTerm kinds t
+
+end
+
+/-- The clauses `ts` joined by `∧`, or `True` if there are none. -/
+def conj (kinds : String → Kind) (ts : List Term) : String :=
   match ts with
   | [] => "True"
-  | _ => " ∧ ".intercalate (ts.map term)
+  | _ => " ∧ ".intercalate (ts.map (propTerm kinds))
 
 /-- `i` with subscript digits: `12` gives `₁₂`. -/
 def subscript (i : Nat) : String :=
@@ -75,15 +100,22 @@ def funSpec (f : String) (xs : List String) (sp : Spec) : Except String String :
         throw s!"the contract of `{f}` uses `{y}`, which isn't a parameter ({params}) or the result `{sp.result}`"
   let args := argNames xs
   let pattern := "[" ++ ", ".intercalate args ++ "]"
-  let isInt := " ∧ ".intercalate ((args.zip xs).map fun (a, x) => s!"{a} = .int {x}")
-  let names := " ".intercalate xs
+  -- the kind of each name: an `Int`, a `Bool`, or a list, which is the `Value` itself
+  let kinds := kindOf (sp.requires ++ sp.ensures)
+  let binder (x : String) : String := match kinds x with
+    | .int => s!"({x} : Int)" | .bool => s!"({x} : Bool)" | .list => s!"({x} : Diva.Value)"
+  let isValue (a x : String) : String := match kinds x with
+    | .int => s!"{a} = .int {x}" | .bool => s!"{a} = .bool {x}"
+    | .list => s!"{a} = {x} ∧ {x}.isProperList = true"
+  let isArg := " ∧ ".intercalate ((args.zip xs).map fun (a, x) => isValue a x)
+  let names := " ".intercalate (xs.map binder)
   return s!"\{
     pre := fun
-      | {pattern} => ∃ {names} : Int, {isInt} ∧ {conj sp.requires}
+      | {pattern} => ∃ {names}, {isArg} ∧ {conj kinds sp.requires}
       | _ => False
     post := fun
-      | {pattern}, res₀ => ∃ {names} {sp.result} : Int, {isInt} ∧ res₀ = .int {sp.result} ∧
-        {conj sp.ensures}
+      | {pattern}, res₀ => ∃ {names} {binder sp.result}, {isArg} ∧ {isValue "res₀" sp.result} ∧
+        {conj kinds sp.ensures}
       | _, _ => False }"
 
 /-- What `prove` knows while it goes through the top-level items. -/
@@ -125,14 +157,26 @@ def gamma (Γ : List String) : String :=
 
 /-- The proof of an obligation that `diva prove` writes: `simp` with the defs `simps`,
     then `omega`. `xs` are the names of the parameters in the contract. -/
-def defaultProof (xs : List String) (simps : String) : String :=
+def defaultProof (xs : List String) (simps : String) (kinds : String → Kind := fun _ => .int) :
+    String :=
   let (vs, hs) := match xs with
     | [_] => (["va"], ["hva"])
-    | _ => ((argNames xs).map (·.replace "arg" "va"), (argNames xs).map (·.replace "arg" "hva"))
+    | _ => ((argNames xs).map fun (a : String) => a.replace "arg" "va",
+      (argNames xs).map fun (a : String) => a.replace "arg" "hva")
+  -- a boolean or a list parameter: one case for each of its values
+  -- (after `subst`, a list has the name of the argument: `va`)
+  let cases := (xs.zip vs).filterMap fun (x, v) => match kinds x with
+    | .int => none
+    | .bool => some s!"\n  cases {x}"
+    | .list => some s!"\n  cases {v}"
+  -- with cases, `simp` also simplifies `hpre`, where each case puts a value
+  let simp := if cases.isEmpty then s!"simp [{simps}]" else s!"all_goals simp [{simps}] at *"
+  -- a list parameter: the goals are about its tail too (`split_lists`)
+  let last := if xs.any (kinds · == .list) then "split_lists" else "split_omega"
   s!"  intro {" ".intercalate vs} μ ⟨{", ".intercalate (xs ++ hs)}, hpre⟩
-  subst {" ".intercalate hs}
-  simp [{simps}]
-  all_goals split_omega"
+  subst {" ".intercalate hs}{String.join cases}
+  {simp}
+  all_goals {last}"
 
 /-- The parameters of the function whose body is `body`, after its first parameter,
     and its body after them: `fun y -> fun z -> e` gives `[y, z]` and `e`. -/
@@ -160,9 +204,11 @@ def withContract (proofs : List (String × String)) (st : State) (n f : String)
     throw s!"the contract of `{f}` has {xs.length} parameters, but `{f}` has {code.length}"
   let spec ← funSpec f xs sp
   let simps := ", ".intercalate ((n ++ "_fn") :: st.defs ++
-    ["wp", "BinOp.denote", "Value.isBool", "List.lookup", "callEnv", "RecFun.clos"])
+    ["wp", "BinOp.denote", "Value.isBool", "Value.isList", "Value.length", "Value.lengthNat",
+     "Value.isProperList", "List.lookup", "callEnv", "RecFun.clos"])
   let kw := if s.isSome then "let rec" else "let"
-  let proof := (proofs.lookup (n ++ "_body")).getD (defaultProof xs simps)
+  let proof := (proofs.lookup (n ++ "_body")).getD
+    (defaultProof xs simps (kindOf (sp.requires ++ sp.ensures)))
   let restField := if rest.isEmpty then ""
     else s!"\n  rest := [{", ".intercalate (rest.map Cert.str)}]"
   let what :=
@@ -194,7 +240,8 @@ theorem {n}_correct : {n}_fn.Meets :=
     contract defined so far. -/
 def topExpr (st : State) (i : Nat) (e : Expr) (env : String) : String :=
   let simps := ", ".intercalate (st.defs ++
-    ["wp", "BinOp.denote", "Value.isBool", "List.lookup", "callEnv", "RecFun.clos"])
+    ["wp", "BinOp.denote", "Value.isBool", "Value.isList", "Value.length", "Value.lengthNat",
+     "Value.isProperList", "List.lookup", "callEnv", "RecFun.clos"])
   s!"/-- The obligation of the top-level expression `{ppExpr e}`. Each call in it must
     get arguments that satisfy `requires`. If the proof fails, write one by hand. -/
 theorem top{i}_wp (μ : Store) :

@@ -15,10 +15,10 @@ def sum_fn : RecFun where
   ρ := []
   spec := {
     pre := fun
-      | [arg₀] => ∃ n : Int, arg₀ = .int n ∧ (n ≥ 0)
+      | [arg₀] => ∃ (n : Int), arg₀ = .int n ∧ (n ≥ 0)
       | _ => False
     post := fun
-      | [arg₀], res₀ => ∃ n r : Int, arg₀ = .int n ∧ res₀ = .int r ∧
+      | [arg₀], res₀ => ∃ (n : Int) (r : Int), arg₀ = .int n ∧ res₀ = .int r ∧
         ((r ≥ 0) ∧ (r ≥ n))
       | _, _ => False }
 
@@ -26,7 +26,7 @@ def sum_fn : RecFun where
 theorem sum_body : sum_fn.BodyOk .none [] := by
   intro va μ ⟨n, hva, hpre⟩
   subst hva
-  simp [sum_fn, wp, BinOp.denote, Value.isBool, List.lookup, callEnv, RecFun.clos]
+  simp [sum_fn, wp, BinOp.denote, Value.isBool, Value.isList, Value.length, Value.lengthNat, Value.isProperList, List.lookup, callEnv, RecFun.clos]
   all_goals split_omega
 
 /-- `sum` meets its contract: every call of `sum` on arguments that satisfy
@@ -38,7 +38,7 @@ theorem sum_correct : sum_fn.Meets :=
     get arguments that satisfy `requires`. If the proof fails, write one by hand. -/
 theorem top1_wp (μ : Store) :
     wp .none [sum_fn] (.app (.var "sum") (.int 10)) (fun _ _ => True) [("sum", sum_fn.clos)] μ := by
-  simp [sum_fn, wp, BinOp.denote, Value.isBool, List.lookup, callEnv, RecFun.clos]
+  simp [sum_fn, wp, BinOp.denote, Value.isBool, Value.isList, Value.length, Value.lengthNat, Value.isProperList, List.lookup, callEnv, RecFun.clos]
   all_goals split_omega
 
 /-- The top-level expression `(sum 10)` runs without error. -/

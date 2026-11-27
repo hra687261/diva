@@ -19,6 +19,11 @@ def ppBinOp : BinOp → String
   | .gt  => ">"
   | .ge  => ">="
 
+/-- `op` is a comparison: its result is a boolean. -/
+def BinOp.isCmp : BinOp → Bool
+  | .eq | .ne | .lt | .le | .gt | .ge => true
+  | _ => false
+
 /-- AST for the currently supported language (`doc/grammar.md` has the whole grammar,
     and says which commands support each rule):
 ```
@@ -130,21 +135,61 @@ instance : ToString Expr := ⟨ppExpr⟩
   | [], body => body
   | x :: xs, body => .lam x (lams xs body)
 
-/-- A term of a contract: integers, names, `+`, `-`, `*`, comparisons and `&&`.
-    Contracts use a small part of Gospel, the specification language for OCaml:
-    https://ocaml-gospel.github.io/gospel/ -/
+/-- A term of a contract: integers, booleans, names, `+`, `-`, `*`, comparisons, `&&`,
+    `||`, `not`, and `length l` for a list `l`. Contracts use a small part of Gospel, the
+    specification language for OCaml: https://ocaml-gospel.github.io/gospel/ -/
 inductive Term where
   | int : Int → Term
+  | bool : Bool → Term
   | var : String → Term
   | binop : BinOp → Term → Term → Term
   | and : Term → Term → Term
+  | or : Term → Term → Term
+  | not : Term → Term
+  /-- `length l`: the number of elements of the list `l`. -/
+  | length : Term → Term
   deriving Inhabited, Repr, BEq
 
 /-- The names used in `t`. -/
 def Term.vars : Term → List String
-  | .int _ => []
+  | .int _ | .bool _ => []
   | .var x => [x]
-  | .binop _ a b | .and a b => a.vars ++ b.vars
+  | .binop _ a b | .and a b | .or a b => a.vars ++ b.vars
+  | .not a | .length a => a.vars
+
+/-- The kind of a name of a contract: an integer, a boolean or a list. -/
+inductive Kind where
+  | int | bool | list
+  deriving Inhabited, Repr, BEq
+
+/-- The kind of the value of `t`, if `t` shows it: a name doesn't. -/
+def Term.kind? : Term → Option Kind
+  | .int _ | .length _ => some .int
+  | .bool _ | .and .. | .or .. | .not _ => some .bool
+  | .binop op _ _ => some (if op.isCmp then .bool else .int)
+  | .var _ => none
+
+/-- The kinds that `t` gives to its names, if `t` is of the kind `k`: `length x` makes
+    `x` a list, `not x` and `x || y` make `x` a boolean, and in `x = t`, `x` has the
+    kind of `t`. -/
+def Term.kindsAt (k : Kind) : Term → List (String × Kind)
+  | .int _ | .bool _ => []
+  | .var x => [(x, k)]
+  | .and a b | .or a b => a.kindsAt .bool ++ b.kindsAt .bool
+  | .not a => a.kindsAt .bool
+  | .length a => a.kindsAt .list
+  | .binop op a b =>
+    if op == .eq || op == .ne then
+      match a.kind? <|> b.kind? with
+      | some k => a.kindsAt k ++ b.kindsAt k
+      | none => []
+    else a.kindsAt .int ++ b.kindsAt .int
+
+/-- The kind of the name `x` in the clauses `ts` (each one is a boolean): a list or a
+    boolean if a clause makes it one, else an integer. -/
+def kindOf (ts : List Term) (x : String) : Kind :=
+  let ks := (ts.flatMap (·.kindsAt .bool)).filterMap fun (y, k) => if y == x then some k else none
+  if ks.contains .list then .list else if ks.contains .bool then .bool else .int
 
 /-- The contract of a function, written in a Gospel comment after it:
     `(*@ r = f x requires ... ensures ... *)`. -/

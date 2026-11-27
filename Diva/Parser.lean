@@ -475,10 +475,15 @@ def specIdent : P String := do
 
 mutual
 
-/-- `a && b` (also written `a /\ b`), or a comparison. -/
+/-- `a || b` (also written `a \/ b`), or `a && b`. -/
 partial def term : P Term := do
+  let a ← andTerm
+  (do (symbol "||" <|> symbol "\\/"); let b ← term; return .or a b) <|> pure a
+
+/-- `a && b` (also written `a /\ b`), or a comparison. -/
+partial def andTerm : P Term := do
   let a ← cmpTerm
-  (do (symbol "&&" <|> symbol "/\\"); let b ← term; return .and a b) <|> pure a
+  (do (symbol "&&" <|> symbol "/\\"); let b ← andTerm; return .and a b) <|> pure a
 
 /-- `a op b` for a comparison `op`, or `a`. -/
 partial def cmpTerm : P Term := do
@@ -508,9 +513,14 @@ partial def mulRest (a : Term) : P Term :=
   (do notFollowedBy (symbol "*)"); symbol "*"; let b ← atomTerm; mulRest (.binop .mul a b))
   <|> pure a
 
-/-- An integer, a name, `( t )`, or `-t` (`0 - t`). -/
+/-- An integer, `true`, `false`, `not t`, `length t` (also written `List.length t`), a
+    name, `( t )`, or `-t` (`0 - t`). -/
 partial def atomTerm : P Term :=
-  (Term.int <$> intTok) <|> (Term.var <$> specIdent) <|>
+  (Term.int <$> intTok) <|>
+  (keyword "true" *> pure (Term.bool true)) <|> (keyword "false" *> pure (Term.bool false)) <|>
+  (do keyword "not"; return .not (← atomTerm)) <|>
+  (do (symbol "List.length" <|> keyword "length"); return .length (← atomTerm)) <|>
+  (Term.var <$> specIdent) <|>
   (do symbol "("; let t ← term; symbol ")"; return t) <|>
   (do symbol "-"; let t ← atomTerm; return .binop .sub (.int 0) t)
 
@@ -569,10 +579,11 @@ def itemsLoc : P (List (Item × Loc)) := do
 /-- The top-level items of a program, without their positions. -/
 def items : P (List Item) := (·.map (·.1)) <$> itemsLoc
 
-/-- A program: its top-level items, as one expression, with its positions. -/
-def program : P LExpr := do
+/-- A program: its top-level items, as one expression, with its positions. `unroll` is that
+    of `Term.toExpr`. -/
+def program (unroll : Nat := 4) : P LExpr := do
   let is ← itemsLoc
-  return ⟨Item.toExpr (is.map (·.1)), Item.toLoc is⟩
+  return ⟨Item.toExpr unroll (is.map (·.1)), Item.toLoc is⟩
 
 /-- The state of `resolve`: the next site number and the next name number. -/
 structure Fresh where
@@ -658,13 +669,14 @@ def Reader.withIntTy (intTy : Option IntType) (r : Reader) : Reader := fun s =>
   (r s).bind (Overflow.items intTy s)
 
 /-- The program read by `r`, as one expression, with its positions. `resolve` keeps
-    the shape of the expression, so the positions stay valid. -/
-def Reader.lexpr (r : Reader) (s : String) : Except String LExpr :=
-  (r s).map fun is => ⟨(resolve [] (Item.toExpr (is.map (·.1)))).run' {}, Item.toLoc is⟩
+    the shape of the expression, so the positions stay valid. `unroll` is that of
+    `Term.toExpr`. -/
+def Reader.lexpr (r : Reader) (s : String) (unroll : Nat := 4) : Except String LExpr :=
+  (r s).map fun is => ⟨(resolve [] (Item.toExpr unroll (is.map (·.1)))).run' {}, Item.toLoc is⟩
 
-/-- The program read by `r`, as one expression. -/
-def Reader.expr (r : Reader) (s : String) : Except String Expr :=
-  (r.lexpr s).map (·.expr)
+/-- The program read by `r`, as one expression (see `Reader.lexpr`). -/
+def Reader.expr (r : Reader) (s : String) (unroll : Nat := 4) : Except String Expr :=
+  (r.lexpr s unroll).map (·.expr)
 
 /-- The top-level items read by `r`, with their contracts. The names are the ones of
     the source: there is no `resolve`. -/
@@ -672,10 +684,10 @@ def Reader.items (r : Reader) (s : String) : Except String (List Item) :=
   (r s).map (·.map (·.1))
 
 /-- Parse a complete program, with its positions. -/
-def parseLoc : String → Except String LExpr := parseItemsLoc.lexpr
+def parseLoc (s : String) : Except String LExpr := parseItemsLoc.lexpr s
 
 /-- Parse a complete program. -/
-def parse : String → Except String Expr := parseItemsLoc.expr
+def parse (s : String) : Except String Expr := parseItemsLoc.expr s
 
 /-- Parse a formula of the contract language, such as `0 <= v && v < 10`. -/
 def parseTerm (s : String) : Except String Term :=

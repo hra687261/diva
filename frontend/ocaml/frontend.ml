@@ -487,6 +487,14 @@ let ctor_name loc (cd : Data_types.constructor_description) =
   | _ -> Hashtbl.replace ctors cd.cstr_name owner);
   cd.cstr_name
 
+(* [e] is a constant, a name, or a constructor or a [raise] of such code: code that is
+   copied, rather than put in a function. *)
+let rec small_code e =
+  match e.desc with
+  | Int _ | Bool _ | Unit | Nil | Var _ -> true
+  | Ctor (_, v) | Raise v -> small_code v
+  | _ -> false
+
 (* The constructor of the tuples of [n] components. *)
 let tuple_ctor n = Printf.sprintf "%%%d" n
 
@@ -841,22 +849,27 @@ and match_cases ?(total = false) loc v cases final =
   | _ -> case_list total loc v cases final
 
 (* The cases, tried one after the other. When a case doesn't match, the next ones are
-   tried: they are the code [next], or, if [next] would be copied, a function [%tN] that
-   the case calls. If OCaml says that the cases match every value ([total]), the last
+   tried: they are the code [next], copied if it is [small_code], or else a
+   function [%tN] that the case calls. A copy is better for DIVA: the analysis and
+   [prove] follow it at the place of the test that failed. If OCaml says that the cases match every value ([total]), the last
    case matches when the others don't: if it binds no name, it isn't tested. *)
 and case_list total loc v cases final =
   match cases with
   | [] -> final
-  | [ c ] when total && c.c_guard = None && pat_bound_idents c.c_lhs = [] ->
+  | [ c ]
+    when total && Option.is_none c.c_guard
+         && List.is_empty (pat_bound_idents c.c_lhs) ->
       expr c.c_rhs
   | c :: rest ->
       let next, define =
         if rest = [] then (final, fun e -> e)
-        else if uses c <= 1 then (case_list total loc v rest final, fun e -> e)
         else
-          let k = fresh () in
-          let f = mk loc (Lam ("_", case_list total loc v rest final)) in
-          (app loc (var loc k) (unit loc), fun e -> letin loc k f e)
+          let code = case_list total loc v rest final in
+          if uses c <= 1 || small_code code then (code, fun e -> e)
+          else
+            let k = fresh () in
+            let f = mk loc (Lam ("_", code)) in
+            (app loc (var loc k) (unit loc), fun e -> letin loc k f e)
       in
       let ok =
         match c.c_guard with
@@ -868,7 +881,8 @@ and case_list total loc v cases final =
       define (pattern c.c_lhs v ok next)
 
 (* The number of times the test of the case [c] uses the code for "doesn't match". *)
-and uses (c : value case) = pat_uses c.c_lhs + if c.c_guard = None then 0 else 1
+and uses (c : value case) =
+  pat_uses c.c_lhs + if Option.is_none c.c_guard then 0 else 1
 
 and pat_uses (p : pattern) =
   let sum ps = List.fold_left (fun n p -> n + pat_uses p) 0 ps in
@@ -897,7 +911,7 @@ and pattern (p : pattern) v ok ko =
   let loc = p.pat_loc in
   match p.pat_desc with
   | Tpat_any -> ok
-  | Tpat_var (id, _, _) when Ident.name id = v -> ok
+  | Tpat_var (id, _, _) when String.equal (Ident.name id) v -> ok
   | Tpat_var (id, _, _) -> letin loc (Ident.name id) (var loc v) ok
   | Tpat_alias (q, id, _, _, _) ->
       letin loc (Ident.name id) (var loc v) (pattern q v ok ko)
@@ -926,7 +940,8 @@ and pattern (p : pattern) v ok ko =
       | "()", [] -> ok
       | "[]", [] -> mk loc (MatchList (var loc v, ok, "_", "_", ko))
       | "::", [ ph; pt ] ->
-          let h = name_for ph and t = name_for pt in
+          let h = name_for ph in
+          let t = name_for pt in
           mk loc
             (MatchList
                (var loc v, ko, h, t, pattern ph h (pattern pt t ok ko) ko))
@@ -958,7 +973,7 @@ and tuple_pattern loc ps v ok ko =
     | [] -> ok
     | p :: ps ->
         let h = name_for p in
-        let t = if ps = [] then "_" else fresh () in
+        let t = if List.is_empty ps then "_" else fresh () in
         mk loc
           (MatchList (var loc l, bad, h, t, pattern p h (components t ps) ko))
   in
@@ -979,7 +994,8 @@ and name_for (p : pattern) =
    of the file before it. So a parse error in the contract has its position in the
    file. A UTF-8 character before the comment is one space. *)
 let comment_text src (loc : Location.t) =
-  let start = loc.loc_start.pos_cnum and stop = loc.loc_end.pos_cnum in
+  let start = loc.loc_start.pos_cnum in
+  let stop = loc.loc_end.pos_cnum in
   let pad = Buffer.create start in
   String.iteri
     (fun i c ->
@@ -996,7 +1012,7 @@ let spec src comments stop next =
     List.find_opt
       (fun (s, (l : Location.t)) ->
         String.length s > 0
-        && s.[0] = '@'
+        && Char.equal s.[0] '@'
         && l.loc_start.pos_cnum >= stop
         && l.loc_start.pos_cnum < next)
       comments

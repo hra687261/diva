@@ -16,10 +16,10 @@ def sumsq_fn : RecFun where
   ρ := []
   spec := {
     pre := fun
-      | [arg₀, arg₁] => ∃ n acc : Int, arg₀ = .int n ∧ arg₁ = .int acc ∧ (n ≤ 10) ∧ (acc ≥ 0)
+      | [arg₀, arg₁] => ∃ (n : Int) (acc : Int), arg₀ = .int n ∧ arg₁ = .int acc ∧ (n ≤ 10) ∧ (acc ≥ 0)
       | _ => False
     post := fun
-      | [arg₀, arg₁], res₀ => ∃ n acc result : Int, arg₀ = .int n ∧ arg₁ = .int acc ∧ res₀ = .int result ∧
+      | [arg₀, arg₁], res₀ => ∃ (n : Int) (acc : Int) (result : Int), arg₀ = .int n ∧ arg₁ = .int acc ∧ res₀ = .int result ∧
         (result ≥ 0)
       | _, _ => False }
 
@@ -27,7 +27,7 @@ def sumsq_fn : RecFun where
 theorem sumsq_body : sumsq_fn.BodyOk .none [] := by
   intro va₀ va₁ μ ⟨n, acc, hva₀, hva₁, hpre⟩
   subst hva₀ hva₁
-  simp [sumsq_fn, wp, BinOp.denote, Value.isBool, List.lookup, callEnv, RecFun.clos]
+  simp [sumsq_fn, wp, BinOp.denote, Value.isBool, Value.isList, Value.length, Value.lengthNat, Value.isProperList, List.lookup, callEnv, RecFun.clos]
   all_goals split_omega
 
 /-- `sumsq` meets its contract: every call of `sumsq` on arguments that satisfy
@@ -39,7 +39,7 @@ theorem sumsq_correct : sumsq_fn.Meets :=
     get arguments that satisfy `requires`. If the proof fails, write one by hand. -/
 theorem top1_wp (μ : Store) :
     wp .none [sumsq_fn] (.app (.app (.var "sumsq") (.int 10)) (.int 0)) (fun _ _ => True) [("sumsq", sumsq_fn.clos)] μ := by
-  simp [sumsq_fn, wp, BinOp.denote, Value.isBool, List.lookup, callEnv, RecFun.clos]
+  simp [sumsq_fn, wp, BinOp.denote, Value.isBool, Value.isList, Value.length, Value.lengthNat, Value.isProperList, List.lookup, callEnv, RecFun.clos]
   all_goals split_omega
 
 /-- The top-level expression `((sumsq 10) 0)` runs without error. -/

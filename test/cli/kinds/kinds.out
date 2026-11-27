@@ -1,0 +1,31 @@
+$ diva run kinds.ml
+4
+[exit 0]
+
+$ diva check kinds.ml
+no runtime error found, but not proved: the analysis of arrays, refs, exceptions and the elements of lists isn't proved yet
+[exit 0]
+
+$ diva opt kinds.ml
+(let pick = (fun b -> (fun x -> (fun y -> (let _ = (assert (if b then true else (x = y))) in (if b then x else y))))) in (let negate = (fun b -> (if b then false else true)) in (let is_empty = (fun l -> (match l with [] -> true | _ :: _ -> false)) in (let at_least_two = (fun l -> (let _ = (assert (match l with [] -> false | _ :: %rest -> (match %rest with [] -> false | _ :: %rest -> true))) in (match l with [] -> 0 | _ :: t -> (match t with [] -> 1 | _ :: _ -> 2)))) in (((((pick (negate false)) 1) 2) + (at_least_two (3 :: (4 :: [])))) + (if (is_empty []) then 1 else 0))))))
+[exit 0]
+
+$ diva hints kinds.ml
+b#0 : true
+x#1 : 1
+y#2 : 2
+b#3 : false
+l#4 : []
+l#5 : [3; 4]
+[exit 0]
+
+$ diva cert --check kinds.ml
+the analysis of arrays, refs, exceptions and the elements of lists isn't proved yet, so there is no certificate (see `diva check`)
+[exit 1]
+
+$ diva prove --check -o prove.lean kinds.ml
+[diva] running Lean on prove.lean
+wrote prove.lean
+checked by Lean: the functions meet their contracts, and the top-level expressions don't fail
+[exit 0]
+

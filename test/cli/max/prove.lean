@@ -16,10 +16,10 @@ def max_fn : RecFun where
   ρ := []
   spec := {
     pre := fun
-      | [arg₀, arg₁] => ∃ a b : Int, arg₀ = .int a ∧ arg₁ = .int b ∧ True
+      | [arg₀, arg₁] => ∃ (a : Int) (b : Int), arg₀ = .int a ∧ arg₁ = .int b ∧ True
       | _ => False
     post := fun
-      | [arg₀, arg₁], res₀ => ∃ a b r : Int, arg₀ = .int a ∧ arg₁ = .int b ∧ res₀ = .int r ∧
+      | [arg₀, arg₁], res₀ => ∃ (a : Int) (b : Int) (r : Int), arg₀ = .int a ∧ arg₁ = .int b ∧ res₀ = .int r ∧
         ((r ≥ a) ∧ (r ≥ b))
       | _, _ => False }
 
@@ -27,7 +27,7 @@ def max_fn : RecFun where
 theorem max_body : max_fn.BodyOk .none [] := by
   intro va₀ va₁ μ ⟨a, b, hva₀, hva₁, hpre⟩
   subst hva₀ hva₁
-  simp [max_fn, wp, BinOp.denote, Value.isBool, List.lookup, callEnv, RecFun.clos]
+  simp [max_fn, wp, BinOp.denote, Value.isBool, Value.isList, Value.length, Value.lengthNat, Value.isProperList, List.lookup, callEnv, RecFun.clos]
   all_goals split_omega
 
 /-- `max` meets its contract: every call of `max` on arguments that satisfy
@@ -39,7 +39,7 @@ theorem max_correct : max_fn.Meets :=
     get arguments that satisfy `requires`. If the proof fails, write one by hand. -/
 theorem top1_wp (μ : Store) :
     wp .none [max_fn] (.app (.app (.var "max") (.int 1)) (.int 2)) (fun _ _ => True) [("max", max_fn.clos)] μ := by
-  simp [max_fn, wp, BinOp.denote, Value.isBool, List.lookup, callEnv, RecFun.clos]
+  simp [max_fn, wp, BinOp.denote, Value.isBool, Value.isList, Value.length, Value.lengthNat, Value.isProperList, List.lookup, callEnv, RecFun.clos]
   all_goals split_omega
 
 /-- The top-level expression `((max 1) 2)` runs without error. -/

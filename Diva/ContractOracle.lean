@@ -53,8 +53,12 @@ def toSpecify (items : List Item) : List String :=
 def termText : Term → String
   | .int n => toString n
   | .var x => x
+  | .bool b => toString b
   | .binop op a b => s!"({termText a} {ppBinOp op} {termText b})"
   | .and a b => s!"({termText a} && {termText b})"
+  | .or a b => s!"({termText a} || {termText b})"
+  | .not a => s!"(not {termText a})"
+  | .length a => s!"(length {termText a})"
 
 /-- The contract `sp` as Gospel, on one line. -/
 def specText (sp : Spec) : String :=

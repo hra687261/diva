@@ -141,6 +141,23 @@ def Value.isList : Value → Bool
   | .nil | .cons .. => true
   | _ => false
 
+/-- The number of elements of the list `v`. A value that isn't a list has `0`. -/
+def Value.lengthNat : Value → Nat
+  | .nil => 0
+  | .cons _ t => t.lengthNat + 1
+  | _ => 0
+
+/-- The number of elements of the list `v`, for the contracts: `length l`. It is the
+    `Int` of a `Nat`, so `omega` knows that it isn't negative. -/
+def Value.length (v : Value) : Int := v.lengthNat
+
+/-- `v` is a list whose tails are all lists, as `Eval` builds them. A parameter of a
+    contract that is a list has such a value. -/
+def Value.isProperList : Value → Bool
+  | .nil => true
+  | .cons _ t => t.isProperList
+  | _ => false
+
 def Value.isCtor : Value → Bool
   | .ctor .. => true
   | _ => false

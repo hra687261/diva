@@ -1,0 +1,34 @@
+$ diva ocaml run contracts.ml
+()
+[exit 0]
+
+$ diva ocaml check contracts.ml
+contracts.ml:7:19-19: `(assert ((let rec %length %l = (match %l with [] -> 0 | _...` may fail
+contracts.ml:7:52-64: `1 + length t`: may overflow 63-bit integers (result: [1, +∞])
+contracts.ml:13:56-73: `(length [ 1; 2 ])`: the function called may fail
+[exit 1]
+
+$ diva ocaml opt contracts.ml
+(let both = (fun a -> (fun b -> (if a then b else false))) in (let rec length l = (let _ = (assert ((let rec %length %l = (match %l with [] -> 0 | _ :: %rest -> (1 + (%length %rest))) in (%length l)) <= 100)) in (match l with [] -> 0 | _ :: t -> (let %r = (1 + (length t)) in (let _ = (assert (if (-4611686018427387904 <= %r) then (%r <= 4611686018427387903) else false)) in %r)))) in (let has_two = (fun l -> (match l with [] -> false | _ :: %t1 -> (match %t1 with [] -> false | _ :: _ -> true))) in (if ((both true) (has_two (3 :: (4 :: [])))) then (let _ = (length (1 :: (2 :: []))) in ()) else ()))))
+[exit 0]
+
+$ diva ocaml hints contracts.ml
+a#0 : true
+b#1 : true
+l#3 : list of [1, 2]
+$length#2 : [0, +∞]
+%l#5 : list of [1, 2]
+$%length#4 : [0, +∞]
+l#6 : [3; 4]
+[exit 0]
+
+$ diva ocaml cert --check contracts.ml
+the program may fail, so there is no certificate (see `diva check`)
+[exit 1]
+
+$ diva ocaml prove --check -o prove.lean contracts.ml
+[diva] running Lean on prove.lean
+wrote prove.lean
+checked by Lean: the functions meet their contracts, and the top-level expressions don't fail
+[exit 0]
+
