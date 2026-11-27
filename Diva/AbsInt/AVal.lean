@@ -19,6 +19,22 @@ namespace Diva.AbsInt
 
 open AbsDomain NumDomain
 
+/-- The elements of the lists that a `Flat` describes, for the analysis of lists (see
+    `Flat.elem`): the fields of `Flat`, without the elements of their own lists. -/
+structure Elem (A : Type) where
+  int  : A
+  tt   : Bool
+  ff   : Bool
+  unit : Bool
+  list : Bool
+  fn   : Bool
+  loc  : Bool
+  ctor  : Bool
+  refs : List Nat
+  arrs : List Nat
+  ctors : List String
+  deriving Inhabited
+
 /-- A product (one component per kind) rather than one constructor per kind, because
     a value may be of several kinds: the core language is untyped. -/
 structure Flat (A : Type) where
@@ -31,14 +47,22 @@ structure Flat (A : Type) where
   loc  : Bool   -- may be an array or a ref
   ctor : Bool   -- may be a constructor applied to an argument (an exception, ...)
   /-- The allocation sites of the refs it may be, for the analysis of the store (see
-      `aevalM`). `mem` doesn't use them: `loc` gives the arrays and refs it may be. -/
+      `aevalM`). `mem` ignores them: for `mem`, a `Flat` with `loc` describes every
+      array and ref, whatever its site. So only the analysis that isn't proved yet uses
+      them. -/
   refs : List Nat := []
   /-- The allocation sites of the arrays it may be, as `refs`. -/
   arrs : List Nat := []
   /-- The constructors `C` of the values `C v` it may be, for the analysis of exceptions
-      and constructors (see `aevalM`). `mem` doesn't use them: `ctor` gives the values
-      `C v` it may be. -/
+      and constructors (see `aevalM`). `mem` ignores them: for `mem`, a `Flat` with
+      `ctor` describes every value `C v`, whatever its constructor. So only the analysis
+      that isn't proved yet uses them. -/
   ctors : List String := []
+  /-- The elements of the lists it may be, if `list`: for the analysis of lists (see
+      `aevalM`). `none`: any elements. `mem` ignores them: for `mem`, a `Flat` with
+      `list` describes every list, whatever its elements. So only the analysis that
+      isn't proved yet uses them. -/
+  elem : Option (Elem A) := none
   deriving Inhabited
 
 namespace Flat
@@ -47,10 +71,10 @@ variable {A : Type} [NumDomain A]
 
 /-- No value at all. -/
 def bot : Flat A :=
-  ⟨AbsDomain.bot, false, false, false, false, false, false, false, [], [], []⟩
+  ⟨AbsDomain.bot, false, false, false, false, false, false, false, [], [], [], none⟩
 
 /-- Any value. -/
-def top : Flat A := ⟨AbsDomain.top, true, true, true, true, true, true, true, [], [], []⟩
+def top : Flat A := ⟨AbsDomain.top, true, true, true, true, true, true, true, [], [], [], none⟩
 
 def ofInt (i : A) : Flat A := { (bot : Flat A) with int := i }
 /-- A boolean that may be `true` (`t`) or `false` (`f`). -/
@@ -60,32 +84,70 @@ def listV : Flat A := { (bot : Flat A) with list := true }
 def fnV : Flat A := { (bot : Flat A) with fn := true }
 def ctorV : Flat A := { (bot : Flat A) with ctor := true }
 
-def join (a b : Flat A) : Flat A :=
+/-- `join` without the elements of lists. -/
+def joinBase (a b : Flat A) : Flat A :=
   ⟨AbsDomain.join a.int b.int, a.tt || b.tt, a.ff || b.ff, a.unit || b.unit,
    a.list || b.list, a.fn || b.fn, a.loc || b.loc, a.ctor || b.ctor,
-   (a.refs ++ b.refs).eraseDups, (a.arrs ++ b.arrs).eraseDups, (a.ctors ++ b.ctors).eraseDups⟩
+   (a.refs ++ b.refs).eraseDups, (a.arrs ++ b.arrs).eraseDups, (a.ctors ++ b.ctors).eraseDups,
+   none⟩
+
+/-- `a`, without the elements of its lists. -/
+def base (a : Flat A) : Elem A :=
+  ⟨a.int, a.tt, a.ff, a.unit, a.list, a.fn, a.loc, a.ctor, a.refs, a.arrs, a.ctors⟩
+
+end Flat
+
+/-- `e`, as a `Flat` whose lists have any elements. -/
+def Elem.toFlat [NumDomain A] (e : Elem A) : Flat A :=
+  ⟨e.int, e.tt, e.ff, e.unit, e.list, e.fn, e.loc, e.ctor, e.refs, e.arrs, e.ctors, none⟩
+
+namespace Flat
+
+variable {A : Type} [NumDomain A]
+
+/-- The elements of the lists of `a` or `b`. If one of them may be lists with any
+    elements, any elements. -/
+def joinElem (a b : Flat A) : Option (Elem A) :=
+  match a.list, b.list, a.elem, b.elem with
+  | true, true, some x, some y => some (joinBase x.toFlat y.toFlat).base
+  | true, false, x, _ => x
+  | false, true, _, y => y
+  | _, _, _, _ => none
+
+def join (a b : Flat A) : Flat A := { joinBase a b with elem := joinElem a b }
 
 /-- The sites or constructors of `xs` that `b` also has: those of `ys`, or all of
     them if `any` (`b` may be any array or ref, or any constructor applied to an argument). -/
 def common [BEq α] (xs ys : List α) (any : Bool) : List α :=
   xs.filter fun x => any || ys.contains x
 
-/-- The values that both `a` and `b` describe. -/
+/-- The values that both `a` and `b` describe. For the elements of lists, those of `a`
+    if it has some, else those of `b`: they contain those of the meet. -/
 def meet (a b : Flat A) : Flat A :=
   ⟨AbsDomain.meet a.int b.int, a.tt && b.tt, a.ff && b.ff, a.unit && b.unit,
    a.list && b.list, a.fn && b.fn, a.loc && b.loc, a.ctor && b.ctor,
    common a.refs b.refs b.loc ++ common b.refs [] (a.loc && !b.loc),
    common a.arrs b.arrs b.loc ++ common b.arrs [] (a.loc && !b.loc),
-   common a.ctors b.ctors b.ctor ++ common b.ctors [] (a.ctor && !b.ctor)⟩
+   common a.ctors b.ctors b.ctor ++ common b.ctors [] (a.ctor && !b.ctor),
+   if a.list && b.list then (a.elem <|> b.elem) else none⟩
 
-/-- `a` describes no more values than `b`. A site or a constructor of `a` must be in
-    `b`, unless `b` may be any array or ref (`loc`), or any constructor (`ctor`). -/
-def leq (a b : Flat A) : Bool :=
+/-- `leq` without the elements of lists. -/
+def leqBase (a b : Flat A) : Bool :=
   AbsDomain.leq a.int b.int && (!a.tt || b.tt) && (!a.ff || b.ff) && (!a.unit || b.unit) &&
   (!a.list || b.list) && (!a.fn || b.fn) && (!a.loc || b.loc) && (!a.ctor || b.ctor) &&
   (common a.refs b.refs b.loc).length == a.refs.length &&
   (common a.arrs b.arrs b.loc).length == a.arrs.length &&
   (common a.ctors b.ctors b.ctor).length == a.ctors.length
+
+/-- `a` describes no more values than `b`. A site or a constructor of `a` must be in
+    `b`, unless `b` may be any array or ref (`loc`), or any constructor (`ctor`). If `b`
+    gives the elements of its lists, those of `a` are among them. -/
+def leq (a b : Flat A) : Bool :=
+  leqBase a b &&
+    (!a.list || match a.elem, b.elem with
+      | _, none => true
+      | some x, some y => leqBase x.toFlat y.toFlat
+      | none, some _ => false)
 
 /-- Concretisation: the values `a` describes. -/
 def mem (a : Flat A) : Value → Prop
@@ -114,24 +176,24 @@ theorem mem_top (v : Value) : (top : Flat A).mem v := by
 theorem mem_join_l {a b : Flat A} {v : Value} (h : a.mem v) : (a.join b).mem v := by
   cases v
   case int n => exact join_sound_l h
-  case bool c => cases c <;> simp_all [mem, join]
-  all_goals simp_all [mem, join]
+  case bool c => cases c <;> simp_all [mem, join, joinBase]
+  all_goals simp_all [mem, join, joinBase]
 
 theorem mem_join_r {a b : Flat A} {v : Value} (h : b.mem v) : (a.join b).mem v := by
   cases v
   case int n => exact join_sound_r h
-  case bool c => cases c <;> simp_all [mem, join]
-  all_goals simp_all [mem, join]
+  case bool c => cases c <;> simp_all [mem, join, joinBase]
+  all_goals simp_all [mem, join, joinBase]
 
 /-- `a ≤ b` gives `a.int ≤ b.int`. -/
 theorem leq_int {a b : Flat A} (hl : a.leq b = true) : AbsDomain.leq a.int b.int = true := by
-  simp only [leq, Bool.and_eq_true] at hl
+  simp only [leq, leqBase, Bool.and_eq_true] at hl
   simp_all
 
 theorem mem_leq {a b : Flat A} {v : Value} (h : a.mem v) (hl : a.leq b = true) : b.mem v := by
   cases v
   case int n => exact leq_sound h (leq_int hl)
-  all_goals simp only [leq, Bool.and_eq_true, Bool.or_eq_true, Bool.not_eq_true'] at hl
+  all_goals simp only [leq, leqBase, Bool.and_eq_true, Bool.or_eq_true, Bool.not_eq_true'] at hl
   case bool c => cases c <;> simp_all [mem]
   all_goals simp_all [mem]
 
@@ -189,19 +251,28 @@ theorem mem_bools {p : Bool × Bool} {P : Prop} [Decidable P]
   · simp [mem, bools, hP, h.1 hP]
   · simp [mem, bools, hP, h.2 hP]
 
+/-- `a` printed, with `list` for its lists, whatever their elements. -/
+def strBase [ToString A] (a : Flat A) : String :=
+  if top.leq a then "⊤" else
+  let parts :=
+    (if AbsDomain.leq a.int AbsDomain.bot then [] else [toString a.int]) ++
+    (match a.tt, a.ff with
+      | true, true => ["bool"] | true, false => ["true"]
+      | false, true => ["false"] | false, false => []) ++
+    (if a.unit then ["()"] else []) ++ (if a.list then ["list"] else []) ++
+    (if a.fn then ["fun"] else []) ++ (if a.loc then ["loc"] else []) ++
+    (if a.ctor then ["ctor"] else []) ++
+    a.refs.map (s!"ref !{·}") ++ a.arrs.map (s!"array !{·}") ++ a.ctors
+  if parts.isEmpty then "⊥" else " | ".intercalate parts
+
 instance [ToString A] : ToString (Flat A) where
   toString a :=
-    if top.leq a then "⊤" else
-    let parts :=
-      (if AbsDomain.leq a.int AbsDomain.bot then [] else [toString a.int]) ++
-      (match a.tt, a.ff with
-        | true, true => ["bool"] | true, false => ["true"]
-        | false, true => ["false"] | false, false => []) ++
-      (if a.unit then ["()"] else []) ++ (if a.list then ["list"] else []) ++
-      (if a.fn then ["fun"] else []) ++ (if a.loc then ["loc"] else []) ++
-      (if a.ctor then ["ctor"] else []) ++
-      a.refs.map (s!"ref !{·}") ++ a.arrs.map (s!"array !{·}") ++ a.ctors
-    if parts.isEmpty then "⊥" else " | ".intercalate parts
+    match a.list, a.elem with
+    | true, some e =>
+      let rest := strBase { a with list := false }
+      let l := s!"list of {strBase e.toFlat}"
+      if rest == "⊥" then l else s!"{rest} | {l}"
+    | _, _ => strBase a
 
 end Flat
 
@@ -263,7 +334,17 @@ def listOf (e : Flat A) (mayNil : Bool := true) : AVal A :=
 
 /-- Forget the summary and the elements: "any closure" and "any list". -/
 def flat (a : AVal A) : Flat A :=
-  { a.toFlat with fn := a.fn || a.sum.isSome, list := a.list || a.elems.isSome }
+  let elem := flatElem a
+  { a.toFlat with fn := a.fn || a.sum.isSome, list := a.list || a.elems.isSome, elem }
+where
+  /-- The elements of the lists of `a`, for `Flat.elem`: those of `a.toFlat` and of
+      `a.elems`, without the elements of their own lists. -/
+  flatElem (a : AVal A) : Option (Elem A) :=
+    match a.list, a.toFlat.elem, a.elems with
+    | true, none, _ => none
+    | true, some x, some e => some (Flat.joinBase x.toFlat e).base
+    | true, some x, none => some x
+    | false, _, e => e.map Flat.base
 
 /-- Summaries are kept when they have the same preconditions, forgotten otherwise.
     Elements are joined. The lists may be `[]` if those of `a` or of `b` may. -/
@@ -320,8 +401,14 @@ def tails (a : AVal A) : AVal A :=
 def itemsOf (ws : List (Flat A)) : AVal A :=
   { listOf (ws.foldl Flat.join Flat.bot) (mayNil := ws.isEmpty) with items := some ws }
 
-/-- `h :: t`, element by element if `t` is known that way. -/
-def consI (h t : AVal A) : AVal A := { cons h t with items := t.items.map (h.flat :: ·) }
+/-- `h :: t`, element by element if `t` is known that way. If `t` may be any list, the
+    lists whose elements are those of `t` (`Flat.elem`) and `h`. -/
+def consI (h t : AVal A) : AVal A :=
+  if t.list then
+    match t.flat.elem with
+    | some e => ofFlat { Flat.listV with elem := some (Flat.joinBase e.toFlat h.flat).base }
+    | none => listV
+  else { cons h t with items := t.items.map (h.flat :: ·) }
 
 /-- `mayBeNil`, using `items` if `a` has them. -/
 def mayBeNilI (a : AVal A) : Bool :=
@@ -329,19 +416,27 @@ def mayBeNilI (a : AVal A) : Bool :=
   | some ws => ws.isEmpty
   | none => a.mayBeNil
 
-/-- `heads`, using `items` if `a` has them. -/
+/-- `heads`, using `items` if `a` has them, and the elements of `a.toFlat` if it may be
+    any list. -/
 def headsI (a : AVal A) : Flat A :=
   match a.items with
   | some (w :: _) => w
   | some [] => Flat.bot
-  | none => a.heads
+  | none =>
+    if a.list then
+      ((a.toFlat.elem.map Elem.toFlat).getD Flat.top).join (a.elems.getD Flat.bot)
+    else a.heads
 
-/-- `tails`, using `items` if `a` has them. -/
+/-- `tails`, using `items` if `a` has them. The tails of lists are lists, with the same
+    elements: `Eval` only builds a `::` whose tail is a list (`Semantics.lean`). -/
 def tailsI (a : AVal A) : AVal A :=
   match a.items with
   | some (_ :: ws) => itemsOf ws
   | some [] => bot
-  | none => a.tails
+  | none =>
+    if a.list then
+      (ofFlat { Flat.listV with elem := a.toFlat.elem }).join ((a.elems.map (listOf ·)).getD bot)
+    else a.tails
 
 instance [ToString A] : ToString (AVal A) where
   toString a :=

@@ -3,15 +3,11 @@ $ diva run basics.ml
 [exit 0]
 
 $ diva check basics.ml
-basics.ml:7:19-64: `match l with [] -> 0 | _ :: t -> 1 + length t`: may not match a list (⊤)
-basics.ml:9:18-68: `match l with [] -> [] | x :: xs -> f x :: map f xs`: may not match a list (⊤)
 basics.ml:9:53-56: `f x`: calls a function the analysis knows nothing about
-basics.ml:11:16-60: `match l with [] -> 0 | x :: xs -> x + sum xs`: may not match a list (⊤)
 basics.ml:11:50-60: `x + sum xs`: the operands may not be integers (⊤ and [-∞, +∞])
 basics.ml:15:28-33: `x * x`: the operands may not be integers (⊤ and ⊤)
 basics.ml:15:14-46: `map (fun x -> x * x) (range 1 5)`: the function called may fail
 basics.ml:16:12-23: `sum squares`: the function called may fail
-basics.ml:17:8-22: `length squares`: the function called may fail
 basics.ml:21:0-9: `assert ok` may fail
 basics.ml:15:14-46: `map (fun x -> x * x) (range 1 5)`: may raise an exception that isn't caught (ctor)
 [exit 1]
@@ -23,12 +19,15 @@ $ diva opt basics.ml
 $ diva hints basics.ml
 n#1 : [1, 10]
 $fact#0 : [1, +∞]
+l#3 : list of ⊤
 $length#2 : [0, +∞]
 f#5 : fun
-$map#4 : list
+$map#4 : list of ⊤
+l#6 : list of [1, 5]
+l#8 : list of ⊤
 $sum#7 : [-∞, +∞]
 a#10 : [1, 6]
-$range#9 : list
+$range#9 : list of [1, 5]
 b#11 : 5
 [exit 0]
 

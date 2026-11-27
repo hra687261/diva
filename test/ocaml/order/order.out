@@ -3,7 +3,7 @@ $ diva ocaml run order.ml
 [exit 0]
 
 $ diva ocaml check order.ml
-no runtime error found, but not proved: the analysis of arrays, refs and exceptions isn't proved yet
+no runtime error found, but not proved: the analysis of arrays, refs, exceptions and the elements of lists isn't proved yet
 [exit 0]
 
 $ diva ocaml opt order.ml
@@ -20,7 +20,7 @@ b#3 : ⊥
 [exit 0]
 
 $ diva ocaml cert --check order.ml
-the analysis of arrays, refs and exceptions isn't proved yet, so there is no certificate (see `diva check`)
+the analysis of arrays, refs, exceptions and the elements of lists isn't proved yet, so there is no certificate (see `diva check`)
 [exit 1]
 
 $ diva ocaml prove --check -o prove.lean order.ml

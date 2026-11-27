@@ -359,7 +359,8 @@ mutual
     sound. Only the inference uses it, because its first guesses are always wrong:
     with checking, they would give `top`, and the next guesses would be `top`.
 
-    With `ext`, arrays, refs and exceptions are analysed too (`aevalExt`). This isn't
+    With `ext`, arrays, refs, exceptions, tuples and the elements of lists are analysed
+    too (`aevalExt`, and `Flat.elem`, `AVal.items`, `Flat.ctors`). This isn't
     proved yet: the proofs are about the checker, which has no `ext`. Without `ext`, a
     value read from the store is `top`, and `mayFail` says that a store operation, a
     `raise` or a `try` may fail.
@@ -654,8 +655,8 @@ abbrev aeval [NumDomain A] (H : Hints A) (σ : AEnv A) (e : Expr) : AVal A :=
 abbrev mayFail [NumDomain A] (H : Hints A) (σ : AEnv A) (e : Expr) : Bool :=
   mayFailM false false H σ e
 
-/-- The analysis with arrays, refs and exceptions (untrusted: not proved yet). `diva check`
-    and the inference use it. -/
+/-- The analysis with arrays, refs, exceptions and the elements of lists (untrusted: not
+    proved yet). `diva check` and the inference use it. -/
 abbrev aevalExt [NumDomain A] (H : Hints A) (σ : AEnv A) (e : Expr) : AVal A :=
   aevalM false true H σ e
 

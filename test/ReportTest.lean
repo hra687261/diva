@@ -57,3 +57,10 @@ private def check (s : String) : Option (List String) :=
 -- the handler gets the argument of the exception
 #guard check "try raise (E 0) with E x -> 10 / x" =
   some ["`(10 / x)`: possible division by zero (divisor: 0)"]
+
+-- the elements of lists (not proved yet): the hint of `l` is `list of [1, 3]`
+#guard check "let rec sum l = match l with [] -> 0 | x :: xs -> x + sum xs in sum [1; 2; 3]" =
+  some [Report.unprovedSafe]
+#guard check "let rec sum l = match l with [] -> 0 | x :: xs -> 10 / x + sum xs in sum [1; 0]" =
+  some ["`(10 / x)`: possible division by zero (divisor: [0, 1])",
+    "`(sum (1 :: (0 :: [])))`: the function called may fail"]

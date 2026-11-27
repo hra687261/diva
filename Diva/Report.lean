@@ -241,8 +241,8 @@ where
 /-- What `diva check` says when the program can't fail, but only the analysis of the
     store and of exceptions, which isn't proved yet, shows it. -/
 def unprovedSafe : String :=
-  "no runtime error found, but not proved: the analysis of arrays, refs and exceptions \
-    isn't proved yet"
+  "no runtime error found, but not proved: the analysis of arrays, refs, exceptions and \
+    the elements of lists isn't proved yet"
 
 /-- What `diva check` prints for the program `e`: where `e` may fail, or that it
     can't fail. `σ` gives the values of the variables that `e` uses without
@@ -258,10 +258,12 @@ def unprovedSafe : String :=
 def report (σ : AEnv A) (e : Expr) (fixed : Hints A := []) (l : Loc := default)
     (place : Span → String := fun _ => "") (code : Span → String := fun _ => "") :
     List String :=
+  -- the hints that the checker can confirm, then those of the analysis that isn't proved
   let H := inferHints σ e fixed
+  let HS := inferHints σ e fixed (ext := true)
   if !mayFail H σ e then ["no runtime error is possible"]
-  else if mayFailExt H σ e then
-    match diagnose H place code σ e l ++ uncaught H place code σ e l with
+  else if mayFailExt HS σ e then
+    match diagnose HS place code σ e l ++ uncaught HS place code σ e l with
     | [] => ["may fail"]   -- not expected: `diagnose` follows `mayFailExt`
     | ds => ds
   else [unprovedSafe]

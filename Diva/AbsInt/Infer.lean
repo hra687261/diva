@@ -7,8 +7,11 @@ Finds the hints that `aeval` checks: each parameter's precondition and each
 recursive function's result. Nothing here is proved: `aeval` checks every hint, so a
 wrong one only costs precision.
 
-`claims H σ e` lists what each hint must cover, in one pass of the optimistic
-analysis under `H`:
+`claims ext H σ e` lists what each hint must cover, in one pass of the optimistic
+analysis under `H`. With `ext`, this analysis is the one of `aevalExt`, which also
+analyses arrays, refs, exceptions and the elements of lists. Without `ext`, it is the
+one of the checker `aeval`, so the hints are those that the checker can confirm: `cert`
+and `opt` use them. The claims are:
 - `(x, a)`: an argument `a` passed to a function of parameter `x`;
 - `($f, r)`: the result `r` of the body of `f`, assuming `H`'s claims;
 - `(!s, v)`: a value `v` written to a ref or an array of the allocation site `s`, and
@@ -35,9 +38,17 @@ open AbsDomain
 
 variable {A : Type} [NumDomain A]
 
-/-- Widening: integers are widened, the other components joined (they are finite). -/
+/-- Widening: the integers of `a` and `b` are widened, and so are the integers of the
+    elements of their lists (`elem.int`). The other components are joined: they are
+    finite. -/
 def Flat.widen (a b : Flat A) : Flat A :=
-  { a.join b with int := AbsDomain.widen a.int b.int }
+  let j := a.join b
+  { j with
+    int := AbsDomain.widen a.int b.int,
+    elem := j.elem.map fun e =>
+      match a.elem with
+      | some x => { e with int := AbsDomain.widen x.int e.int }
+      | none => e }
 
 /-- The parameters of the nested `fun`s at the start of `b`.
     For `fun y -> fun z -> e` it gives `[y, z]`. If `b` is not a `fun`, it gives `[]`. -/
@@ -62,67 +73,68 @@ def callee (C : Callees) : Expr → List String
 
 /-- `lastRes` without checking the hints (`aevalM true`): the value of `e` for
     `fun y -> fun z -> e`. -/
-def lastResOpt (H : Hints A) (σ : AEnv A) (b : Expr) : Flat A :=
-  lastResOf b (aevalM true true H σ b)
+def lastResOpt (ext : Bool) (H : Hints A) (σ : AEnv A) (b : Expr) : Flat A :=
+  lastResOf b (aevalM true ext H σ b)
 
 /-- What each hint must cover, in one pass over `e`. It goes where the optimistic
     analysis goes, with the same environments. -/
-def claims (H : Hints A) (C : Callees) (σ : AEnv A) : Expr → List (String × Flat A)
-  | .binop _ a b | .cons a b => claims H C σ a ++ claims H C σ b
+def claims (ext : Bool) (H : Hints A) (C : Callees) (σ : AEnv A) : Expr → List (String × Flat A)
+  | .binop _ a b | .cons a b => claims ext H C σ a ++ claims ext H C σ b
   | .matchList s n x xs c =>
-    let vs := aevalM true true H σ s
-    claims H C σ s ++
-      (if vs.mayBeNilI then claims H C σ n else []) ++
+    let vs := aevalM true ext H σ s
+    claims ext H C σ s ++
+      (if vs.mayBeNilI then claims ext H C σ n else []) ++
       (if vs.headsI.leq Flat.bot then []
-       else claims H ((xs, []) :: (x, []) :: C)
+       else claims ext H ((xs, []) :: (x, []) :: C)
          ((xs, vs.tailsI) :: (x, AVal.ofFlat vs.headsI) :: σ) c)
   | .letin x e1 e2 =>
-    claims H C σ e1 ++
-      claims H ((x, callee C e1) :: C) ((x, aevalM true true H σ e1) :: σ) e2
-  | .lam x b => claims H ((x, []) :: C) ((x, AVal.ofFlat (H.param x)) :: σ) b
+    claims ext H C σ e1 ++
+      claims ext H ((x, callee C e1) :: C) ((x, aevalM true ext H σ e1) :: σ) e2
+  | .lam x b => claims ext H ((x, []) :: C) ((x, AVal.ofFlat (H.param x)) :: σ) b
   | .app f a =>
     let arg := match callee C f with
-      | x :: _ => [(x, (aevalM true true H σ a).flat)]
+      | x :: _ => [(x, (aevalM true ext H σ a).flat)]
       | [] => []
-    arg ++ claims H C σ f ++ claims H C σ a
+    arg ++ claims ext H C σ f ++ claims ext H C σ a
   | .letrec f x b e2 =>
     -- `f`'s summary, as the analysis gives it
-    let S : Summary A := (aevalM true true H σ (.letrec f x b (.var f))).sum.getD
+    let S : Summary A := (aevalM true ext H σ (.letrec f x b (.var f))).sum.getD
       ⟨H.param x, restPres H b, H.result f, false, Flat.ctorV⟩
     let σb := (x, AVal.ofFlat S.pre) :: (f, AVal.summary S) :: σ
     let Cb := (x, []) :: (f, x :: lamParams b) :: C
-    ("$" ++ f, lastResOpt H σb b) :: claims H Cb σb b ++
-      claims H ((f, x :: lamParams b) :: C) ((f, AVal.summary S) :: σ) e2
+    ("$" ++ f, lastResOpt ext H σb b) :: claims ext H Cb σb b ++
+      claims ext H ((f, x :: lamParams b) :: C) ((f, AVal.summary S) :: σ) e2
   | .ite c t e =>
-    let ac := aevalM true true H σ c
-    claims H C σ c ++
-      (if ac.tt then ((σ.assume c true).map (claims H C · t)).getD [] else []) ++
-      (if ac.ff then ((σ.assume c false).map (claims H C · e)).getD [] else [])
+    let ac := aevalM true ext H σ c
+    claims ext H C σ c ++
+      (if ac.tt then ((σ.assume c true).map (claims ext H C · t)).getD [] else []) ++
+      (if ac.ff then ((σ.assume c false).map (claims ext H C · e)).getD [] else [])
   -- a value written to the store: a claim on the contents of each site written to
-  | .ref site v => (s!"!{site}", (aevalM true true H σ v).flat) :: claims H C σ v
+  | .ref site v => (s!"!{site}", (aevalM true ext H σ v).flat) :: claims ext H C σ v
   | .alloc site n v =>
-    (s!"!{site}", (aevalM true true H σ v).flat) ::
-      (s!"!{site}.length", (aevalM true true H σ n).flat) :: claims H C σ n ++ claims H C σ v
+    (s!"!{site}", (aevalM true ext H σ v).flat) ::
+      (s!"!{site}.length", (aevalM true ext H σ n).flat) ::
+        claims ext H C σ n ++ claims ext H C σ v
   | .assign r v =>
-    let av := (aevalM true true H σ v).flat
-    ((aevalM true true H σ r).refs.map (s!"!{·}", av)) ++ claims H C σ r ++ claims H C σ v
+    let av := (aevalM true ext H σ v).flat
+    ((aevalM true ext H σ r).refs.map (s!"!{·}", av)) ++ claims ext H C σ r ++ claims ext H C σ v
   | .set a i v =>
-    let av := (aevalM true true H σ v).flat
-    ((aevalM true true H σ a).arrs.map (s!"!{·}", av)) ++ claims H C σ a ++ claims H C σ i ++
-      claims H C σ v
-  | .deref a | .len a | .assert a | .raise a => claims H C σ a
-  | .get a i => claims H C σ a ++ claims H C σ i
+    let av := (aevalM true ext H σ v).flat
+    ((aevalM true ext H σ a).arrs.map (s!"!{·}", av)) ++ claims ext H C σ a ++
+      claims ext H C σ i ++ claims ext H C σ v
+  | .deref a | .len a | .assert a | .raise a => claims ext H C σ a
+  | .get a i => claims ext H C σ a ++ claims ext H C σ i
   -- `C v`: a claim on the arguments of `C`
-  | .ctor c v => argClaims c (aevalM true true H σ v) ++ claims H C σ v
+  | .ctor c v => argClaims c (aevalM true ext H σ v) ++ claims ext H C σ v
   | .tryw a k h =>
-    let ea := raisesM true true H σ a
-    claims H C σ a ++
-      (if ea.leq Flat.bot then [] else claims H ((k, []) :: C) ((k, AVal.ofFlat ea) :: σ) h)
+    let ea := raisesM true ext H σ a
+    claims ext H C σ a ++
+      (if ea.leq Flat.bot then [] else claims ext H ((k, []) :: C) ((k, AVal.ofFlat ea) :: σ) h)
   | .ctorCase s c x h m =>
-    let vs := aevalM true true H σ s
-    claims H C σ s ++
-      (if vs.mayBeCtor c then claims H ((x, []) :: C) (hitEnv H σ s vs c x) h else []) ++
-      (if vs.mayBeOtherCtor c then claims H C (σ.bind s (vs.withoutCtor c)) m else [])
+    let vs := aevalM true ext H σ s
+    claims ext H C σ s ++
+      (if vs.mayBeCtor c then claims ext H ((x, []) :: C) (hitEnv H σ s vs c x) h else []) ++
+      (if vs.mayBeOtherCtor c then claims ext H C (σ.bind s (vs.withoutCtor c)) m else [])
   | .int _ | .bool _ | .unit | .var _ | .nil => []
 
 /-- The hint keys of `e`: its parameters, `$f` for each recursive function `f`, for
@@ -146,8 +158,8 @@ def hintKeys : Expr → List String
 /-- For each key of `H`, the join of its claims. A parameter that no call reaches
     may be called from anywhere: `top`. A function's result that nothing claims
     (dead code) is `bot`. -/
-def collect (H : Hints A) (σ : AEnv A) (e : Expr) : Hints A :=
-  let cs := claims H [] σ e
+def collect (ext : Bool) (H : Hints A) (σ : AEnv A) (e : Expr) : Hints A :=
+  let cs := claims ext H [] σ e
   H.map fun (k, _) =>
     match cs.filter (·.1 == k) with
     | [] => (k, if k.startsWith "$" then Flat.bot else Flat.top)
@@ -160,34 +172,39 @@ def pin (fixed H : Hints A) : Hints A :=
   H.map fun (k, a) => (k, (fixed.lookup k).getD a)
 
 /-- `H` covers all its claims, except those on the keys of `fixed`. -/
-def covers (fixed H : Hints A) (σ : AEnv A) (e : Expr) : Bool :=
-  (collect H σ e).all fun (k, a) =>
+def covers (ext : Bool) (fixed H : Hints A) (σ : AEnv A) (e : Expr) : Bool :=
+  (collect ext H σ e).all fun (k, a) =>
     (fixed.lookup k).isSome || a.leq ((H.lookup k).getD Flat.top)
 
-/-- Grow `H`, with widening, until it covers its claims (or `n` rounds pass). -/
-def up (fixed : Hints A) (σ : AEnv A) (e : Expr) : Nat → Hints A → Hints A
+/-- Grow `H` until it covers its claims (or `n` rounds pass): by joins in the first `delay`
+    rounds, then with widening. The joins find the hints of claims that depend on each
+    other, such as `%2.0` and `%2.1` for `(a, b)` and `(b, a)`, before widening makes them
+    `top`. -/
+def up (ext : Bool) (fixed : Hints A) (σ : AEnv A) (e : Expr) (delay : Nat) : Nat → Hints A → Hints A
   | 0, H => H
   | n + 1, H =>
-    if covers fixed H σ e then H
+    if covers ext fixed H σ e then H
     else
-      let H' := (H.zip (collect H σ e)).map fun ((k, old), (_, now)) => (k, old.widen now)
-      up fixed σ e n (pin fixed H')
+      let H' := (H.zip (collect ext H σ e)).map fun ((k, old), (_, now)) =>
+        (k, if delay > 0 then old.join now else old.widen now)
+      up ext fixed σ e (delay - 1) n (pin fixed H')
 
 /-- Shrink `H` to its claims, as long as they still cover theirs (`n` rounds). -/
-def down (fixed : Hints A) (σ : AEnv A) (e : Expr) : Nat → Hints A → Hints A
+def down (ext : Bool) (fixed : Hints A) (σ : AEnv A) (e : Expr) : Nat → Hints A → Hints A
   | 0, H => H
   | n + 1, H =>
-    let H' := pin fixed (collect H σ e)
-    if covers fixed H' σ e then down fixed σ e n H' else H
+    let H' := pin fixed (collect ext H σ e)
+    if covers ext fixed H' σ e then down ext fixed σ e n H' else H
 
 /-- The hints for the program `e`: the values of each parameter and of each function
     result. `σ` gives the values of the variables that `e` uses without defining them.
     The hints of `fixed` (given by the user or an LLM) are used unchanged. A hint that
     allows any value (`top`) is left out, because a missing hint means `top`. -/
-def inferHints (σ : AEnv A) (e : Expr) (fixed : Hints A := []) (rounds : Nat := 10) :
+def inferHints (σ : AEnv A) (e : Expr) (fixed : Hints A := []) (rounds : Nat := 10)
+    (ext : Bool := false) :
     Hints A :=
   let H₀ := pin fixed ((hintKeys e).eraseDups.map (·, Flat.bot))
-  let H := down fixed σ e rounds (up fixed σ e rounds H₀)
+  let H := down ext fixed σ e rounds (up ext fixed σ e 3 rounds H₀)
   H.filter fun (_, a) => !Flat.top.leq a
 
 end Diva.AbsInt

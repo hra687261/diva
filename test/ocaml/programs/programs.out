@@ -3,7 +3,6 @@ $ diva ocaml run programs.ml
 [exit 0]
 
 $ diva ocaml check programs.ml
-programs.ml:6:35-8:26: `function | [] -> 0 | _ :: t -> 1 + length t`: may not match a list (⊤)
 programs.ml:8:14-26: `1 + length t`: may overflow 63-bit integers (result: [1, +∞])
 programs.ml:17:9-15: `!s + i`: may overflow 63-bit integers (result: [1, +∞])
 programs.ml:16:2-18:6: `for i = 1 to n do s := !s + i done`: the function called may fail
@@ -11,21 +10,21 @@ programs.ml:22:24-40: `n * fact (n - 1)`: may overflow 63-bit integers (result: 
 programs.ml:27:50-56: `fact 5`: the function called may fail
 programs.ml:27:39-47: `sum_to 4`: the function called may fail
 programs.ml:27:13-21: `length l`: the function called may fail
-programs.ml:27:13-36: `length l + safe_head []`: the operands may not be integers ([0, +∞] and ⊤)
-programs.ml:27:13-36: `length l + safe_head []`: may overflow 63-bit integers (result: [-∞, +∞])
-programs.ml:27:13-47: `length l + safe_head [] + sum_to 4`: may overflow 63-bit integers (result: [-∞, +∞])
-programs.ml:27:12-57: `(length l + safe_head [] + sum_to 4 + fact 5)`: may overflow 63-bit integers (result: [-∞, +∞])
+programs.ml:27:13-36: `length l + safe_head []`: may overflow 63-bit integers (result: [0, +∞])
+programs.ml:27:13-47: `length l + safe_head [] + sum_to 4`: may overflow 63-bit integers (result: [0, +∞])
+programs.ml:27:12-57: `(length l + safe_head [] + sum_to 4 + fact 5)`: may overflow 63-bit integers (result: [1, +∞])
 [exit 1]
 
 $ diva ocaml opt programs.ml
-(let rec length %t1 = (match %t1 with [] -> 0 | _ :: t -> (let %r = (1 + (length t)) in (let _ = (assert (%r <= 4611686018427387903)) in %r))) in (let head = (fun l -> (match l with [] -> (raise Empty) | x :: _ -> x)) in (let safe_head = (fun l -> (try (head l) with %exn -> (match %exn with Empty _ -> 0 | _ -> (raise %exn)))) in (let sum_to = (fun n -> (let s = (ref 0) in (let _ = (let %hi = n in (let rec %for i = (if (i <= %hi) then (let _ = (s := (let %r = (!s + i) in (let _ = (assert (if (-4611686018427387904 <= %r) then (%r <= 4611686018427387903) else false)) in %r))) in (%for (i + 1))) else ()) in (%for 1))) in !s))) in (let rec fact n = (let _ = (assert (n >= 0)) in (if (n <= 1) then 1 else (let %r = (n * (fact (let %r = (n - 1) in (let _ = (assert (%r <= 4611686018427387903)) in %r)))) in (let _ = (assert (if (-4611686018427387904 <= %r) then (%r <= 4611686018427387903) else false)) in %r)))) in (let l = (1 :: (2 :: (3 :: []))) in (let _ = (let _ = (let %t7 = (fact 5) in (let %t6 = (let %t5 = (sum_to 4) in (let %t4 = (let %t3 = (safe_head []) in (let %t2 = (length l) in (let %r = (%t2 + %t3) in (let _ = (assert (if (-4611686018427387904 <= %r) then (%r <= 4611686018427387903) else false)) in %r)))) in (let %r = (%t4 + %t5) in (let _ = (assert (if (-4611686018427387904 <= %r) then (%r <= 4611686018427387903) else false)) in %r)))) in (let %r = (%t6 + %t7) in (let _ = (assert (if (-4611686018427387904 <= %r) then (%r <= 4611686018427387903) else false)) in %r)))) in ()) in ())))))))
+(let rec length %t1 = (match %t1 with [] -> 0 | _ :: t -> (let %r = (1 + (length t)) in (let _ = (assert (if (-4611686018427387904 <= %r) then (%r <= 4611686018427387903) else false)) in %r))) in (let head = (fun l -> (match l with [] -> (raise Empty) | x :: _ -> x)) in (let safe_head = (fun l -> (try (head l) with %exn -> (match %exn with Empty _ -> 0 | _ -> (raise %exn)))) in (let sum_to = (fun n -> (let s = (ref 0) in (let _ = (let %hi = n in (let rec %for i = (if (i <= %hi) then (let _ = (s := (let %r = (!s + i) in (let _ = (assert (if (-4611686018427387904 <= %r) then (%r <= 4611686018427387903) else false)) in %r))) in (%for (i + 1))) else ()) in (%for 1))) in !s))) in (let rec fact n = (let _ = (assert (n >= 0)) in (if (n <= 1) then 1 else (let %r = (n * (fact (let %r = (n - 1) in (let _ = (assert (%r <= 4611686018427387903)) in %r)))) in (let _ = (assert (if (-4611686018427387904 <= %r) then (%r <= 4611686018427387903) else false)) in %r)))) in (let l = (1 :: (2 :: (3 :: []))) in (let _ = (let _ = (let %t7 = (fact 5) in (let %t6 = (let %t5 = (sum_to 4) in (let %t4 = (let %t3 = (safe_head []) in (let %t2 = (length l) in (let %r = (%t2 + %t3) in (let _ = (assert (if (-4611686018427387904 <= %r) then (%r <= 4611686018427387903) else false)) in %r)))) in (let %r = (%t4 + %t5) in (let _ = (assert (if (-4611686018427387904 <= %r) then (%r <= 4611686018427387903) else false)) in %r)))) in (let %r = (%t6 + %t7) in (let _ = (assert (if (-4611686018427387904 <= %r) then (%r <= 4611686018427387903) else false)) in %r)))) in ()) in ())))))))
 [exit 0]
 
 $ diva ocaml hints programs.ml
+%t1#1 : list of [1, 3]
 $length#0 : [0, +∞]
-l#2 : list
+l#2 : list of ⊥
 Empty : ()
-l#3 : list
+l#3 : list of ⊥
 n#4 : 4
 !0 : [0, +∞]
 i#6 : [1, 5]

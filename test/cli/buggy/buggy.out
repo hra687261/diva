@@ -3,11 +3,6 @@ runtime error: division by zero
 [exit 1]
 
 $ diva check buggy.ml
-buggy.ml:3:18-62: `match l with [] -> 0 | _ :: t -> 1 + count t`: may not match a list (⊤)
-buggy.ml:5:16-60: `match l with [] -> 0 | x :: xs -> x + sum xs`: may not match a list (⊤)
-buggy.ml:5:50-60: `x + sum xs`: the operands may not be integers (⊤ and [-∞, +∞])
-buggy.ml:7:16-21: `sum l`: the function called may fail
-buggy.ml:7:24-31: `count l`: the function called may fail
 buggy.ml:7:16-31: `sum l / count l`: possible division by zero (divisor: [0, +∞])
 buggy.ml:9:8-25: `average [1; 2; 3]`: the function called may fail
 buggy.ml:10:8-18: `average []`: the function called may fail
@@ -18,9 +13,11 @@ $ diva opt buggy.ml
 [exit 0]
 
 $ diva hints buggy.ml
+l#1 : list of [1, 3]
 $count#0 : [0, +∞]
-$sum#2 : [-∞, +∞]
-l#4 : list
+l#3 : list of [1, 3]
+$sum#2 : [0, +∞]
+l#4 : list of [1, 3]
 [exit 0]
 
 $ diva cert --check buggy.ml

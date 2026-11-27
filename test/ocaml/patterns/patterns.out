@@ -7,11 +7,6 @@ patterns.ml:7:19-24: `w * h`: the operands may not be integers (⊤ and ⊤)
 patterns.ml:7:19-24: `w * h`: may overflow 63-bit integers (result: [-∞, +∞])
 patterns.ml:12:35-40: `a + b`: the operands may not be integers (⊤ and ⊤)
 patterns.ml:12:35-40: `a + b`: may overflow 63-bit integers (result: [-∞, +∞])
-patterns.ml:17:9-15: `y :: _`: may not match a list (⊤)
-patterns.ml:17:21-26: `y > 0`: the operands may not be integers (⊤ and 0)
-patterns.ml:15:18-18:13: `match l with | x :: _ when x > 0 -> Some x | _ :: y :: _ ...`: the function called may fail
-patterns.ml:16:16-21: `x > 0`: the operands may not be integers (⊤ and 0)
-patterns.ml:15:18-18:13: `match l with | x :: _ when x > 0 -> Some x | _ :: y :: _ ...`: the function called may fail
 patterns.ml:26:4-11: `x :: xs`: may not match a list (⊤)
 patterns.ml:26:13-20: `y :: ys`: may not match a list (⊤)
 patterns.ml:31:73-90: `sum_pair (10, 20)`: the function called may fail
@@ -25,14 +20,7 @@ patterns.ml:31:13-66: `area (Rect (3, 4)) + area (Square 5) + area Empty + a`: m
 patterns.ml:31:13-70: `area (Rect (3, 4)) + area (Square 5) + area Empty + a + b`: the operands may not be integers ([-∞, +∞] and ⊤)
 patterns.ml:31:13-70: `area (Rect (3, 4)) + area (Square 5) + area Empty + a + b`: may overflow 63-bit integers (result: [-∞, +∞])
 patterns.ml:31:12-91: `(area (Rect (3, 4)) + area (Square 5) + area Empty + a + ...`: may overflow 63-bit integers (result: [-∞, +∞])
-patterns.ml:32:54-76: `(first_pos [ -1; -2 ])`: the function called may fail
-patterns.ml:32:22-42: `(first_pos [ 0; 5 ])`: the function called may fail
-patterns.ml:32:12-77: `(get_or 0 (first_pos [ 0; 5 ]) + get_or 7 (first_pos [ -1...`: may overflow 63-bit integers (result: [0, +∞])
 patterns.ml:34:8-26: `zip [ 1; 2 ] [ 3 ]`: the function called may fail
-patterns.ml:34:34-40: `(x, y)`: may not match an exception or a constructor (⊤)
-patterns.ml:34:34-40: `(x, y)`: may not match a list (⊤)
-patterns.ml:34:34-40: `(x, y)`: may not match a list (⊤)
-patterns.ml:34:41-42: `]`: may not match a list (⊤)
 patterns.ml:34:56-63: `(x + y)`: the operands may not be integers (⊤ and ⊤)
 patterns.ml:34:56-63: `(x + y)`: may overflow 63-bit integers (result: [-∞, +∞])
 patterns.ml:30:6-12: `(a, b)`: may raise an exception that isn't caught (Match_failure)
@@ -48,15 +36,17 @@ _#1 : ()
 Match_failure : ()
 %t5#2 : %2
 p#3 : %2
-l#4 : list
+l#4 : list of [-2, 5]
 _#5 : ()
 _#6 : ()
 None : ()
-Some : [1, +∞]
+Some : [1, 5]
 d#7 : [0, 7]
 o#8 : None | Some
 n#9 : [1, 5]
-$zip#10 : list
+l1#11 : list
+$zip#10 : list of %2
+l2#12 : list
 _#13 : ()
 Empty : ()
 Square : 5

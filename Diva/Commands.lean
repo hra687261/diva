@@ -86,17 +86,18 @@ def print (src : String) (file : Option String := none)
 /-- `diva check`: parse the program `src`, and print the places where the analysis
     says it may fail, with their positions in `file` (see `Report.report`). Exit with
     code 0 if the program can't fail, and 1 if it may. Code 0 may come from the analysis
-    of arrays, refs and exceptions (`mayFailExt`), which isn't proved yet. The message
-    then says so. -/
+    of arrays, refs, exceptions and the elements of lists (`mayFailExt`), which isn't
+    proved yet. The message then says so. -/
 def check (src : String) (file : Option String := none)
     (read : Reader := parseItemsLoc) : Result :=
   match read.lexpr src with
   | .error msg => parseError file msg
   | .ok ⟨e, l⟩ =>
     let H := inferHints ([] : AEnv Itv) e
+    let HS := inferHints ([] : AEnv Itv) e (ext := true)
     let msgs := Report.report ([] : AEnv Itv) e (l := l) (place := place src file)
       (code := Span.text src)
-    { out := msgs, code := if mayFail H [] e && mayFailExt H [] e then 1 else 0 }
+    { out := msgs, code := if mayFail H [] e && mayFailExt HS [] e then 1 else 0 }
 
 /-- `diva check --oracle`: parse the program `src`, and ask `oracle` for hints, at most
     `rounds` times, until the program is safe with them (`Oracle.consult`). Print each
@@ -116,8 +117,9 @@ def checkOracle [Monad m] (oracle : String → m String) (rounds : Nat) (src : S
         [if r.accepted then "accepted" else "rejected"]
     let fixed := (rs.getLast?.map (·.hints)).getD []
     let H := inferHints ([] : AEnv Itv) e fixed
+    let HS := inferHints ([] : AEnv Itv) e fixed (ext := true)
     return { out := shown ++ Report.report ([] : AEnv Itv) e fixed l (place src file) (Span.text src),
-             code := if mayFail H [] e && mayFailExt H [] e then 1 else 0 }
+             code := if mayFail H [] e && mayFailExt HS [] e then 1 else 0 }
 
 /-- `diva opt`: parse the program `src`, optimise it using what the analysis knows
     about its values, and print the optimised program. With `infer`, each function
@@ -155,7 +157,7 @@ def optCert (src : String) (infer : Bool := false) (file : Option String := none
 def hints (src : String) (file : Option String := none)
     (read : Reader := parseItemsLoc) : Result :=
   withParse file src (read := read) fun e =>
-    { out := (inferHints ([] : AEnv Itv) e).map fun (x, a) => s!"{x} : {a}" }
+    { out := (inferHints ([] : AEnv Itv) e (ext := true)).map fun (x, a) => s!"{x} : {a}" }
 
 /-- `diva cert`: parse the program `src`, and print its certificate
     (`Cert.certificate`): a Lean file stating that the program never fails, with the
@@ -168,8 +170,8 @@ def cert (src : String) (file : Option String := none)
     match Cert.certificate H e with
     | some c => { out := [c] }
     | none =>
-      let why := if mayFailExt H [] e then "the program may fail"
-        else "the analysis of arrays, refs and exceptions isn't proved yet"
+      let why := if mayFailExt (inferHints ([] : AEnv Itv) e (ext := true)) [] e then "the program may fail"
+        else "the analysis of arrays, refs, exceptions and the elements of lists isn't proved yet"
       { err := [s!"{why}, so there is no certificate (see `diva check`)"], code := 1 }
 
 /-- `diva prove`: parse the program `src`, and print the Lean file (`Prove.file`) that

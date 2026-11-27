@@ -3,35 +3,14 @@ $ diva ocaml run prelude.ml
 [exit 0]
 
 $ diva ocaml check prelude.ml
-prelude: `(match %p7 with [] -> len | _ :: l -> ((Stdlib.List.lengt...`: may not match a list (⊤)
-prelude: `((Stdlib.List.length_aux 0) l)`: the function called may fail
-prelude: `(match %p10 with [] -> (raise Failure) | a :: l -> (if (n...`: may not match a list (⊤)
-prelude: `((Stdlib.List.nth_aux l) n)`: the function called may fail
-prelude: `(match l1 with [] -> l2 | a :: l -> (a :: ((Stdlib.List.a...`: may not match a list (⊤)
-prelude: `(match l1 with [] -> l2 | a :: l -> ((Stdlib.List.rev_app...`: may not match a list (⊤)
-prelude: `((Stdlib.List.rev_append l) [])`: the function called may fail
-prelude: `((Stdlib.List.append l1) l2)`: the function called may fail
-prelude.ml:6:8-21: `List.length l`: the function called may fail
-prelude.ml:7:23-28: `( + )`: the operands may not be integers ([-∞, +∞] and ⊤)
 prelude.ml:7:23-28: `( + )`: may overflow 63-bit integers (result: [-∞, +∞])
-prelude: `(match %p13 with [] -> accu | a :: l -> ((fold_left ((f a...`: may not match a list (⊤)
 prelude: `((f accu) a)`: the function called may fail
 prelude: `((fold_left accu) l)`: the function called may fail
-prelude.ml:8:27-32: `x * 2`: the operands may not be integers (⊤ and 2)
-prelude.ml:8:27-32: `x * 2`: may overflow 63-bit integers (result: [-∞, +∞])
-prelude: `(match %p11 with [] -> [] | a :: l -> (let r = (f a) in (...`: may not match a list (⊤)
-prelude: `(f a)`: the function called may fail
-prelude: `(map l)`: the function called may fail
-prelude.ml:9:17-28: `(l @ [ 4 ])`: the function called may fail
-prelude.ml:9:8-28: `List.rev (l @ [ 4 ])`: the function called may fail
 prelude.ml:13:20-25: `n + s`: may overflow 63-bit integers (result: [-∞, +∞])
-prelude.ml:13:28-40: `List.nth m 0`: the function called may fail
 prelude.ml:13:20-40: `n + s + List.nth m 0`: the operands may not be integers ([-∞, +∞] and ⊤)
 prelude.ml:13:20-40: `n + s + List.nth m 0`: may overflow 63-bit integers (result: [-∞, +∞])
-prelude.ml:13:20-52: `n + s + List.nth m 0 + List.hd r`: the operands may not be integers ([-∞, +∞] and ⊤)
 prelude.ml:13:20-52: `n + s + List.nth m 0 + List.hd r`: may overflow 63-bit integers (result: [-∞, +∞])
 prelude.ml:13:20-56: `n + s + List.nth m 0 + List.hd r + f`: may overflow 63-bit integers (result: [-∞, +∞])
-prelude.ml:13:20-60: `n + s + List.nth m 0 + List.hd r + f + h`: the operands may not be integers ([-∞, +∞] and ⊤)
 prelude.ml:13:20-60: `n + s + List.nth m 0 + List.hd r + f + h`: may overflow 63-bit integers (result: [-∞, +∞])
 prelude.ml:13:19-65: `(n + s + List.nth m 0 + List.hd r + f + h + o)`: may overflow 63-bit integers (result: [-∞, +∞])
 prelude.ml:11:8-17: `List.hd l`: may raise an exception that isn't caught (Failure)
@@ -52,24 +31,32 @@ a#5 : 3
 b#6 : 4
 len#8 : [0, +∞]
 $Stdlib.List.length_aux#7 : [0, +∞]
-l#10 : list
-%p8#11 : list
+%p7#9 : list of [1, 3]
+l#10 : list of [1, 3]
+%p8#11 : list of [-∞, 4]
 Failure : ()
+l#13 : list
 n#14 : [-∞, +∞]
-l#15 : list
+l#15 : list of [-∞, +∞]
 n#16 : 0
-$Stdlib.List.append#17 : list
-l2#19 : list
-$Stdlib.List.rev_append#20 : list
-l2#22 : list
-l#23 : list
-l1#24 : list
-l2#25 : list
+l1#18 : list of [1, 3]
+$Stdlib.List.append#17 : list of [-∞, 4]
+l2#19 : list of 4
+l1#21 : list of [-∞, 4]
+$Stdlib.List.rev_append#20 : list of [-∞, 4]
+l2#22 : list of [-∞, 4]
+l#23 : list of [-∞, 4]
+l1#24 : list of [1, 3]
+l2#25 : list of 4
 %p24#26 : Some
 %t1#27 : [-∞, +∞]
+%t2#28 : [1, 3]
 accu#30 : [-∞, +∞]
 $fold_left#29 : [-∞, +∞]
-$map#33 : list
+l#31 : list of [1, 3]
+x#32 : [1, 3]
+%p11#34 : list of [1, 3]
+$map#33 : list of [-∞, +∞]
 %2.0 : [1, 3]
 %2.1 : [2, 4]
 Some : 1

@@ -11,15 +11,15 @@ $ diva opt params.ml
 [exit 0]
 
 $ diva hints params.ml
-a#1 : [1, +∞]
+a#1 : [1, 5]
 $mul#0 : [0, +∞]
 b#2 : [0, 3]
-a#3 : [1, +∞]
+a#3 : [1, 5]
 b#4 : [0, 5]
 a#5 : 1
 b#6 : 5
 c#7 : 2
-w#8 : [1, +∞]
+w#8 : [1, 5]
 h#9 : 3
 [exit 0]
 
