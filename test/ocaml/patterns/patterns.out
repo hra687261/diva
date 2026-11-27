@@ -3,25 +3,25 @@ $ diva ocaml run patterns.ml
 [exit 0]
 
 $ diva ocaml check patterns.ml
-patterns.ml:7:19-24: `w * h`: the operands may not be integers (⊤ and ⊤)
+patterns.ml:7:19-24: `w * h`: the operands may not be integers ([-∞, +∞] | list of [-∞, +∞] and [-∞, +∞] | list of [-∞, +∞])
 patterns.ml:7:19-24: `w * h`: may overflow 63-bit integers (result: [-∞, +∞])
-patterns.ml:12:35-40: `a + b`: the operands may not be integers (⊤ and ⊤)
+patterns.ml:12:35-40: `a + b`: the operands may not be integers ([-∞, +∞] | list of [-∞, +∞] and [-∞, +∞] | list of [-∞, +∞])
 patterns.ml:12:35-40: `a + b`: may overflow 63-bit integers (result: [-∞, +∞])
-patterns.ml:26:4-11: `x :: xs`: may not match a list (⊤)
-patterns.ml:26:13-20: `y :: ys`: may not match a list (⊤)
+patterns.ml:26:4-11: `x :: xs`: may not match a list ([-∞, +∞] | list of [-∞, +∞])
+patterns.ml:26:13-20: `y :: ys`: may not match a list ([-∞, +∞] | list of [-∞, +∞])
 patterns.ml:31:73-90: `sum_pair (10, 20)`: the function called may fail
 patterns.ml:31:52-62: `area Empty`: the function called may fail
 patterns.ml:31:34-49: `area (Square 5)`: the function called may fail
 patterns.ml:31:13-31: `area (Rect (3, 4))`: the function called may fail
 patterns.ml:31:13-49: `area (Rect (3, 4)) + area (Square 5)`: may overflow 63-bit integers (result: [-∞, +∞])
 patterns.ml:31:13-62: `area (Rect (3, 4)) + area (Square 5) + area Empty`: may overflow 63-bit integers (result: [-∞, +∞])
-patterns.ml:31:13-66: `area (Rect (3, 4)) + area (Square 5) + area Empty + a`: the operands may not be integers ([-∞, +∞] and ⊤)
+patterns.ml:31:13-66: `area (Rect (3, 4)) + area (Square 5) + area Empty + a`: the operands may not be integers ([-∞, +∞] and [-∞, +∞] | list of [-∞, +∞])
 patterns.ml:31:13-66: `area (Rect (3, 4)) + area (Square 5) + area Empty + a`: may overflow 63-bit integers (result: [-∞, +∞])
-patterns.ml:31:13-70: `area (Rect (3, 4)) + area (Square 5) + area Empty + a + b`: the operands may not be integers ([-∞, +∞] and ⊤)
+patterns.ml:31:13-70: `area (Rect (3, 4)) + area (Square 5) + area Empty + a + b`: the operands may not be integers ([-∞, +∞] and [-∞, +∞] | list of [-∞, +∞])
 patterns.ml:31:13-70: `area (Rect (3, 4)) + area (Square 5) + area Empty + a + b`: may overflow 63-bit integers (result: [-∞, +∞])
 patterns.ml:31:12-91: `(area (Rect (3, 4)) + area (Square 5) + area Empty + a + ...`: may overflow 63-bit integers (result: [-∞, +∞])
 patterns.ml:34:8-26: `zip [ 1; 2 ] [ 3 ]`: the function called may fail
-patterns.ml:34:56-63: `(x + y)`: the operands may not be integers (⊤ and ⊤)
+patterns.ml:34:56-63: `(x + y)`: the operands may not be integers ([-∞, +∞] | list of [-∞, +∞] and [-∞, +∞] | list of [-∞, +∞])
 patterns.ml:34:56-63: `(x + y)`: may overflow 63-bit integers (result: [-∞, +∞])
 patterns.ml:30:6-12: `(a, b)`: may raise an exception that isn't caught (Match_failure)
 [exit 1]
@@ -35,6 +35,8 @@ s#0 : Empty | Square | Rect
 _#1 : ()
 Match_failure : ()
 %t5#2 : %2
+%2.0 : [-∞, +∞] | list of [-∞, +∞]
+%2.1 : [-∞, +∞] | list of [-∞, +∞]
 p#3 : %2
 l#4 : list of [-2, 5]
 _#5 : ()
@@ -44,9 +46,9 @@ Some : [1, 5]
 d#7 : [0, 7]
 o#8 : None | Some
 n#9 : [1, 5]
-l1#11 : list
+l1#11 : list of [-∞, +∞]
 $zip#10 : list of %2
-l2#12 : list
+l2#12 : list of [-∞, +∞]
 _#13 : ()
 Empty : ()
 Square : 5

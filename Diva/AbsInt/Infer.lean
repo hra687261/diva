@@ -155,14 +155,15 @@ def hintKeys : Expr → List String
   | .ctorCase s _ _ h m => hintKeys s ++ hintKeys h ++ hintKeys m
   | .int _ | .bool _ | .unit | .var _ | .nil => []
 
-/-- For each key of `H`, the join of its claims. A parameter that no call reaches
-    may be called from anywhere: `top`. A function's result that nothing claims
-    (dead code) is `bot`. -/
-def collect (ext : Bool) (H : Hints A) (σ : AEnv A) (e : Expr) : Hints A :=
+/-- For each key of `H`, the join of its claims. A key without claims keeps its hint in
+    `H` if `keep`. Otherwise, a parameter that no call reaches may be called from
+    anywhere: `top`. A function's result that nothing claims (dead code) is `bot`. -/
+def collect (ext : Bool) (H : Hints A) (σ : AEnv A) (e : Expr) (keep : Bool := false) :
+    Hints A :=
   let cs := claims ext H [] σ e
-  H.map fun (k, _) =>
+  H.map fun (k, old) =>
     match cs.filter (·.1 == k) with
-    | [] => (k, if k.startsWith "$" then Flat.bot else Flat.top)
+    | [] => (k, if keep then old else if k.startsWith "$" then Flat.bot else Flat.top)
     | ps => (k, ps.foldl (fun acc p => acc.join p.2) Flat.bot)
 
 /-- `H`, with the hints of `fixed` replacing those of `H` for the same keys. For example,
@@ -171,23 +172,38 @@ def collect (ext : Bool) (H : Hints A) (σ : AEnv A) (e : Expr) : Hints A :=
 def pin (fixed H : Hints A) : Hints A :=
   H.map fun (k, a) => (k, (fixed.lookup k).getD a)
 
-/-- `H` covers all its claims, except those on the keys of `fixed`. -/
-def covers (ext : Bool) (fixed H : Hints A) (σ : AEnv A) (e : Expr) : Bool :=
-  (collect ext H σ e).all fun (k, a) =>
+/-- `H` covers all its claims, except those on the keys of `fixed`. With `keep`, a key
+    without claims is covered. -/
+def covers (ext : Bool) (fixed H : Hints A) (σ : AEnv A) (e : Expr) (keep : Bool := false) :
+    Bool :=
+  (collect ext H σ e keep).all fun (k, a) =>
     (fixed.lookup k).isSome || a.leq ((H.lookup k).getD Flat.top)
 
 /-- Grow `H` until it covers its claims (or `n` rounds pass): by joins in the first `delay`
     rounds, then with widening. The joins find the hints of claims that depend on each
     other, such as `%2.0` and `%2.1` for `(a, b)` and `(b, a)`, before widening makes them
-    `top`. -/
+    `top`.
+
+    A key without claims keeps its hint: the code that would claim something on it may
+    not be reached yet, because the hints of the code around it are still too small. For
+    example, the parameter of a loop inside another loop gets claims only once the
+    parameter of the outer loop has some values. -/
 def up (ext : Bool) (fixed : Hints A) (σ : AEnv A) (e : Expr) (delay : Nat) : Nat → Hints A → Hints A
   | 0, H => H
   | n + 1, H =>
-    if covers ext fixed H σ e then H
+    if covers ext fixed H σ e (keep := true) then H
     else
-      let H' := (H.zip (collect ext H σ e)).map fun ((k, old), (_, now)) =>
+      let H' := (H.zip (collect ext H σ e (keep := true))).map fun ((k, old), (_, now)) =>
         (k, if delay > 0 then old.join now else old.widen now)
       up ext fixed σ e (delay - 1) n (pin fixed H')
+
+/-- `H`, where each key without claims gets the hint that `collect` gives it: `top` for a
+    parameter, `bot` for a result. After `up`, these keys are those of code that nothing
+    reaches, such as the parameter of a function that nothing calls. -/
+def unreached (ext : Bool) (H : Hints A) (σ : AEnv A) (e : Expr) : Hints A :=
+  let cs := claims ext H [] σ e
+  H.map fun (k, a) =>
+    if cs.any (·.1 == k) then (k, a) else (k, if k.startsWith "$" then Flat.bot else Flat.top)
 
 /-- Shrink `H` to its claims, as long as they still cover theirs (`n` rounds). -/
 def down (ext : Bool) (fixed : Hints A) (σ : AEnv A) (e : Expr) : Nat → Hints A → Hints A
@@ -204,7 +220,11 @@ def inferHints (σ : AEnv A) (e : Expr) (fixed : Hints A := []) (rounds : Nat :=
     (ext : Bool := false) :
     Hints A :=
   let H₀ := pin fixed ((hintKeys e).eraseDups.map (·, Flat.bot))
-  let H := down ext fixed σ e rounds (up ext fixed σ e 3 rounds H₀)
+  -- `up` again: with `top` for the parameters of the functions that nothing calls, the
+  -- code of these functions is reached, and its keys get claims
+  let H₁ := up ext fixed σ e 3 rounds H₀
+  let H₂ := up ext fixed σ e 3 rounds (pin fixed (unreached ext H₁ σ e))
+  let H := down ext fixed σ e rounds H₂
   H.filter fun (_, a) => !Flat.top.leq a
 
 end Diva.AbsInt
