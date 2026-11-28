@@ -4,10 +4,11 @@ runtime error: division by zero
 
 $ diva c check div_zero.c
 div_zero.c:2:24-36: `10 / (3 - 3)`: possible division by zero (divisor: 0) (in the call `main`)
+div_zero.c:2:24-36: `10 / (3 - 3)`: may overflow 32-bit integers (result: [-∞, +∞]) (in the call `main`)
 [exit 1]
 
 $ diva c opt div_zero.c
-(let main = (fun _ -> (10 / 0)) in (main ()))
+(let main = (fun _ -> (let %r = (10 / 0) in (let _ = (assert (if (-2147483648 <= %r) then (%r <= 2147483647) else false)) in %r))) in (main ()))
 [exit 0]
 
 $ diva c hints div_zero.c

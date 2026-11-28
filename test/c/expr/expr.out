@@ -7,7 +7,7 @@ no runtime error is possible
 [exit 0]
 
 $ diva c opt expr.c
-(let main = (fun _ -> ((21 - (3 mod 2)) + -1)) in (main ()))
+(let main = (fun _ -> (let %r = ((let %r = (21 - (3 mod 2)) in %r) + -1) in %r)) in (main ()))
 [exit 0]
 
 $ diva c hints expr.c

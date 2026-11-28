@@ -6,7 +6,7 @@ program never fails. `mayFail`, run by the kernel with the hints, checks it. -/
 
 /-- The program. -/
 def program : Diva.Expr :=
-  (.letin "main" (.lam "_#0" (.binop .add (.binop .sub (.binop .mul (.binop .add (.int 1) (.int 2)) (.int 7)) (.binop .mod (.binop .div (.int 10) (.int 3)) (.int 2))) (.binop .sub (.int 0) (.int 1)))) (.app (.var "main") .unit))
+  (.letin "main" (.lam "_#0" (.letin "%r" (.binop .add (.letin "%r" (.binop .sub (.letin "%r" (.binop .mul (.letin "%r" (.binop .add (.int 1) (.int 2)) (.letin "_" (.assert (.ite (.binop .le (.int (-2147483648)) (.var "%r")) (.binop .le (.var "%r") (.int 2147483647)) (.bool false))) (.var "%r"))) (.int 7)) (.letin "_" (.assert (.ite (.binop .le (.int (-2147483648)) (.var "%r")) (.binop .le (.var "%r") (.int 2147483647)) (.bool false))) (.var "%r"))) (.binop .mod (.letin "%r" (.binop .div (.int 10) (.int 3)) (.letin "_" (.assert (.ite (.binop .le (.int (-2147483648)) (.var "%r")) (.binop .le (.var "%r") (.int 2147483647)) (.bool false))) (.var "%r"))) (.int 2))) (.letin "_" (.assert (.ite (.binop .le (.int (-2147483648)) (.var "%r")) (.binop .le (.var "%r") (.int 2147483647)) (.bool false))) (.var "%r"))) (.letin "%r" (.binop .sub (.int 0) (.int 1)) (.letin "_" (.assert (.ite (.binop .le (.int (-2147483648)) (.var "%r")) (.binop .le (.var "%r") (.int 2147483647)) (.bool false))) (.var "%r")))) (.letin "_" (.assert (.ite (.binop .le (.int (-2147483648)) (.var "%r")) (.binop .le (.var "%r") (.int 2147483647)) (.bool false))) (.var "%r")))) (.app (.var "main") .unit))
 
 /-- The hints of the analysis. The kernel checks them again. -/
 def hints : Diva.AbsInt.Hints Diva.AbsInt.Itv := [

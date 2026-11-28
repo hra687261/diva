@@ -25,11 +25,15 @@ certificate checked by Lean: the program never fails
 [exit 0]
 
 $ diva c check --entry avg,safe params.c
-no runtime error is possible
-[exit 0]
+params.c:4:32-37: `x + y`: may overflow 32-bit integers (result: [-4294967296, 4294967294])
+params.c:5:32-37: `x * x`: may overflow 32-bit integers (result: [0, 4611686018427387904])
+params.c:5:32-41: `x * x + 1`: may overflow 32-bit integers (result: [1, 4611686018427387905])
+params.c:5:25-42: `100 / (x * x + 1)`: may overflow 32-bit integers (result: [-∞, +∞])
+[exit 1]
 
 $ diva c check --entry inv params.c
 params.c:6:24-29: `1 / x`: possible division by zero (divisor: [-2147483648, 2147483647])
+params.c:6:24-29: `1 / x`: may overflow 32-bit integers (result: [-∞, +∞])
 [exit 1]
 
 $ diva c hints --entry avg,safe,inv params.c

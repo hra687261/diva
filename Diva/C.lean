@@ -12,7 +12,8 @@ does. The program is the functions of the file, then the call `main ()`.
 
 The C that is supported, so far: functions with `int` parameters whose body is
 `return e;`, where `e` is an expression on `int`s (literals, parameters, `+`, `-`, `*`,
-`/`, `%`). Anything else is rejected, with its position.
+`/`, `%`). Each `+`, `-`, `*` and `/` checks that its result fits in an `int`: signed
+overflow is undefined behaviour. Anything else is rejected, with its position.
 -/
 
 namespace Diva.C
@@ -79,6 +80,12 @@ def arith : String → Option BinOp
   | "%" => some .mod
   | _ => none
 
+/-- `e`, the operation `op` of the node `t`, with the check that its result fits in an
+    `int` if it may not (`Overflow.wrap`): the overflow of a signed integer is undefined
+    behaviour in C. -/
+def checked (t : Json) (op : BinOp) (e : LExpr) : LExpr :=
+  if Overflow.mayOverflow op then Overflow.wrap IntType.int32 e (span t) else e
+
 /-- The expression `t`, of type `int`. `env` gives the names in scope. -/
 partial def expr (env : Env) (t : Json) : M LExpr := do
   unless qualType t == "int" do unsupported t s!"the type `{qualType t}`"
@@ -101,7 +108,7 @@ partial def expr (env : Env) (t : Json) : M LExpr := do
     | some op =>
       let a ← expr env a
       let b ← expr env b
-      return node t (.binop op a.expr b.expr) [a, b]
+      return checked t op (node t (.binop op a.expr b.expr) [a, b])
     | none => unsupported t s!"the operator `{(str t "opcode").getD ""}`"
   | "UnaryOperator", [a] =>
     match str t "opcode" with
@@ -109,7 +116,7 @@ partial def expr (env : Env) (t : Json) : M LExpr := do
     | some "-" =>
       let a ← expr env a
       let zero : LExpr := ⟨.int 0, .leaf (span t)⟩
-      return node t (.binop .sub zero.expr a.expr) [zero, a]
+      return checked t .sub (node t (.binop .sub zero.expr a.expr) [zero, a])
     | op => unsupported t s!"the operator `{op.getD ""}`"
   | k, _ => unsupported t s!"this expression ({k})"
 
