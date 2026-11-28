@@ -1,0 +1,74 @@
+$ diva c run loops.c
+300455
+[exit 0]
+
+$ diva c check loops.c
+loops.c:25:4-14: `s += i * i`: may overflow 32-bit integers (result: [0, +∞]) (in the call `main`)
+loops.c:29:31-37: `t += k`: may overflow 32-bit integers (result: [0, +∞]) (in the call `main`)
+loops.c:34:4-7: `d++`: may overflow 32-bit integers (result: [2, +∞]) (in the call `main`)
+loops.c:36:9-18: `s * 10000`: may overflow 32-bit integers (result: [0, +∞]) (in the call `main`)
+loops.c:36:21-27: `t * 10`: may overflow 32-bit integers (result: [0, +∞]) (in the call `main`)
+loops.c:36:9-27: `s * 10000 + t * 10`: may overflow 32-bit integers (result: [0, +∞]) (in the call `main`)
+loops.c:36:9-31: `s * 10000 + t * 10 + d`: may overflow 32-bit integers (result: [1, +∞]) (in the call `main`)
+loops.c:32:2-35:3: `while (n >= 10) { n = n / 10; d++; }`: the function called may fail (in the call `main`)
+loops.c:29:2-37: `for (int k = 0; k < 10; k++) t += k`: the function called may fail (in the call `main`)
+loops.c:24:2-27:17: `do { s += i * i; i++; } while (i < 5)`: the function called may fail (in the call `main`)
+[exit 1]
+
+$ diva c opt loops.c
+(let main = (fun _ -> (let %k%3 = (fun i -> (fun s -> (let %k%2 = (fun k -> (fun t -> (let %k = (fun d -> (fun n -> (let %r = ((let %r = ((let %r = (s * 10000) in (let _ = (assert (if (-2147483648 <= %r) then (%r <= 2147483647) else false)) in %r)) + (let %r = (t * 10) in (let _ = (assert (if (-2147483648 <= %r) then (%r <= 2147483647) else false)) in %r))) in (let _ = (assert (if (-2147483648 <= %r) then (%r <= 2147483647) else false)) in %r)) + d) in (let _ = (assert (if (-2147483648 <= %r) then (%r <= 2147483647) else false)) in %r)))) in (let rec %loop d = (fun n -> (if (n >= 10) then (let n = (let %r = (n / 10) in (let _ = (assert (%r <= 2147483647)) in %r)) in (let d = (let %r = (d + 1) in (let _ = (assert (if (-2147483648 <= %r) then (%r <= 2147483647) else false)) in %r)) in ((%loop d) n))) else ((%k d) n))) in ((%loop 1) 12345))))) in (let rec %loop%2 k = (fun t -> (if (k < 10) then (let t = (let %r = (t + k) in (let _ = (assert (if (-2147483648 <= %r) then (%r <= 2147483647) else false)) in %r)) in (let k = (let %r = (k + 1) in (let _ = (assert (if (-2147483648 <= %r) then true else false)) in %r)) in ((%loop%2 k) t))) else ((%k%2 k) t))) in ((%loop%2 0) 0))))) in (let rec %loop%3 i = (fun s -> (let s = (let %r = (s + (let %r = (i * i) in (let _ = (assert (%r <= 2147483647)) in %r))) in (let _ = (assert (if (-2147483648 <= %r) then (%r <= 2147483647) else false)) in %r)) in (let i = (let %r = (i + 1) in (let _ = (assert (if (-2147483648 <= %r) then (%r <= 2147483647) else false)) in %r)) in (if (i < 5) then ((%loop%3 i) s) else ((%k%3 i) s))))) in ((%loop%3 0) 0)))) in (main ()))
+[exit 0]
+
+$ diva c hints loops.c
+n#0 : ⊥
+i#1 : ⊥
+s#2 : ⊥
+i#4 : 1
+$%loop#3 : ⊥
+s#5 : 0
+n#6 : ⊥
+d#7 : ⊥
+n#8 : ⊥
+d#10 : 1
+$%loop#9 : ⊥
+n#11 : ⊥
+_#12 : ()
+i#13 : 5
+s#14 : [0, +∞]
+k#15 : 10
+t#16 : [0, +∞]
+d#17 : [1, +∞]
+n#18 : [1, 9]
+d#20 : [1, +∞]
+$%loop#19 : [1, +∞]
+n#21 : [1, 12345]
+k#23 : [0, 10]
+$%loop%2#22 : [1, +∞]
+t#24 : [0, +∞]
+i#26 : [0, 4]
+$%loop%3#25 : [1, +∞]
+s#27 : [0, +∞]
+[exit 0]
+
+$ diva c cert --check loops.c
+the program may fail, so there is no certificate (see `diva check`)
+[exit 1]
+
+$ diva c check --entry sum,digits loops.c
+loops.c:8:31-37: `s += i`: may overflow 32-bit integers (result: [1, +∞])
+loops.c:8:26-29: `i++`: may overflow 32-bit integers (result: [2, 2147483648])
+loops.c:8:2-37: `for (int i = 1; i <= n; i++) s += i`: the function called may fail
+loops.c:16:4-7: `d++`: may overflow 32-bit integers (result: [2, +∞])
+loops.c:14:2-17:3: `while (n >= 10) { n = n / 10; d++; }`: the function called may fail
+loops.c:25:4-14: `s += i * i`: may overflow 32-bit integers (result: [0, +∞]) (in the call `main`)
+loops.c:29:31-37: `t += k`: may overflow 32-bit integers (result: [0, +∞]) (in the call `main`)
+loops.c:34:4-7: `d++`: may overflow 32-bit integers (result: [2, +∞]) (in the call `main`)
+loops.c:36:9-18: `s * 10000`: may overflow 32-bit integers (result: [0, +∞]) (in the call `main`)
+loops.c:36:21-27: `t * 10`: may overflow 32-bit integers (result: [0, +∞]) (in the call `main`)
+loops.c:36:9-27: `s * 10000 + t * 10`: may overflow 32-bit integers (result: [0, +∞]) (in the call `main`)
+loops.c:36:9-31: `s * 10000 + t * 10 + d`: may overflow 32-bit integers (result: [1, +∞]) (in the call `main`)
+loops.c:32:2-35:3: `while (n >= 10) { n = n / 10; d++; }`: the function called may fail (in the call `main`)
+loops.c:29:2-37: `for (int k = 0; k < 10; k++) t += k`: the function called may fail (in the call `main`)
+loops.c:24:2-27:17: `do { s += i * i; i++; } while (i < 5)`: the function called may fail (in the call `main`)
+[exit 1]
+

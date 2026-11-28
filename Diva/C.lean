@@ -11,7 +11,8 @@ tree to the items of DIVA's core language, with their positions, as the OCaml fr
 does. The program is the functions of the file, then the call `main ()`.
 
 The C that is supported, so far: functions with `int` parameters, whose bodies have
-locals of type `int`, assignments to them (`=`, `+=`, `++`, ...), `if` and `return`, and
+locals of type `int`, assignments to them (`=`, `+=`, `++`, ...), `if`, `while`, `for`, `do` and
+`return`, and
 expressions on `int`s (literals, parameters, `+`, `-`, `*`,
 `/`, `%`, comparisons, `&&`, `||`, `!`, `c ? a : b`). Each `+`, `-`, `*` and `/` checks that
 its result fits in an `int`: signed overflow is undefined behaviour. `a % b` checks that
@@ -208,7 +209,9 @@ block gets another name, and the code after the block sees the first one again. 
 assignment `x = e;` binds the name of `x` again: `let x = e in rest`. `return e;` gives
 `e`, without its continuation. After an `if`, its continuation is a function `%k` of the locals that
 the branches may assign, called at the end of each branch (a join point). `Inline` copies
-it into each branch, so the analysis sees the values of each branch. -/
+it into each branch, so the analysis sees the values of each branch. A loop is a recursive
+function `%loop` of the locals that it may assign: each iteration calls it again with their
+values, and the loop ends by calling the join point of the code after it. -/
 
 /-- The translation of statements, which also gives each local of the function its own
     name: the state is the names used so far. -/
@@ -301,9 +304,28 @@ def join (t : Json) (xs : List String) (rest : LExpr) : S (String × LExpr × LE
   let k ← fresh "%k"
   let ps := if xs.isEmpty then ["_"] else xs
   let fn := ps.foldr (fun x b => node t (.lam x b.expr) [b]) rest
+  -- the call isn't in the file: it has no span, so the messages about the code of the
+  -- join point, copied at the call (`Inline`), don't name the call
+  let sp := Span.prelude
+  let var (x : String) : LExpr := ⟨.var x, .leaf sp⟩
+  let args := if xs.isEmpty then [⟨.unit, .leaf sp⟩] else xs.map var
+  let call := args.foldl (fun f a => ⟨.app f.expr a.expr, .node sp [f.loc, a.loc]⟩) (var k)
+  return (k, fn, call)
+
+/-- A recursive function `%loop` of the names `xs`, and its call `%loop x y`. -/
+def recCall (t : Json) (xs : List String) : S (String × LExpr) := do
+  let ln ← fresh "%loop"
   let var (x : String) : LExpr := ⟨.var x, .leaf (span t)⟩
   let args := if xs.isEmpty then [⟨.unit, .leaf (span t)⟩] else xs.map var
-  return (k, fn, apps t (var k) args)
+  return (ln, apps t (var ln) args)
+
+/-- `let rec f x = fun y -> body in call`, for the names `xs` (`x`, `y`, ...). -/
+def recFn (t : Json) (f : String) (xs : List String) (body call : LExpr) : LExpr :=
+  let (x, ys) := match xs with
+    | x :: ys => (x, ys)
+    | [] => ("_", [])
+  let b := ys.foldr (fun y b => node t (.lam y b.expr) [b]) body
+  node t (.letrec f x b.expr call.expr) [b, call]
 
 mutual
 
@@ -324,10 +346,44 @@ partial def stmt (env : Env) (s : Json) (k : Env → S LExpr) : S LExpr := do
       | [e] => stmt env e fun _ => pure call
       | _ => pure call
     return letin s kn fn (ite s c t e)
+  | "WhileStmt", [c, b] => loop s env (some c) b none k
+  -- `for (init; c; inc) b`: the locals of `init` are only in scope in the loop
+  | "ForStmt", [init, _, c, inc, b] =>
+    let c := if kind c == "" then none else some c
+    let inc := if kind inc == "" then none else some inc
+    if kind init == "" then loop s env c b inc k
+    else stmt env init fun env' => loop s env' c b inc fun _ => k env
+  | "DoStmt", [b, c] => doLoop s env b c k
   | "NullStmt", _ => k env
   | k', _ =>
     if k'.endsWith "Stmt" then unsupported s s!"this statement ({k'})"
     else exprStmt env s k
+
+/-- The loop `s`, `while (c) b`, with `inc` after `b` for a `for`: the recursive function
+    `%loop` of the locals `xs` that the loop may assign,
+    `let rec %loop x = fun y -> if c then [b; inc; %loop x y] else %k x y in %loop x y`,
+    where `%k` is the join point of the code after the loop (`join`). Without `c`, the
+    condition holds. -/
+partial def loop (s : Json) (env : Env) (c : Option Json) (b : Json) (inc : Option Json)
+    (k : Env → S LExpr) : S LExpr := do
+  let xs := env.filter (fun (id, _) => (assigned s).contains id) |>.map (·.2)
+  let (kn, kfn, exit) ← join s xs (← k env)
+  let (ln, again) ← recCall s xs
+  let c ← match c with
+    | some c => cond env c
+    | none => pure (bool s true)
+  let body ← stmt env b fun env => match inc with
+    | some i => exprStmt env i fun _ => pure again
+    | none => pure again
+  return letin s kn kfn (recFn s ln xs (ite s c body exit) again)
+
+/-- The loop `do b while (c)`: as `loop`, with the test of `c` after `b`. -/
+partial def doLoop (s : Json) (env : Env) (b c : Json) (k : Env → S LExpr) : S LExpr := do
+  let xs := env.filter (fun (id, _) => (assigned s).contains id) |>.map (·.2)
+  let (kn, kfn, exit) ← join s xs (← k env)
+  let (ln, again) ← recCall s xs
+  let body ← stmt env b fun env => do return ite s (← cond env c) again exit
+  return letin s kn kfn (recFn s ln xs body again)
 
 /-- The statements `ss`, one after the other, then `k`. -/
 partial def stmts (env : Env) (ss : List Json) (k : Env → S LExpr) : S LExpr :=
