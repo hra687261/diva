@@ -376,6 +376,10 @@ partial def unary : P LExpr := do
     let a ← postfixExpr
     mk (.len a.expr) fun _ => [a.loc]) <|>
   (do
+    keyword "List"; symbol "."; keyword "length"
+    let a ← postfixExpr
+    mk (.listLen a.expr) fun _ => [a.loc]) <|>
+  (do
     symbol "-"
     let e ← unary
     mk (.binop .sub (.int 0) e.expr) fun sp => [.leaf sp, e.loc]) <|>
@@ -579,11 +583,10 @@ def itemsLoc : P (List (Item × Loc)) := do
 /-- The top-level items of a program, without their positions. -/
 def items : P (List Item) := (·.map (·.1)) <$> itemsLoc
 
-/-- A program: its top-level items, as one expression, with its positions. `unroll` is that
-    of `Term.toExpr`. -/
-def program (unroll : Nat := 4) : P LExpr := do
+/-- A program: its top-level items, as one expression, with its positions. -/
+def program : P LExpr := do
   let is ← itemsLoc
-  return ⟨Item.toExpr unroll (is.map (·.1)), Item.toLoc is⟩
+  return ⟨Item.toExpr (is.map (·.1)), Item.toLoc is⟩
 
 /-- The state of `resolve`: the next site number and the next name number. -/
 structure Fresh where
@@ -640,6 +643,7 @@ def resolve (sc : List (String × String)) : Expr → StateM Fresh Expr
   | .get a i => return .get (← resolve sc a) (← resolve sc i)
   | .set a i v => return .set (← resolve sc a) (← resolve sc i) (← resolve sc v)
   | .len a => return .len (← resolve sc a)
+  | .listLen a => return .listLen (← resolve sc a)
   | .deref r => return .deref (← resolve sc r)
   | .assign r v => return .assign (← resolve sc r) (← resolve sc v)
   | .ctor c e => return .ctor c (← resolve sc e)
@@ -669,14 +673,13 @@ def Reader.withIntTy (intTy : Option IntType) (r : Reader) : Reader := fun s =>
   (r s).bind (Overflow.items intTy s)
 
 /-- The program read by `r`, as one expression, with its positions. `resolve` keeps
-    the shape of the expression, so the positions stay valid. `unroll` is that of
-    `Term.toExpr`. -/
-def Reader.lexpr (r : Reader) (s : String) (unroll : Nat := 4) : Except String LExpr :=
-  (r s).map fun is => ⟨(resolve [] (Item.toExpr unroll (is.map (·.1)))).run' {}, Item.toLoc is⟩
+    the shape of the expression, so the positions stay valid. -/
+def Reader.lexpr (r : Reader) (s : String) : Except String LExpr :=
+  (r s).map fun is => ⟨(resolve [] (Item.toExpr (is.map (·.1)))).run' {}, Item.toLoc is⟩
 
 /-- The program read by `r`, as one expression (see `Reader.lexpr`). -/
-def Reader.expr (r : Reader) (s : String) (unroll : Nat := 4) : Except String Expr :=
-  (r.lexpr s unroll).map (·.expr)
+def Reader.expr (r : Reader) (s : String) : Except String Expr :=
+  (r.lexpr s).map (·.expr)
 
 /-- The top-level items read by `r`, with their contracts. The names are the ones of
     the source: there is no `resolve`. -/

@@ -34,9 +34,7 @@ the file and prints.
   Lean proves that it meets their contracts (`synthOracle`).
 
 The commands that infer hints take `depth`: how deep the hints describe the parts of
-lists and other ADT values (see `inferHints`). The commands that read the program
-take `unroll`: the largest `n` of a comparison `length l op n` of a contract that is
-written as `match`es (see `Term.toExpr`).
+lists and other ADT values (see `inferHints`).
 -/
 
 namespace Diva.Commands
@@ -62,16 +60,16 @@ def parseError (file : Option String) (msg : String) : Result :=
 
 /-- The result of `cmd` on the program `src` parses to, or a parse error. -/
 def withParse (file : Option String) (src : String) (cmd : Expr → Result)
-    (read : Reader := parseItemsLoc) (unroll : Nat := 4) : Result :=
-  match read.expr src unroll with
+    (read : Reader := parseItemsLoc) : Result :=
+  match read.expr src with
   | .ok e => cmd e
   | .error msg => parseError file msg
 
 /-- `diva run`: parse the program `src`, run it, and print the value it returns. If
     the run fails, or takes more than `fuel` steps, print why and exit with code 1. -/
 def run (src : String) (file : Option String := none)
-    (read : Reader := parseItemsLoc) (unroll : Nat := 4) : Result :=
-  withParse file src (read := read) (unroll := unroll) fun e =>
+    (read : Reader := parseItemsLoc) : Result :=
+  withParse file src (read := read) fun e =>
     match eval fuel [] [] e with
     | .ok v _ => { out := [Report.clean (toString v)] }
     | .err k _ => { err := [s!"runtime error: {ppErr k}"], code := 1 }
@@ -86,16 +84,16 @@ def place (src : String) : Option String → Span → String
 /-- `diva print`: parse the program `src`, and print it as DIVA reads it: one expression,
     where the `requires` of the contracts are `assert`s. -/
 def print (src : String) (file : Option String := none)
-    (read : Reader := parseItemsLoc) (unroll : Nat := 4) : Result :=
-  withParse file src (read := read) (unroll := unroll) fun e =>
+    (read : Reader := parseItemsLoc) : Result :=
+  withParse file src (read := read) fun e =>
     { out := [Report.clean (toString e)] }
 
 /-- The program that `read` reads in `src`, with a call of each entry point of `entries`,
     and the values of the arguments of these calls (`withEntries`). The values come from
     the types of the parameters, `types` (from the OCaml frontend). -/
-def readEntries (read : Reader) (src : String) (file : Option String) (unroll : Nat)
+def readEntries (read : Reader) (src : String) (file : Option String)
     (types : List TypeHint) (entries : List String) : Except Result (LExpr × AEnv Itv) :=
-  match read.lexpr src unroll with
+  match read.lexpr src with
   | .error msg => .error (parseError file msg)
   | .ok ⟨e, l⟩ => (withEntries entries types e l).mapError fun msg => { err := [msg], code := 1 }
 
@@ -107,8 +105,8 @@ def readEntries (read : Reader) (src : String) (file : Option String) (unroll : 
     the arguments of their types (`readEntries`). -/
 def check (src : String) (file : Option String := none)
     (read : Reader := parseItemsLoc) (types : List TypeHint := []) (entries : List String := [])
-    (depth : Nat := 5) (unroll : Nat := 4) : Result :=
-  match readEntries read src file unroll types entries with
+    (depth : Nat := 5) : Result :=
+  match readEntries read src file types entries with
   | .error r => r
   | .ok (⟨e, l⟩, σ) =>
     let H := inferHints σ e (depth := depth)
@@ -122,9 +120,9 @@ def check (src : String) (file : Option String := none)
     round, then what `check` prints with the last hints, with the positions in `file`. -/
 def checkOracle [Monad m] (oracle : String → m String) (rounds : Nat) (src : String)
     (file : Option String := none) (read : Reader := parseItemsLoc)
-    (types : List TypeHint := []) (entries : List String := []) (depth : Nat := 5)
-    (unroll : Nat := 4) : m Result :=
-  match readEntries read src file unroll types entries with
+    (types : List TypeHint := []) (entries : List String := []) (depth : Nat := 5) :
+    m Result :=
+  match readEntries read src file types entries with
   | .error r => return r
   | .ok (⟨e, l⟩, σ) => do
     let rs ← Oracle.consult oracle σ e rounds (file.map fun f => ⟨f, src, l⟩) depth
@@ -149,13 +147,12 @@ def checkOracle [Monad m] (oracle : String → m String) (rounds : Nat) (src : S
     optimiser knows the precondition. If the analysis proves that the program never
     fails, the checks (`assert`) are erased: they always hold. -/
 def opt (src : String) (infer : Bool := false) (file : Option String := none)
-    (read : Reader := parseItemsLoc) (depth : Nat := 5)
-    (unroll : Nat := 4) : Result :=
+    (read : Reader := parseItemsLoc) (depth : Nat := 5) : Result :=
   match read.items src with
   | .error msg => parseError file msg
   | .ok items =>
-    let items := if infer then (SpecOfHints.inferContracts items depth unroll).1 else items
-    let e := (resolve [] (Item.toExpr unroll items)).run' {}
+    let items := if infer then (SpecOfHints.inferContracts items depth).1 else items
+    let e := (resolve [] (Item.toExpr items)).run' {}
     let H := inferHints ([] : AEnv Itv) e (depth := depth)
     { out := [Report.clean (toString (Opt.opt H (!mayFail H [] e) [] e))] }
 
@@ -163,13 +160,12 @@ def opt (src : String) (infer : Bool := false) (file : Option String := none)
     (`Cert.optCertificate`): a Lean file stating that the program and its optimised
     version are equivalent. -/
 def optCert (src : String) (infer : Bool := false) (file : Option String := none)
-    (read : Reader := parseItemsLoc) (depth : Nat := 5)
-    (unroll : Nat := 4) : Result :=
+    (read : Reader := parseItemsLoc) (depth : Nat := 5) : Result :=
   match read.items src with
   | .error msg => parseError file msg
   | .ok items =>
-    let items := if infer then (SpecOfHints.inferContracts items depth unroll).1 else items
-    let e := (resolve [] (Item.toExpr unroll items)).run' {}
+    let items := if infer then (SpecOfHints.inferContracts items depth).1 else items
+    let e := (resolve [] (Item.toExpr items)).run' {}
     { out := [Cert.optCertificate (inferHints ([] : AEnv Itv) e (depth := depth)) e] }
 
 /-- `diva hints`: parse the program `src`, infer its hints, and print them, one per
@@ -179,8 +175,8 @@ def optCert (src : String) (infer : Bool := false) (file : Option String := none
     With `entries`, as for `check`. -/
 def hints (src : String) (file : Option String := none)
     (read : Reader := parseItemsLoc) (types : List TypeHint := []) (entries : List String := [])
-    (depth : Nat := 5) (unroll : Nat := 4) : Result :=
-  match readEntries read src file unroll types entries with
+    (depth : Nat := 5) : Result :=
+  match readEntries read src file types entries with
   | .error r => r
   | .ok (⟨e, _⟩, σ) =>
     let H := inferHints σ e (ext := true) (depth := depth)
@@ -191,9 +187,8 @@ def hints (src : String) (file : Option String := none)
     hints inferred for it. If the analysis says that the program may fail, there is
     no certificate: print why and exit with code 1. -/
 def cert (src : String) (file : Option String := none)
-    (read : Reader := parseItemsLoc) (depth : Nat := 5)
-    (unroll : Nat := 4) : Result :=
-  withParse file src (read := read) (unroll := unroll) fun e =>
+    (read : Reader := parseItemsLoc) (depth : Nat := 5) : Result :=
+  withParse file src (read := read) fun e =>
     let H := inferHints ([] : AEnv Itv) e (depth := depth)
     match Cert.certificate H e with
     | some c => { out := [c] }
@@ -208,12 +203,11 @@ def cert (src : String) (file : Option String := none)
     with code 1. With `infer`, each function without a contract gets the contract that
     the analysis infers (`SpecOfHints.inferContracts`). -/
 def prove (src : String) (infer : Bool := false) (file : Option String := none)
-    (read : Reader := parseItemsLoc) (depth : Nat := 5)
-    (unroll : Nat := 4) : Result :=
+    (read : Reader := parseItemsLoc) (depth : Nat := 5) : Result :=
   match read.items src with
   | .error msg => parseError file msg
   | .ok items =>
-    let (items, inferred) := if infer then SpecOfHints.inferContracts items depth unroll else (items, [])
+    let (items, inferred) := if infer then SpecOfHints.inferContracts items depth else (items, [])
     match Prove.file items (inferred := inferred) with
     | .ok f => { out := [f] }
     | .error msg => { err := [msg], code := 1 }

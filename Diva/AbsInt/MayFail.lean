@@ -176,7 +176,7 @@ theorem mayFail_sound_aux {ρ : Env} {μ μ' : Store} {e : Expr} {r : Outcome}
       mayFail H σ e = true := by
   induction h with
   -- the rules giving a value: no error
-  | int | bool | unit | nil | var | lam | cons | assert | ctor =>
+  | int | bool | unit | nil | var | lam | cons | assert | ctor | listLen =>
     intro H σ k hσ hB hr
     cases hr
   | varErr hx =>
@@ -236,6 +236,13 @@ theorem mayFail_sound_aux {ρ : Env} {μ μ' : Store} {e : Expr} {r : Outcome}
     intro H σ k hσ hB hr
     simp only [mayFail, mayFailM, Bool.or_eq_true]
     exact Or.inl (Or.inr (ih hσ hB hr))
+  | listLenNotList ha hv =>
+    intro H σ k hσ hB hr
+    simp [mayFail, mayFailM, not_within_list (aeval_sound hσ hB ha) hv]
+  | listLenErr _ ih =>
+    intro H σ k hσ hB hr
+    simp only [mayFail, mayFailM, Bool.or_eq_true]
+    exact Or.inl (ih hσ hB hr)
   | ifT hc _ _ iht =>
     intro H σ k hσ hB hr
     -- the `then` branch can be taken, and it fails

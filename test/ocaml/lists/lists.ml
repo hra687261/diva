@@ -18,3 +18,6 @@ let c = last l
    elements one by one are lost in the join, its lengths are not *)
 let l2 = if c > 0 then [ 1; 2 ] else [ 1; 2; 3 ]
 let d = match l2 with _ :: y :: _ -> y | _ -> failwith "short"
+
+(* `List.length` gives the lengths of the lists: `List.length l2 - 1` is 1 or 2 *)
+let e = 10 / (List.length l2 - 1)

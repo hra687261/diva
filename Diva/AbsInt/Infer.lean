@@ -108,7 +108,7 @@ def claims (ext : Bool) (H : Hints A) (C : Callees) (σ : AEnv A) : Expr → Lis
     let av := (aevalM true ext H σ v).flat
     ((aevalM true ext H σ a).arrs.map (s!"!{·}", av)) ++ claims ext H C σ a ++
       claims ext H C σ i ++ claims ext H C σ v
-  | .deref a | .len a | .assert a | .raise a => claims ext H C σ a
+  | .deref a | .len a | .listLen a | .assert a | .raise a => claims ext H C σ a
   | .get a i => claims ext H C σ a ++ claims ext H C σ i
   -- `C v`: the claims of `v`
   | .ctor _ v => claims ext H C σ v
@@ -134,7 +134,7 @@ def hintKeys : Expr → List String
   | .alloc site n v => s!"!{site}" :: s!"!{site}.length" :: hintKeys n ++ hintKeys v
   | .assign a b | .get a b => hintKeys a ++ hintKeys b
   | .set a i v => hintKeys a ++ hintKeys i ++ hintKeys v
-  | .deref a | .len a | .assert a | .raise a => hintKeys a
+  | .deref a | .len a | .listLen a | .assert a | .raise a => hintKeys a
   | .ctor _ v => hintKeys v
   | .tryw a _ h => hintKeys a ++ hintKeys h
   | .ctorCase s _ _ h m => hintKeys s ++ hintKeys h ++ hintKeys m

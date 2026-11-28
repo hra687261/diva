@@ -257,6 +257,12 @@ inductive Eval : Env → Store → Expr → Outcome → Store → Prop where
     Eval ρ μ (.set a i v) (.err k) μ₃
   | len : Eval ρ μ a (.ok va) μ₁ → Eval ρ μ (.len a) (lenV μ₁ va) μ₁
   | lenErr : Eval ρ μ a (.err k) μ₁ → Eval ρ μ (.len a) (.err k) μ₁
+  | listLen :
+    Eval ρ μ a (.ok va) μ₁ → va.isList = true →
+    Eval ρ μ (.listLen a) (.ok (.int va.lengthNat)) μ₁
+  | listLenNotList :
+    Eval ρ μ a (.ok va) μ₁ → va.isList = false → Eval ρ μ (.listLen a) (.err .typeError) μ₁
+  | listLenErr : Eval ρ μ a (.err k) μ₁ → Eval ρ μ (.listLen a) (.err k) μ₁
   | ref :
     Eval ρ μ e (.ok v) μ₁ → Eval ρ μ (.ref site e) (refV μ₁ v).1 (refV μ₁ v).2
   | refErr : Eval ρ μ e (.err k) μ₁ → Eval ρ μ (.ref site e) (.err k) μ₁
@@ -522,6 +528,21 @@ theorem Eval.deterministic {ρ : Env} {μ : Store} {e : Expr} {r₁ r₂ : Outco
     cases h₂ with
     | len ha => cases iha ha
     | lenErr ha => cases iha ha; rfl
+  case listLen hl iha =>
+    cases h₂ with
+    | listLen ha _ => cases iha ha; rfl
+    | listLenNotList ha hl' => cases iha ha; rw [hl] at hl'; cases hl'
+    | listLenErr ha => cases iha ha
+  case listLenNotList hl iha =>
+    cases h₂ with
+    | listLen ha hl' => cases iha ha; rw [hl] at hl'; cases hl'
+    | listLenNotList ha _ => cases iha ha; rfl
+    | listLenErr ha => cases iha ha
+  case listLenErr iha =>
+    cases h₂ with
+    | listLen ha _ => cases iha ha
+    | listLenNotList ha _ => cases iha ha
+    | listLenErr ha => cases iha ha; rfl
   case ref ihe =>
     cases h₂ with
     | ref he => cases ihe he; rfl

@@ -112,6 +112,10 @@ def eval : Nat → Env → Store → Expr → Result
       match eval fuel ρ μ a with
       | .ok va μ₁ => some (lenV μ₁ va, μ₁)
       | r => r
+    | .listLen a =>
+      match eval fuel ρ μ a with
+      | .ok va μ₁ => if va.isList then .ok (.int va.lengthNat) μ₁ else .err .typeError μ₁
+      | r => r
     | .ref _ e =>
       match eval fuel ρ μ e with
       | .ok v μ₁ => some (refV μ₁ v)
@@ -373,6 +377,20 @@ theorem eval_sound :
         cases r with
         | ok v => exact absurd h (hna v μ')
         | err k => exact .lenErr (ih h)
+    case listLen =>
+      split at h
+      case h_1 va μ₁ ha =>
+        split at h
+        case isTrue hl =>
+          cases h
+          exact .listLen (ih ha) hl
+        case isFalse hl =>
+          cases h
+          exact .listLenNotList (ih ha) (by simpa using hl)
+      case h_2 hna =>
+        cases r with
+        | ok v => exact absurd h (hna v μ')
+        | err k => exact .listLenErr (ih h)
     case ref =>
       split at h
       case h_1 v μ₁ he =>

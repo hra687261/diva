@@ -72,6 +72,7 @@ inductive Expr where
   | get   : Expr → Expr → Expr          -- `a.(i)`
   | set   : Expr → Expr → Expr → Expr   -- `a.(i) <- v`
   | len   : Expr → Expr                 -- `Array.length a`
+  | listLen : Expr → Expr               -- `List.length l`
   | ref   : Nat → Expr → Expr
     -- `ref v`, the Nat is the id of the allocation site
   | deref : Expr → Expr                 -- `!r`
@@ -92,7 +93,7 @@ def Expr.pure : Expr → Bool
   | .int _ | .bool _ | .unit | .var _ | .nil | .lam _ _ => true
   | .app _ _ | .alloc .. | .set .. | .ref .. | .assign .. => false
   | .letin _ a b | .binop _ a b | .cons a b | .get a b | .tryw a _ b => a.pure && b.pure
-  | .letrec _ _ _ b | .assert b | .len b | .deref b | .ctor _ b | .raise b => b.pure
+  | .letrec _ _ _ b | .assert b | .len b | .listLen b | .deref b | .ctor _ b | .raise b => b.pure
   | .ite c t e | .matchList c t _ _ e | .ctorCase c _ _ t e => c.pure && t.pure && e.pure
 
 def ppExpr : Expr → String
@@ -115,6 +116,7 @@ def ppExpr : Expr → String
   | .get a i       => s!"{ppExpr a}.({ppExpr i})"
   | .set a i v     => s!"({ppExpr a}.({ppExpr i}) <- {ppExpr v})"
   | .len a         => s!"(Array.length {ppExpr a})"
+  | .listLen a     => s!"(List.length {ppExpr a})"
   | .ref _ v       => s!"(ref {ppExpr v})"
   | .deref r       => s!"!{ppExpr r}"
   | .assign r v    => s!"({ppExpr r} := {ppExpr v})"
@@ -246,7 +248,8 @@ def freeNames (bound : List String) : Expr → List String
   | .tryw a k h => freeNames bound a ++ freeNames (k :: bound) h
   | .ctorCase s _ x h m =>
     freeNames bound s ++ freeNames (x :: bound) h ++ freeNames bound m
-  | .assert b | .len b | .ref _ b | .deref b | .ctor _ b | .raise b => freeNames bound b
+  | .assert b | .len b | .listLen b | .ref _ b | .deref b | .ctor _ b | .raise b =>
+    freeNames bound b
   | .app a b | .binop _ a b | .cons a b | .get a b | .assign a b | .alloc _ a b =>
     freeNames bound a ++ freeNames bound b
   | .ite a b c | .set a b c => freeNames bound a ++ freeNames bound b ++ freeNames bound c

@@ -55,6 +55,7 @@ and desc =
   | Get of expr * expr
   | Set of expr * expr * expr
   | Len of expr
+  | ListLen of expr  (** [List.length l] *)
   | Ref of expr
   | Deref of expr
   | Assign of expr * expr
@@ -141,6 +142,7 @@ type library_fn =
       (** [Int64.to_int]: from integers of [bits] bits to an [int] *)
   | Array_make
   | Array_length
+  | List_length
   | Array_get
   | Array_set
   | Prelude of prelude_fn
@@ -243,6 +245,7 @@ let rec to_sexp (e : expr) =
   | Get (a, i) -> node "get" [ s a; s i ]
   | Set (a, i, v) -> node "set" [ s a; s i; s v ]
   | Len a -> node "len" [ s a ]
+  | ListLen a -> node "listlen" [ s a ]
   | Ref v -> node "ref" [ s v ]
   | Deref r -> node "deref" [ s r ]
   | Assign (r, v) -> node "assign" [ s r; s v ]
@@ -449,6 +452,7 @@ let library_names =
     ("Char.code", Char_code);
     ("Array.make", Array_make);
     ("Array.length", Array_length);
+    ("List.length", List_length);
     ("Array.get", Array_get);
     ("Array.set", Array_set);
   ]
@@ -895,6 +899,7 @@ and apply ?(checked = true) loc f args =
       if bits > 63 then overflow loc 63 (expr a) else expr a
   | Some Array_make, [ n; v ] -> two n v (fun n v -> mk loc (Alloc (n, v)))
   | Some Array_length, [ a ] -> mk loc (Len (expr a))
+  | Some List_length, [ a ] -> mk loc (ListLen (expr a))
   | Some Array_get, [ a; i ] -> two a i (fun a i -> mk loc (Get (a, i)))
   | Some Array_set, [ a; i; v ] ->
       ordered loc [ a; i; v ] (function

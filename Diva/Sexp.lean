@@ -30,6 +30,7 @@ the bytes `START` to `STOP` of the OCaml file. Names are strings.
 (ite START STOP C T E)   (binop START STOP OP A B)   (cons START STOP A B)
 (matchList START STOP S N "x" "xs" C)   (assert START STOP C)
 (alloc START STOP N V)   (get START STOP A I)   (set START STOP A I V)   (len START STOP A)
+(listlen START STOP L)
 (ref START STOP V)   (deref START STOP R)   (assign START STOP R V)
 (ctor START STOP "C" V)   (raise START STOP V)   (tryw START STOP A "k" H)
 (ctorCase START STOP S "C" "x" H M)
@@ -195,6 +196,9 @@ partial def expr (x : Sexp) : Except String LExpr := do
   | "len", [a] =>
     let a ← expr a
     return node (.len a.expr) [a]
+  | "listlen", [a] =>
+    let a ← expr a
+    return node (.listLen a.expr) [a]
   | "ref", [v] =>
     let v ← expr v
     return node (.ref 0 v.expr) [v]

@@ -48,10 +48,6 @@ def fileReader (p : Parsed) : IO (Reader × List TypeHint) := do
     integers have no bound. -/
 def reader (p : Parsed) : IO Reader := return (← fileReader p).1
 
-/-- The value of the flag `--unroll`: the largest `n` of a comparison `length l op n` of a
-    contract that is written as `match`es (4 by default, see `Term.toExpr`). -/
-def unroll (p : Parsed) : Nat :=
-  (p.flag? "unroll").map (·.as! Nat) |>.getD 4
 /-- Runs `cmd`, which may do IO, on the file given as argument, and prints its
     result. -/
 def runWith' (cmd : String → IO Commands.Result) (p : Parsed) : IO UInt32 := do
@@ -67,7 +63,7 @@ def runWith (cmd : String → Commands.Result) : Parsed → IO UInt32 :=
   runWith' fun src => pure (cmd src)
 
 def runRun (p : Parsed) : IO UInt32 := do
-  runWith (Commands.run (unroll := unroll p) (file := some (fileName p)) (read := ← reader p)) p
+  runWith (Commands.run (file := some (fileName p)) (read := ← reader p)) p
 
 /-- The result of `reader`, or `none` if `seconds` seconds pass first (no limit if
     `seconds` is `none`). A second task, `timer`, sleeps for `seconds` seconds.
@@ -127,16 +123,16 @@ def runCheck (p : Parsed) : IO UInt32 :=
   match p.flag? "oracle" with
   | none => do
     let (read, types) ← fileReader p
-    runWith (Commands.check (unroll := unroll p) (depth := depth p) (file := some (fileName p))
+    runWith (Commands.check (depth := depth p) (file := some (fileName p))
       (read := read) (types := types) (entries := entries p)) p
   | some cmd => do
     let (read, types) ← fileReader p
-    runWith' (Commands.checkOracle (unroll := unroll p) (← oracleOf p (cmd.as! String)) (rounds p)
+    runWith' (Commands.checkOracle (← oracleOf p (cmd.as! String)) (rounds p)
       (depth := depth p) (file := some (fileName p)) (read := read) (types := types) (entries := entries p)) p
 
 def runHints (p : Parsed) : IO UInt32 := do
   let (read, types) ← fileReader p
-  runWith (Commands.hints (unroll := unroll p) (depth := depth p) (file := some (fileName p))
+  runWith (Commands.hints (depth := depth p) (file := some (fileName p))
     (read := read) (types := types) (entries := entries p)) p
 
 /-- The folder of Diva's compiled modules (`.olean` files): `../lib/lean`, starting from
@@ -205,7 +201,7 @@ def writeAndCheck (cmd : String → Commands.Result) (stdin ok : String) (p : Pa
 /-- `diva cert`: write the certificate, a Lean file stating that the program never
     fails. -/
 def runCert (p : Parsed) : IO UInt32 := do
-  writeAndCheck (Commands.cert (unroll := unroll p) (depth := depth p) (file := some (fileName p)) (read := ← reader p)) "cert.lean"
+  writeAndCheck (Commands.cert (depth := depth p) (file := some (fileName p)) (read := ← reader p)) "cert.lean"
     "certificate checked by Lean: the program never fails" p
 
 /-- `diva opt`: print the optimised program. With `--cert`, write the certificate of the
@@ -213,16 +209,16 @@ def runCert (p : Parsed) : IO UInt32 := do
 def runOpt (p : Parsed) : IO UInt32 := do
   let infer := p.hasFlag "infer"
   if p.hasFlag "cert" then
-    writeAndCheck (Commands.optCert (unroll := unroll p) (infer := infer) (depth := depth p) (file := some (fileName p)) (read := ← reader p)) "opt.lean"
+    writeAndCheck (Commands.optCert (infer := infer) (depth := depth p) (file := some (fileName p)) (read := ← reader p)) "opt.lean"
       "certificate checked by Lean: the optimised program is equivalent to the program" p
-  else runWith (Commands.opt (unroll := unroll p) (infer := infer) (depth := depth p) (file := some (fileName p)) (read := ← reader p)) p
+  else runWith (Commands.opt (infer := infer) (depth := depth p) (file := some (fileName p)) (read := ← reader p)) p
 
 /-- `diva prove`: write a Lean file stating that the functions meet their contracts.
     With `--oracle CMD`, the command `CMD` completes the proofs that Lean doesn't accept. -/
 def runProve (p : Parsed) : IO UInt32 :=
   match p.flag? "oracle" with
   | none => do
-    writeAndCheck (Commands.prove (unroll := unroll p) (infer := p.hasFlag "infer") (depth := depth p) (file := some (fileName p)) (read := ← reader p))
+    writeAndCheck (Commands.prove (infer := p.hasFlag "infer") (depth := depth p) (file := some (fileName p)) (read := ← reader p))
       "prove.lean"
       "checked by Lean: the functions meet their contracts, and the top-level expressions don't fail" p
   | some cmd => do
@@ -276,9 +272,6 @@ def roundsDoc := "How many times to ask the oracle (3 by default)."
 def depthDoc :=
   "How deep the inferred hints describe the parts of lists and other ADT values (5 by default). Deeper hints are more precise for nested data, but the inference is slower."
 
-def unrollDoc :=
-  "The largest `n` of a comparison `length l op n` in a contract that is checked by matching `l` against `n` or `n + 1` elements, rather than by computing `length l` (4 by default). The analysis is more precise on these matches."
-
 def entryDoc :=
   "Functions that other code may call, as in a library, separated by commas: after the top-level code, each one is checked for all the arguments of its OCaml type (with `diva ocaml`), or for any argument. Without it, a function that nothing calls never runs, so it can't fail."
 
@@ -286,13 +279,12 @@ def timeoutDoc :=
   "How many seconds to wait for each answer of the oracle (no limit by default). If the time is up, the oracle is stopped, and `diva` stops with an error."
 
 def runPrint (p : Parsed) : IO UInt32 := do
-  runWith (Commands.print (unroll := unroll p) (file := some (fileName p)) (read := ← reader p)) p
+  runWith (Commands.print (file := some (fileName p)) (read := ← reader p)) p
 
 def printCmd : Cmd := `[Cli|
   print VIA runPrint;
   "Print the program as DIVA reads it."
   FLAGS:
-    unroll : Nat; unrollDoc
     quiet; quietDoc
   ARGS:
     file : String; "The program (`-` reads the standard input)."
@@ -302,7 +294,6 @@ def runCmd : Cmd := `[Cli|
   run VIA runRun;
   "Evaluate the program and print its return value."
   FLAGS:
-    unroll : Nat; unrollDoc
     quiet; quietDoc
   ARGS:
     file : String; "The program (`-` reads the standard input)."
@@ -315,7 +306,6 @@ def checkCmd : Cmd := `[Cli|
   "Say where the program may fail. Exits with 1 if it may fail."
   FLAGS:
     entry : Array String; entryDoc
-    unroll : Nat; unrollDoc
     depth : Nat; depthDoc
     oracle : String; checkOracleDoc
     rounds : Nat; roundsDoc
@@ -329,7 +319,6 @@ def optCmd : Cmd := `[Cli|
   opt VIA runOpt;
   "Optimize the program and print it."
   FLAGS:
-    unroll : Nat; unrollDoc
     depth : Nat; depthDoc
     infer; "Give each function without a contract the contract that the analysis infers (see `diva hints`). Its `requires` is checked at run time, and the optimizer uses it."
     cert; "Write a certificate instead: a Lean file stating that the optimized program is equivalent to the program."
@@ -345,7 +334,6 @@ def hintsCmd : Cmd := `[Cli|
   "Print the hints inferred for the program."
   FLAGS:
     entry : Array String; entryDoc
-    unroll : Nat; unrollDoc
     depth : Nat; depthDoc
     quiet; quietDoc
   ARGS:
@@ -357,7 +345,6 @@ def certCmd : Cmd := `[Cli|
   "Write a certificate: a Lean file stating that the program never fails. \
    Exits with 1 if the program may fail."
   FLAGS:
-    unroll : Nat; unrollDoc
     depth : Nat; depthDoc
     check; "Also run Lean on the certificate. Exits with 1 if Lean rejects it."
     o, output : String; "The certificate file to write. By default `<name>.lean` for `<name>.ml`, `cert.lean` for `-`."
@@ -374,7 +361,6 @@ def proveCmd : Cmd := `[Cli|
   "Write a Lean file stating that the functions meet their contracts, written in \
    `(*@ requires ... ensures ... *)` comments. Exits with 1 if there is no contract."
   FLAGS:
-    unroll : Nat; unrollDoc
     depth : Nat; depthDoc
     check; "Also run Lean on the file. Exits with 1 if Lean rejects it."
     infer; "Give each function without a contract the contract that the analysis infers (see `diva hints`)."

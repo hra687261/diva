@@ -50,6 +50,7 @@ e ::= n                              -- an integer: run, check, prove
     | Array.make e e                 -- a new array, with its length and its value: run
     | e.(e) | e.(e) <- e             -- read and write an array: run
     | Array.length e                 -- run
+    | List.length e                  -- the number of elements of a list: run, check, prove
     | ref e | !e | e := e            -- refs: run
     | incr e | decr e                -- `e := !e + 1`, `e := !e - 1`: run
     | for x = e to e do e done       -- a recursive function: run, check

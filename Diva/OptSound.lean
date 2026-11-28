@@ -123,6 +123,7 @@ inductive OptStep (H : Hints A) (E : Bool) : AEnv A → Expr → Expr → Prop w
       Optimizes H E σ a a' → Optimizes H E σ i i' → Optimizes H E σ v v' →
       OptStep H E σ (.set a i v) (.set a' i' v')
   | len {σ a a'} : Optimizes H E σ a a' → OptStep H E σ (.len a) (.len a')
+  | listLen {σ a a'} : Optimizes H E σ a a' → OptStep H E σ (.listLen a) (.listLen a')
   | ref {σ site v v'} : Optimizes H E σ v v' → OptStep H E σ (.ref site v) (.ref site v')
   | deref {σ r r'} : Optimizes H E σ r r' → OptStep H E σ (.deref r) (.deref r')
   | assign {σ r r' v v'} :
@@ -278,6 +279,9 @@ theorem optimizes_opt (H : Hints A) (e : Expr) : ∀ σ, Optimizes H E σ e (opt
   | len a ih =>
     intro σ
     exact optimizes_of_none fun hc => by rw [opt.eq_def, hc]; exact .len (ih _)
+  | listLen a ih =>
+    intro σ
+    exact optimizes_of_none fun hc => by rw [opt.eq_def, hc]; exact .listLen (ih _)
   | ref site v ih =>
     intro σ
     exact optimizes_of_none fun hc => by rw [opt.eq_def, hc]; exact .ref (ih _)
@@ -385,6 +389,12 @@ theorem isBool (h : VR H E v v') : v'.isBool = v.isBool := by
 
 theorem isList (h : VR H E v v') : v'.isList = v.isList := by
   cases h <;> rfl
+
+/-- Related lists have the same number of elements. -/
+theorem lengthNat (h : VR H E v v') : v'.lengthNat = v.lengthNat := by
+  induction h with
+  | cons _ _ _ ihb => simp [Value.lengthNat, ihb]
+  | _ => rfl
 
 theorem isCtor (h : VR H E v v') : v'.isCtor = v.isCtor := by
   cases h <;> rfl
@@ -857,7 +867,7 @@ theorem pure_store {ρ : Env} {μ μ₁ : Store} {e : Expr} {r : Outcome}
     simp only [Expr.pure, Bool.and_eq_true] at hi
     rw [ihc hi.2, ihs hi.1.1]
   | assert _ ih | assertF _ ih | assertNotBool _ _ ih | assertErr _ ih | len _ ih
-  | lenErr _ ih | deref _ ih | derefErr _ ih | ctor _ ih | ctorErr _ ih | raise _ _ ih
+  | lenErr _ ih | listLen _ _ ih | listLenNotList _ _ ih | listLenErr _ ih | deref _ ih | derefErr _ ih | ctor _ ih | ctorErr _ ih | raise _ _ ih
   | raiseNotCtor _ _ ih | raiseErr _ ih =>
     intro hi
     exact ih hi
@@ -979,6 +989,15 @@ theorem pure_total (e : Expr) : e.pure = true → ∀ ρ μ, ∃ r μ₁, Eval �
     cases ra with
     | err k => exact ⟨_, _, .lenErr ha⟩
     | ok va => exact ⟨_, _, .len ha⟩
+  | listLen a ih =>
+    intro hi ρ μ
+    obtain ⟨ra, μ₁, ha⟩ := ih hi ρ μ
+    cases ra with
+    | err k => exact ⟨_, _, .listLenErr ha⟩
+    | ok va =>
+      cases hl : va.isList
+      case true => exact ⟨_, _, .listLen ha hl⟩
+      case false => exact ⟨_, _, .listLenNotList ha hl⟩
   | deref r ih =>
     intro hi ρ μ
     obtain ⟨rr, μ₁, hr⟩ := ih hi ρ μ
@@ -1899,6 +1918,30 @@ theorem sim_fwd_step {H : Hints A} {ρ : Env} {μ μ₁ : Store} {e : Expr} {r :
       obtain ⟨ra', μ₁', ha', hra, hμ₁⟩ := lift_fwd ha iha hσ hB hoa hρ hμ
       cases hra with
       | err hk => exact ⟨_, _, .lenErr ha', .err hk, hμ₁⟩
+  | listLen ha hl iha =>
+    cases ho with | step ho =>
+    cases ho with
+    | listLen hoa =>
+      obtain ⟨ra', μ₁', ha', hra, hμ₁⟩ := lift_fwd ha iha hσ hB hoa hρ hμ
+      cases hra with
+      | ok hva =>
+        refine ⟨_, _, .listLen ha' (hva.isList.trans hl), ?_, hμ₁⟩
+        rw [hva.lengthNat]
+        exact .ok .int
+  | listLenNotList ha hl iha =>
+    cases ho with | step ho =>
+    cases ho with
+    | listLen hoa =>
+      obtain ⟨ra', μ₁', ha', hra, hμ₁⟩ := lift_fwd ha iha hσ hB hoa hρ hμ
+      cases hra with
+      | ok hva => exact ⟨_, _, .listLenNotList ha' (hva.isList.trans hl), .err (.same rfl), hμ₁⟩
+  | listLenErr ha iha =>
+    cases ho with | step ho =>
+    cases ho with
+    | listLen hoa =>
+      obtain ⟨ra', μ₁', ha', hra, hμ₁⟩ := lift_fwd ha iha hσ hB hoa hρ hμ
+      cases hra with
+      | err hk => exact ⟨_, _, .listLenErr ha', .err hk, hμ₁⟩
   | ref hv ihv =>
     cases ho with | step ho =>
     cases ho with
@@ -2564,6 +2607,28 @@ theorem sim_bwd_step {H : Hints A} {ρ' : Env} {μ' μ₁' : Store} {e' : Expr} 
       obtain ⟨ra', μ₁', ha', hra, hμ₁⟩ := lift_bwd ha iha hσ hB hoa hρ hμ
       cases hra with
       | err hk => exact ⟨_, _, .lenErr ha', .err hk, hμ₁⟩
+  | listLen ha hl iha =>
+    cases ho with
+    | listLen hoa =>
+      obtain ⟨ra', μ₁', ha', hra, hμ₁⟩ := lift_bwd ha iha hσ hB hoa hρ hμ
+      cases hra with
+      | ok hva =>
+        refine ⟨_, _, .listLen ha' (hva.isList.symm.trans hl), ?_, hμ₁⟩
+        rw [hva.lengthNat]
+        exact .ok .int
+  | listLenNotList ha hl iha =>
+    cases ho with
+    | listLen hoa =>
+      obtain ⟨ra', μ₁', ha', hra, hμ₁⟩ := lift_bwd ha iha hσ hB hoa hρ hμ
+      cases hra with
+      | ok hva =>
+        exact ⟨_, _, .listLenNotList ha' (hva.isList.symm.trans hl), .err (.same rfl), hμ₁⟩
+  | listLenErr ha iha =>
+    cases ho with
+    | listLen hoa =>
+      obtain ⟨ra', μ₁', ha', hra, hμ₁⟩ := lift_bwd ha iha hσ hB hoa hρ hμ
+      cases hra with
+      | err hk => exact ⟨_, _, .listLenErr ha', .err hk, hμ₁⟩
   | ref hv ihv =>
     cases ho with
     | ref hov =>

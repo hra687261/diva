@@ -409,6 +409,9 @@ def aevalM [NumDomain A] (opt ext : Bool) (H : Hints A) (σ : AEnv A) : Expr →
     if ext then AVal.ofFlat (Hints.joinAt H.cell (aevalM opt ext H σ a).arrs) else AVal.top
   | .len a =>
     if ext then AVal.ofFlat (Hints.joinAt H.len (aevalM opt ext H σ a).arrs) else AVal.top
+  -- the number of elements of a list: an integer, with `ext` one of the lengths of the
+  -- lists `a` may be
+  | .listLen a => AVal.ofInt (if ext then (aevalM opt ext H σ a).lenI else AbsDomain.top)
   | .assign _ _ | .set _ _ _ => if ext then AVal.unitV else AVal.top
   -- exceptions, only with `ext`: the value of `try a with k -> h` is that of `a`, or
   -- that of `h` if `a` may raise an exception
@@ -529,6 +532,7 @@ def mayFailM [NumDomain A] (opt ext : Bool) (H : Hints A) (σ : AEnv A) : Expr �
     else true
   | .len a =>
     if ext then mayFailM opt ext H σ a || !(aevalM opt ext H σ a).arrsOnly else true
+  | .listLen a => mayFailM opt ext H σ a || !(aevalM opt ext H σ a).within Flat.listV
   -- exceptions, only with `ext`. Then `mayFail` says whether `e` may stop with an error
   -- that isn't an exception, and `raisesM` gives the exceptions `e` may raise.
   | .raise v =>
@@ -602,7 +606,7 @@ def raisesM [NumDomain A] (opt ext : Bool) (H : Hints A) (σ : AEnv A) : Expr �
     (raisesM opt ext H σ a).join (raisesM opt ext H σ b)
   | .set a i v =>
     ((raisesM opt ext H σ a).join (raisesM opt ext H σ i)).join (raisesM opt ext H σ v)
-  | .assert b | .len b | .ref _ b | .deref b | .ctor _ b => raisesM opt ext H σ b
+  | .assert b | .len b | .listLen b | .ref _ b | .deref b | .ctor _ b => raisesM opt ext H σ b
 
 end
 
@@ -1547,10 +1551,12 @@ theorem aeval_sound_aux [NumDomain A] {ρ : Env} {μ μ' : Store} {e : Expr} {r 
     simp only [aeval, aevalM, hff, hse, Option.map_some, ↓reduceIte]
     exact joinOpt_sound_r (ihe hde (AEnv.assume_bound hB hse) hr)
   | assert | ctor => intro H σ v hσ hB hr; cases hr; exact .flat rfl
+  | listLen _ _ => intro H σ v hσ hB hr; cases hr; exact .flat (top_sound _)
   -- the rules giving an error: no value
   | varErr | appNotFn | appErrF | appErrA | letinErr | ifNotBool | ifErr
   | binopErrL | binopErrR | consNotList | consErrL | consErrR | matchNotList | matchErr
-  | assertF | assertNotBool | assertErr | ctorErr | raise | raiseNotCtor | raiseErr =>
+  | assertF | assertNotBool | assertErr | ctorErr | raise | raiseNotCtor | raiseErr
+  | listLenNotList | listLenErr =>
     intro H σ v hσ hB hr
     cases hr
   -- the expressions not analysed yet: `top`

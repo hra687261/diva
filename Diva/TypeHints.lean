@@ -73,7 +73,8 @@ def sourceName (x : String) : String :=
 /-- The sub-expressions of `e`, in the order of the positions of `Loc`. -/
 def Expr.kids : Expr → List Expr
   | .int _ | .bool _ | .unit | .var _ | .nil => []
-  | .lam _ b | .assert b | .len b | .ref _ b | .deref b | .ctor _ b | .raise b => [b]
+  | .lam _ b | .assert b | .len b | .listLen b | .ref _ b | .deref b | .ctor _ b | .raise b =>
+    [b]
   | .app a b | .letin _ a b | .letrec _ _ a b | .binop _ a b | .cons a b | .get a b
   | .assign a b | .alloc _ a b | .tryw a _ b => [a, b]
   | .ite a b c | .matchList a b _ _ c | .set a b c | .ctorCase a _ _ b c => [a, b, c]

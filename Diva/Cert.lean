@@ -50,6 +50,7 @@ def expr : Expr → String
   | .get a i => s!"(.get {expr a} {expr i})"
   | .set a i v => s!"(.set {expr a} {expr i} {expr v})"
   | .len a => s!"(.len {expr a})"
+  | .listLen a => s!"(.listLen {expr a})"
   | .ref site v => s!"(.ref {site} {expr v})"
   | .deref r => s!"(.deref {expr r})"
   | .assign r v => s!"(.assign {expr r} {expr v})"

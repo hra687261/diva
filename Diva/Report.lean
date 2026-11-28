@@ -189,6 +189,10 @@ def diagnose (H : Hints A) (place code : Span → String) :
     let aa := aevalExt H σ a
     diagnose H place code σ a (l.kid 0) ++
       (if aa.arrsOnly then [] else [msg l s!"{snippet code e l}: may not be an array ({aa})"])
+  | σ, e@(.listLen a), l =>
+    let va := aevalExt H σ a
+    diagnose H place code σ a (l.kid 0) ++
+      (if va.within Flat.listV then [] else [msg l s!"{snippet code e l}: may not be a list ({va})"])
   -- exceptions (as in `mayFailExt`)
   | σ, .ctor _ a, l => diagnose H place code σ a (l.kid 0)
   | σ, e@(.raise v), l =>

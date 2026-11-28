@@ -124,6 +124,9 @@ def check (t : IntType) : Expr → Loc → Except (Int × Span) LExpr
   | .len a, l => do
     let a ← check t a (l.kid 0)
     return ⟨.len a.expr, .node l.span [a.loc]⟩
+  | .listLen a, l => do
+    let a ← check t a (l.kid 0)
+    return ⟨.listLen a.expr, .node l.span [a.loc]⟩
   | .ref site v, l => do
     let v ← check t v (l.kid 0)
     return ⟨.ref site v.expr, .node l.span [v.loc]⟩

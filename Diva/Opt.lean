@@ -170,6 +170,7 @@ def opt (H : Hints A) (E : Bool) (σ : AEnv A) (e : Expr) : Expr :=
     | .get a i => .get (opt H E σ a) (opt H E σ i)
     | .set a i v => .set (opt H E σ a) (opt H E σ i) (opt H E σ v)
     | .len a => .len (opt H E σ a)
+    | .listLen a => .listLen (opt H E σ a)
     | .ref site v => .ref site (opt H E σ v)
     | .deref r => .deref (opt H E σ r)
     | .assign r v => .assign (opt H E σ r) (opt H E σ v)

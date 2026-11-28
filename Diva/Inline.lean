@@ -93,6 +93,7 @@ partial def expand (D : List (String × Def)) : Expr → Loc → LExpr
   | .set a i v, l =>
     three .set (expand D a (l.kid 0)) (expand D i (l.kid 1)) (expand D v (l.kid 2)) l
   | .len a, l => one .len (expand D a (l.kid 0)) l
+  | .listLen a, l => one .listLen (expand D a (l.kid 0)) l
   | .ref s v, l => one (.ref s) (expand D v (l.kid 0)) l
   | .deref r, l => one .deref (expand D r (l.kid 0)) l
   | .assign r v, l => two .assign (expand D r (l.kid 0)) (expand D v (l.kid 1)) l

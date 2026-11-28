@@ -114,6 +114,9 @@ def wp (S : Contracts) : List RecFun → Expr → CPost → Env → Store → Pr
     wp S Γ a (fun ca μ₁ =>
       wp S Γ b (fun cb μ₂ => cb.value.isList = true ∧ K (.val (.cons ca.value cb.value)) μ₂)
         ρ μ₁) ρ μ
+  -- the number of elements of a list
+  | Γ, .listLen a, K, ρ, μ =>
+    wp S Γ a (fun ca μ₁ => ca.value.isList = true ∧ K (.val (.int ca.value.lengthNat)) μ₁) ρ μ
   -- the branch for `[]`, and the branch for `h :: t`, with `x` and `xs` bound
   | Γ, .matchList s n x xs c, K, ρ, μ =>
     wp S Γ s (fun cs μ₁ => cs.value.isList = true ∧
@@ -331,6 +334,22 @@ theorem wp_sound {S : Contracts} {ρ : Env} {μ : Store} {e : Expr} {r : Outcome
     cases ra
     obtain ⟨_, rb, _⟩ := ihb Γ _ hv hb
     cases rb
+  | listLen _ _ iha =>
+    intro Γ K hv hw
+    obtain ⟨_, ra, _, _, hq⟩ := iha Γ _ hv hw
+    cases ra
+    exact ⟨.val _, rfl, trivial, hq⟩
+  | listLenNotList _ hnl iha =>
+    intro Γ K hv hw
+    obtain ⟨_, ra, _, hl, _⟩ := iha Γ _ hv hw
+    cases ra
+    -- `a` gave a list, by `wp`, and a value that isn't a list, by the run
+    rw [hl] at hnl
+    cases hnl
+  | listLenErr _ iha =>
+    intro Γ K hv hw
+    obtain ⟨_, ra, _⟩ := iha Γ _ hv hw
+    cases ra
   | matchNil _ _ ihs ihn =>
     intro Γ K hv hw
     obtain ⟨_, rs, _, _, hn, _⟩ := ihs Γ _ hv hw

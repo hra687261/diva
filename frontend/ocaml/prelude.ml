@@ -24,11 +24,6 @@ let succ n = n + 1
 let pred n = n - 1
 
 module List = struct
-  let rec length_aux len = function
-    | [] -> len
-    | _ :: l -> length_aux ((len + 1) [@diva.unchecked]) l
-
-  let length l = length_aux 0 l
   let hd = function [] -> failwith "hd" | a :: _ -> a
   let tl = function [] -> failwith "tl" | _ :: l -> l
 
