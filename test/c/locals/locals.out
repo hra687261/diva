@@ -1,0 +1,22 @@
+$ diva c run locals.c
+10106
+[exit 0]
+
+$ diva c check locals.c
+no runtime error is possible
+[exit 0]
+
+$ diva c opt locals.c
+(let main = (fun _ -> 10106) in (main ()))
+[exit 0]
+
+$ diva c hints locals.c
+_#0 : ()
+[exit 0]
+
+$ diva c cert --check locals.c
+[diva] running Lean on locals.lean
+wrote locals.lean
+certificate checked by Lean: the program never fails
+[exit 0]
+

@@ -10,8 +10,9 @@ parses and type-checks the file, and prints its tree in JSON. `translate` transl
 tree to the items of DIVA's core language, with their positions, as the OCaml frontend
 does. The program is the functions of the file, then the call `main ()`.
 
-The C that is supported, so far: functions with `int` parameters whose body is
-`return e;`, where `e` is an expression on `int`s (literals, parameters, `+`, `-`, `*`,
+The C that is supported, so far: functions with `int` parameters, whose bodies have
+locals of type `int`, assignments to them (`=`, `+=`, `++`, ...) and `return`, and
+expressions on `int`s (literals, parameters, `+`, `-`, `*`,
 `/`, `%`, comparisons, `&&`, `||`, `!`, `c ? a : b`). Each `+`, `-`, `*` and `/` checks that
 its result fits in an `int`: signed overflow is undefined behaviour. `a % b` checks that
 `a / b` fits (only `INT_MIN % -1` doesn't). A condition is a boolean of the core language:
@@ -198,14 +199,107 @@ where
 
 end
 
-/-- The body of a function: `{ return e; }`. -/
-def body (env : Env) (t : Json) : M LExpr :=
+/-! ## Statements
+
+A statement is translated with the code that comes after it, its continuation `k`
+(continuation-passing style): `int x = e; rest` is `let x = e in rest`. Each local of a
+function has its own name in the core language, so a local that hides another one in a
+block gets another name, and the code after the block sees the first one again. An
+assignment `x = e;` binds the name of `x` again: `let x = e in rest`. `return e;` gives
+`e`, without its continuation. -/
+
+/-- The translation of statements, which also gives each local of the function its own
+    name: the state is the names used so far. -/
+abbrev S := StateT (List String) M
+
+/-- A name for the local `x` that the function doesn't use yet: `x`, else `x%2`, ... -/
+def fresh (x : String) : S String := do
+  let used ← get
+  let t := (used.filter fun u => u == x || u.startsWith (x ++ "%")).length
+  let y := if t == 0 then x else s!"{x}%{t + 1}"
+  set (y :: used)
+  return y
+
+/-- `let x = e in rest`, with the positions of `t`. -/
+def letin (t : Json) (x : String) (e rest : LExpr) : LExpr :=
+  node t (.letin x e.expr rest.expr) [e, rest]
+
+/-- The name of the local that `t` refers to (`DeclRefExpr`), with the casts of clang
+    around it. -/
+partial def local? (env : Env) (t : Json) : Option String :=
   match kind t, inner t with
-  | "CompoundStmt", [s] =>
-    match kind s, inner s with
-    | "ReturnStmt", [e] => expr env e
-    | _, _ => unsupported s "this statement"
-  | _, _ => unsupported t "this body (only `{ return e; }`)"
+  | "DeclRefExpr", [] => ((field t "referencedDecl").bind (str · "id")).bind (List.lookup · env)
+  | "ParenExpr", [a] => local? env a
+  | _, _ => none
+
+/-- The expression statement `t`: an assignment to a local (`x = e`, `x += e`, `x++`,
+    `--x`, ...), or an expression whose value is dropped. -/
+def exprStmt (env : Env) (t : Json) (k : Env → S LExpr) : S LExpr := do
+  -- `x = v op e`, with the check of `op` (`remChecked` for `%`)
+  let update (x : String) (op : BinOp) (e : LExpr) : LExpr :=
+    let v : LExpr := ⟨.var x, .leaf (span t)⟩
+    if op == .mod then remChecked t v e
+    else checked t op (node t (.binop op v.expr e.expr) [v, e])
+  match kind t, str t "opcode", inner t with
+  | "BinaryOperator", some "=", [l, r] =>
+    let some x := local? env l | unsupported l "an assignment to this"
+    return letin t x (← expr env r) (← k env)
+  | "CompoundAssignOperator", some op, [l, r] =>
+    let some x := local? env l | unsupported l "an assignment to this"
+    let some o := arith (String.ofList (op.toList.dropLast)) | unsupported t s!"the operator `{op}`"
+    return letin t x (update x o (← expr env r)) (← k env)
+  | "UnaryOperator", some op, [l] =>
+    if op == "++" || op == "--" then
+      let some x := local? env l | unsupported l "an assignment to this"
+      let o := if op == "++" then BinOp.add else .sub
+      return letin t x (update x o (int t 1)) (← k env)
+    else return letin t "_" (← expr env t) (← k env)
+  | _, _, _ => return letin t "_" (← expr env t) (← k env)
+
+/-- The locals declared by `ds` (`int x = e, y;`), then `k`. A local without a value is
+    `0`: reading it is undefined behaviour in C (not reported yet). -/
+def decls (env : Env) (ds : List Json) (k : Env → S LExpr) : S LExpr := do
+  match ds with
+  | [] => k env
+  | d :: ds =>
+    unless kind d == "VarDecl" do unsupported d "this declaration"
+    unless qualType d == "int" do unsupported d s!"the type `{qualType d}`"
+    let some id := str d "id" | unsupported d "a declaration without an id"
+    let some x := str d "name" | unsupported d "a declaration without a name"
+    let e ← match inner d with
+      | [e] => expr env e
+      | _ => pure (int d 0)
+    let y ← fresh x
+    return letin d y e (← decls ((id, y) :: env) ds k)
+
+mutual
+
+/-- The statement `s`, then `k` with the names in scope after `s`. -/
+partial def stmt (env : Env) (s : Json) (k : Env → S LExpr) : S LExpr := do
+  match kind s, inner s with
+  -- the locals of a block are only in scope in the block
+  | "CompoundStmt", ss => stmts env ss fun _ => k env
+  | "DeclStmt", ds => decls env ds k
+  | "ReturnStmt", [e] => expr env e
+  | "NullStmt", _ => k env
+  | k', _ =>
+    if k'.endsWith "Stmt" then unsupported s s!"this statement ({k'})"
+    else exprStmt env s k
+
+/-- The statements `ss`, one after the other, then `k`. -/
+partial def stmts (env : Env) (ss : List Json) (k : Env → S LExpr) : S LExpr :=
+  match ss with
+  | [] => k env
+  | s :: ss => stmt env s fun env => stmts env ss k
+
+end
+
+/-- The body `t` of the function `f`. If it ends without `return`, `main` gives `0`, as
+    in C, and the other functions `()`: their result is undefined in C, and `()` makes
+    any use of it an error. `names` are the names of the parameters. -/
+def body (f : String) (env : Env) (names : List String) (t : Json) : M LExpr :=
+  let fallOff : LExpr := if f == "main" then int t 0 else ⟨.unit, .leaf (span t)⟩
+  (stmt env t fun _ => pure fallOff).run' names
 
 /-- The type `int` of C, for the hints of `--entry`: the integers of 32 bits. -/
 def intTy : Ty := .range IntType.int32.min IntType.int32.max
@@ -224,7 +318,7 @@ def function (t : Json) : M (String × Item × Loc × List TypeHint) := do
     let some x := str p "name" | unsupported p "a parameter without a name"
     return (id, x)
   let some b := (inner t).getLast? | unsupported t "a function without a body"
-  let b ← body env b
+  let b ← body f env (env.map (·.2)) b
   let names := if env.isEmpty then ["_"] else env.map (·.2)
   let e := names.foldr (fun x b => node t (.lam x b.expr) [b]) b
   let sp := span t

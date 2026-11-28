@@ -3,7 +3,7 @@ runtime error: assertion failed
 [exit 1]
 
 $ diva c check overflow.c
-overflow.c:12:24-38: `2147483647 + 1`: may overflow 32-bit integers (result: 2147483648) (in the call `main`)
+overflow.c:16:24-38: `2147483647 + 1`: may overflow 32-bit integers (result: 2147483648) (in the call `main`)
 [exit 1]
 
 $ diva c opt overflow.c
@@ -18,7 +18,9 @@ x#3 : ⊥
 x#4 : ⊥
 y#5 : ⊥
 x#6 : ⊥
-_#7 : ()
+y#7 : ⊥
+x#8 : ⊥
+_#9 : ()
 [exit 0]
 
 $ diva c cert --check overflow.c
@@ -28,12 +30,14 @@ the program may fail, so there is no certificate (see `diva check`)
 $ diva c check --entry avg,half,neg overflow.c
 overflow.c:4:32-37: `x + y`: may overflow 32-bit integers (result: [-4294967296, 4294967294])
 overflow.c:6:24-26: `-x`: may overflow 32-bit integers (result: [-2147483647, 2147483648])
-overflow.c:12:24-38: `2147483647 + 1`: may overflow 32-bit integers (result: 2147483648) (in the call `main`)
+overflow.c:16:24-38: `2147483647 + 1`: may overflow 32-bit integers (result: 2147483648) (in the call `main`)
 [exit 1]
 
-$ diva c check --entry rem,rem10 overflow.c
+$ diva c check --entry rem,rem10,rem_assign overflow.c
 overflow.c:10:31-36: `x % y` may fail
 overflow.c:10:31-36: `x % y`: possible division by zero (divisor: [-2147483648, 2147483647])
-overflow.c:12:24-38: `2147483647 + 1`: may overflow 32-bit integers (result: 2147483648) (in the call `main`)
+overflow.c:12:2-8: `x %= y` may fail
+overflow.c:12:2-8: `x %= y`: possible division by zero (divisor: [-2147483648, 2147483647])
+overflow.c:16:24-38: `2147483647 + 1`: may overflow 32-bit integers (result: 2147483648) (in the call `main`)
 [exit 1]
 
