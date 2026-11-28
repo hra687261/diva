@@ -12,9 +12,11 @@ does. The program is the functions of the file, then the call `main ()`.
 
 The C that is supported, so far: functions with `int` parameters whose body is
 `return e;`, where `e` is an expression on `int`s (literals, parameters, `+`, `-`, `*`,
-`/`, `%`). Each `+`, `-`, `*` and `/` checks that its result fits in an `int`: signed
-overflow is undefined behaviour. `a % b` checks that `a / b` fits (only `INT_MIN % -1`
-doesn't). Anything else is rejected, with its position.
+`/`, `%`, comparisons, `&&`, `||`, `!`, `c ? a : b`). Each `+`, `-`, `*` and `/` checks that
+its result fits in an `int`: signed overflow is undefined behaviour. `a % b` checks that
+`a / b` fits (only `INT_MIN % -1` doesn't). A condition is a boolean of the core language:
+a comparison, or `c != 0` for another `int`. A condition used as a value is `1` or `0`.
+Anything else is rejected, with its position.
 -/
 
 namespace Diva.C
@@ -107,13 +109,40 @@ def remChecked (t : Json) (a b : LExpr) : LExpr :=
   -- `a` and `b` are computed once, before the check
   letin "%a" a (letin "%b" b (letin "_" check rem))
 
+/-- The comparison of C `op`, on `int`s: its result is a boolean of the core language. -/
+def cmp : String → Option BinOp
+  | "<" => some .lt | "<=" => some .le | ">" => some .gt | ">=" => some .ge
+  | "==" => some .eq | "!=" => some .ne
+  | _ => none
+
+/-- The node `t` is a condition of C: a comparison, `&&`, `||` or `!`. Its value is `0` or
+    `1`, and `cond` gives it as a boolean. -/
+def isCond (t : Json) : Bool :=
+  match kind t, str t "opcode" with
+  | "BinaryOperator", some op => (cmp op).isSome || op == "&&" || op == "||"
+  | "UnaryOperator", some "!" => true
+  | _, _ => false
+
+/-- `if c then a else b`, with the positions of `t`. -/
+def ite (t : Json) (c a b : LExpr) : LExpr := node t (.ite c.expr a.expr b.expr) [c, a, b]
+
+/-- The boolean `b`, with the positions of `t`. -/
+def bool (t : Json) (b : Bool) : LExpr := ⟨.bool b, .leaf (span t)⟩
+
+/-- The integer `v`, with the positions of `t`. -/
+def int (t : Json) (v : Int) : LExpr := ⟨.int v, .leaf (span t)⟩
+
+mutual
+
 /-- The expression `t`, of type `int`. `env` gives the names in scope. -/
 partial def expr (env : Env) (t : Json) : M LExpr := do
   unless qualType t == "int" do unsupported t s!"the type `{qualType t}`"
+  -- a condition used as a value: `1` if it holds, else `0`
+  if isCond t then return ite t (← cond env t) (int t 1) (int t 0)
   match kind t, inner t with
   | "IntegerLiteral", [] =>
     match (str t "value").bind String.toInt? with
-    | some v => return ⟨.int v, .leaf (span t)⟩
+    | some v => return int t v
     | none => unsupported t "this constant"
   | "ParenExpr", [a] => expr env a
   | "DeclRefExpr", [] =>
@@ -137,10 +166,37 @@ partial def expr (env : Env) (t : Json) : M LExpr := do
     | some "+" => expr env a
     | some "-" =>
       let a ← expr env a
-      let zero : LExpr := ⟨.int 0, .leaf (span t)⟩
+      let zero := int t 0
       return checked t .sub (node t (.binop .sub zero.expr a.expr) [zero, a])
     | op => unsupported t s!"the operator `{op.getD ""}`"
+  -- `c ? a : b`
+  | "ConditionalOperator", [c, a, b] => return ite t (← cond env c) (← expr env a) (← expr env b)
   | k, _ => unsupported t s!"this expression ({k})"
+
+/-- The condition `t` as a boolean: a comparison, `&&` and `||` (which compute their right
+    side only if they need it), `!`, or an `int` that holds if it isn't `0`. -/
+partial def cond (env : Env) (t : Json) : M LExpr := do
+  match kind t, str t "opcode", inner t with
+  | "ParenExpr", _, [a] => cond env a
+  | "BinaryOperator", some "&&", [a, b] => return ite t (← cond env a) (← cond env b) (bool t false)
+  | "BinaryOperator", some "||", [a, b] => return ite t (← cond env a) (bool t true) (← cond env b)
+  | "UnaryOperator", some "!", [a] => return ite t (← cond env a) (bool t false) (bool t true)
+  | "BinaryOperator", some op, [a, b] =>
+    match cmp op with
+    | some op =>
+      let a ← expr env a
+      let b ← expr env b
+      return node t (.binop op a.expr b.expr) [a, b]
+    | none => ne0 t
+  | _, _, _ => ne0 t
+where
+  /-- `t != 0`. -/
+  ne0 (t : Json) : M LExpr := do
+    let a ← expr env t
+    let zero := int t 0
+    return node t (.binop .ne a.expr zero.expr) [a, zero]
+
+end
 
 /-- The body of a function: `{ return e; }`. -/
 def body (env : Env) (t : Json) : M LExpr :=
