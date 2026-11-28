@@ -1,0 +1,3 @@
+check --entry avg,safe
+check --entry inv
+hints --entry avg,safe,inv

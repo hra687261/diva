@@ -1,0 +1,42 @@
+$ diva c run params.c
+0
+[exit 0]
+
+$ diva c check params.c
+no runtime error is possible
+[exit 0]
+
+$ diva c opt params.c
+(let main = (fun _ -> 0) in (main ()))
+[exit 0]
+
+$ diva c hints params.c
+x#0 : ⊥
+y#1 : ⊥
+x#2 : ⊥
+x#3 : ⊥
+_#4 : ()
+[exit 0]
+
+$ diva c cert --check params.c
+[diva] running Lean on params.lean
+wrote params.lean
+certificate checked by Lean: the program never fails
+[exit 0]
+
+$ diva c check --entry avg,safe params.c
+no runtime error is possible
+[exit 0]
+
+$ diva c check --entry inv params.c
+params.c:6:24-29: `1 / x`: possible division by zero (divisor: [-2147483648, 2147483647])
+[exit 1]
+
+$ diva c hints --entry avg,safe,inv params.c
+x#0 : [-2147483648, 2147483647]
+y#1 : [-2147483648, 2147483647]
+x#2 : [-2147483648, 2147483647]
+x#3 : [-2147483648, 2147483647]
+_#4 : ()
+[exit 0]
+
