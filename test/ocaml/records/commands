@@ -1,2 +1,3 @@
 hints --entry manhattan,on_axis
 check --entry manhattan
+check --entry bump

@@ -19,6 +19,10 @@ let on_axis = function { x = 0; _ } | { y = 0; _ } -> true | _ -> false
 (* records inside records *)
 let s = { from = p; upto = q }
 let len = manhattan { x = s.upto.x - s.from.x; y = s.upto.y - s.from.y }
+
+(* a parameter of type `int ref`. With `--entry bump`, `r` is any value: a ref given by
+   other code has no allocation site in the program, so `!r` is reported *)
+let bump (r : int ref) = r := !r + 1
 ;;
 
 a + len + if on_axis p then 1 else 0

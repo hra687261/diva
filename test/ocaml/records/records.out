@@ -14,6 +14,7 @@ $ diva ocaml hints records.ml
 x#0 : [0, 2]
 %t8#1 : (0, 2)
 %t13#2 : (3, 0)
+r#3 : ⊥
 [exit 0]
 
 $ diva ocaml cert --check records.ml
@@ -28,11 +29,17 @@ $ diva ocaml hints --entry manhattan,on_axis records.ml
 x#0 : [-4611686018427387904, 4611686018427387903]
 %t8#1 : ([-4611686018427387904, 4611686018427387903], [-4611686018427387904, 4611686018427387903])
 %t13#2 : ([-4611686018427387904, 4611686018427387903], [-4611686018427387904, 4611686018427387903])
+r#3 : ⊥
 [exit 0]
 
 $ diva ocaml check --entry manhattan records.ml
 prelude: `(0 - x)`: may overflow 63-bit integers (result: [1, 4611686018427387904]) (in the call `abs y`)
 prelude: `(0 - x)`: may overflow 63-bit integers (result: [1, 4611686018427387904]) (in the call `abs x`)
 records.ml:16:25-38: `abs x + abs y`: may overflow 63-bit integers (result: [0, 9223372036854775808])
+[exit 1]
+
+$ diva ocaml check --entry bump records.ml
+records.ml:25:30-32: `!r`: may not be a ref (⊤)
+records.ml:25:25-36: `r := !r + 1`: may not be a ref (⊤)
 [exit 1]
 

@@ -179,6 +179,10 @@ let ctors : (string, string) Hashtbl.t = Hashtbl.create 16
    keyed by the part of the file of its [Lam] and its name. *)
 let types : (Location.t * string * ty) list ref = ref []
 
+(* The path of the type [ref] of the library. Its values are DIVA's refs, not records:
+   [{ contents = v }] is [ref v], and [r.contents] is [!r]. *)
+let ref_path : Path.t option ref = ref None
+
 (* TODO: maybe use a record to represent the state *)
 
 (**** S-expressions ****)
@@ -350,6 +354,16 @@ let kind env ty =
   | Tvar _ -> `Var
   | _ -> `Other
 
+(* [p] is the type [ref] of the library ([ref_path]). *)
+let is_ref_type p =
+  match !ref_path with Some q -> Path.same p q | None -> false
+
+(* [l] is the field [contents] of the type [ref]. *)
+let is_ref_label (l : Data_types.label_description) =
+  match Types.get_desc l.lbl_res with
+  | Tconstr (p, _, _) -> is_ref_type p
+  | _ -> false
+
 (* The type [t], down to [depth] levels. A type variable is [Ty_any]. *)
 let rec type_of env depth (t : Types.type_expr) =
   let sub = type_of env (depth - 1) in
@@ -369,6 +383,8 @@ let rec type_of env depth (t : Types.type_expr) =
     | Tconstr (p, [ a ], _) when Path.same p Predef.path_list -> Ty_list (sub a)
     | Tconstr (p, [ a ], _) when Path.same p Predef.path_option ->
         Ty_variant [ ("None", None); ("Some", Some (sub a)) ]
+    (* a ref isn't described by the types: any value *)
+    | Tconstr (p, _, _) when is_ref_type p -> Ty_any
     | Tconstr (p, _, _) -> (
         (* a variant type of the program. The arguments that use the parameters of the
            type are [Ty_any]. *)
@@ -481,7 +497,13 @@ let init_library env =
       match stdlib_path env (String.split_on_char '.' name) with
       | Some p -> library_paths := Path.Map.add p f !library_paths
       | None -> failwith ("no library function Stdlib." ^ name))
-    library_names
+    library_names;
+  match Longident.unflatten [ "Stdlib"; "ref" ] with
+  | Some lid -> (
+      match Env.find_type_by_name lid env with
+      | p, _ -> ref_path := Some p
+      | exception Not_found -> ())
+  | None -> ()
 
 (* The name of [p], such as [Stdlib.mod], from its parts. [Path.name] writes a keyword
    used as a name after [\#]: [Stdlib.\#mod]. *)
@@ -745,6 +767,19 @@ let rec expr (e : expression) : expr =
           es
       in
       ordered loc es (tuple loc)
+  (* the type [ref]: DIVA's refs *)
+  | Texp_record { fields = [| (l, def) |]; extended_expression; _ }
+    when is_ref_label l -> (
+      match (def, extended_expression) with
+      | Overridden (_, e), None -> mk loc (Ref (expr e))
+      | Overridden (_, e), Some e0 -> seq loc (expr e0) (mk loc (Ref (expr e)))
+      | Kept _, Some e0 -> mk loc (Ref (mk loc (Deref (expr e0))))
+      | Kept _, None -> assert false)
+  | Texp_field (e, _, l) when is_ref_label l -> mk loc (Deref (expr e))
+  | Texp_setfield (e, _, l, v) when is_ref_label l ->
+      ordered loc [ e; v ] (function
+        | [ e; v ] -> mk loc (Assign (e, v))
+        | _ -> assert false)
   | Texp_record { fields; extended_expression; _ } -> (
       if Array.exists (fun (l, _) -> is_mutable l) fields then
         unsupported loc "mutable fields (for now)";
@@ -1140,6 +1175,12 @@ and pattern (p : pattern) v ok ko =
           in
           mk loc (CtorCase (var loc v, c, x, inner, ko)))
   | Tpat_or (p1, p2, _) -> pattern p1 v ok (pattern p2 v ok ko)
+  | Tpat_record ([ (_, l, q) ], _) when is_ref_label l -> (
+      match q.pat_desc with
+      | Tpat_any -> ok
+      | _ ->
+          let x = name_for q in
+          letin loc x (mk loc (Deref (var loc v))) (pattern q x ok ko))
   | Tpat_record (fs, _) -> (
       match fs with
       | [] -> ok
