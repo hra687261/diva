@@ -31,3 +31,4 @@ import Diva.ProveOracle
 import Diva.Grammar
 import Diva.ContractOracle
 import Diva.SynthOracle
+import Diva.C

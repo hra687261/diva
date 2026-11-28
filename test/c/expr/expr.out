@@ -1,0 +1,22 @@
+$ diva c run expr.c
+19
+[exit 0]
+
+$ diva c check expr.c
+no runtime error is possible
+[exit 0]
+
+$ diva c opt expr.c
+(let main = (fun _ -> ((21 - (3 mod 2)) + -1)) in (main ()))
+[exit 0]
+
+$ diva c hints expr.c
+_#0 : ()
+[exit 0]
+
+$ diva c cert --check expr.c
+[diva] running Lean on expr.lean
+wrote expr.lean
+certificate checked by Lean: the program never fails
+[exit 0]
+

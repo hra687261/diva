@@ -31,22 +31,52 @@ def frontendPath : IO String := do
     throw (IO.userError "the OCaml frontend isn't built: run frontend/ocaml/build.sh")
   return p.toString
 
-/-- How the commands read the file, and the types of its parameters. Under `diva ocaml`,
-    the OCaml frontend translates the file, and the commands read its S-expressions
-    (`Sexp.items`), with the types (`Sexp.types`). Otherwise, DIVA's parser reads the
-    file, and there are no types. -/
-def fileReader (p : Parsed) : IO (Reader × List TypeHint) := do
-  unless p.cmd.meta.parentNames.contains "ocaml" do return (parseItemsLoc, [])
-  let path := p.positionalArg! "file" |>.as! String
+/-- The C program `path`, read by clang, then translated by DIVA's C frontend
+    (`C.translate`). A translation error is given as a reader that fails, so that it has
+    the position of the code in the file. -/
+def cReader (path : String) : IO (Reader × List TypeHint) := do
+  if path == "-" then throw (IO.userError "`diva c` needs a file, not `-`")
+  let args := #["-Xclang", "-ast-dump=json", "-fsyntax-only",
+    "-Wno-unused-command-line-argument", path]
+  let out ← IO.Process.output { cmd := "clang", args }
+  if out.exitCode != 0 then throw (IO.userError out.stderr.trimAsciiEnd.toString)
+  let tu ← IO.ofExcept ((Lean.Json.parse out.stdout).mapError IO.userError)
+  match C.translate tu path with
+  | .ok (items, types) => return (fun _ => .ok items, types)
+  | .error (sp, msg) => return (fun src => .error (C.locate src sp msg), [])
+
+/-- The OCaml program `path`, translated by the OCaml frontend: the commands read its
+    S-expressions (`Sexp.items`), with the types of the parameters (`Sexp.types`). -/
+def ocamlReader (path : String) : IO (Reader × List TypeHint) := do
   if path == "-" then throw (IO.userError "`diva ocaml` needs a file, not `-`")
   let out ← IO.Process.output { cmd := ← frontendPath, args := #[path] }
   if out.exitCode != 0 then throw (IO.userError out.stderr.trimAsciiEnd.toString)
   let types ← IO.ofExcept ((Sexp.types out.stdout).mapError IO.userError)
   return (fun _ => Sexp.items out.stdout, types)
 
+/-- The language of the file that a command reads. Each command is built for one language
+    (`runCmd l`, ...), and gives it to the function that runs it. -/
+inductive Lang where
+  /-- DIVA's native language: `diva CMD`. -/
+  | diva
+  /-- OCaml: `diva ocaml CMD`. -/
+  | ocaml
+  /-- C: `diva c CMD`. -/
+  | c
+
+/-- How the commands read the file, in the language `l`, and the types of its parameters:
+    DIVA's parser, without types, or the frontend of the language.
+-/
+def fileReader (l : Lang) (p : Parsed) : IO (Reader × List TypeHint) := do
+  let path := p.positionalArg! "file" |>.as! String
+  match l with
+  | .diva => return (parseItemsLoc, [])
+  | .ocaml => ocamlReader path
+  | .c => cReader path
+
 /-- How the commands read the program (`fileReader`, without the types). In DIVA's syntax,
     integers have no bound. -/
-def reader (p : Parsed) : IO Reader := return (← fileReader p).1
+def reader (l : Lang) (p : Parsed) : IO Reader := return (← fileReader l p).1
 
 /-- Runs `cmd`, which may do IO, on the file given as argument, and prints its
     result. -/
@@ -62,8 +92,8 @@ def runWith' (cmd : String → IO Commands.Result) (p : Parsed) : IO UInt32 := d
 def runWith (cmd : String → Commands.Result) : Parsed → IO UInt32 :=
   runWith' fun src => pure (cmd src)
 
-def runRun (p : Parsed) : IO UInt32 := do
-  runWith (Commands.run (file := some (fileName p)) (read := ← reader p)) p
+def runRun (l : Lang) (p : Parsed) : IO UInt32 := do
+  runWith (Commands.run (file := some (fileName p)) (read := ← reader l p)) p
 
 /-- The result of `reader`, or `none` if `seconds` seconds pass first (no limit if
     `seconds` is `none`). A second task, `timer`, sleeps for `seconds` seconds.
@@ -119,19 +149,19 @@ def oracleOf (p : Parsed) (cmd : String) : IO (String → IO String) := do
 
 /-- `diva check`. With `--oracle CMD`, the shell command `CMD` (an LLM, for example)
     is asked for hints when the check fails. `diva` checks them. -/
-def runCheck (p : Parsed) : IO UInt32 :=
+def runCheck (l : Lang) (p : Parsed) : IO UInt32 :=
   match p.flag? "oracle" with
   | none => do
-    let (read, types) ← fileReader p
+    let (read, types) ← fileReader l p
     runWith (Commands.check (depth := depth p) (file := some (fileName p))
       (read := read) (types := types) (entries := entries p)) p
   | some cmd => do
-    let (read, types) ← fileReader p
+    let (read, types) ← fileReader l p
     runWith' (Commands.checkOracle (← oracleOf p (cmd.as! String)) (rounds p)
       (depth := depth p) (file := some (fileName p)) (read := read) (types := types) (entries := entries p)) p
 
-def runHints (p : Parsed) : IO UInt32 := do
-  let (read, types) ← fileReader p
+def runHints (l : Lang) (p : Parsed) : IO UInt32 := do
+  let (read, types) ← fileReader l p
   runWith (Commands.hints (depth := depth p) (file := some (fileName p))
     (read := read) (types := types) (entries := entries p)) p
 
@@ -200,25 +230,25 @@ def writeAndCheck (cmd : String → Commands.Result) (stdin ok : String) (p : Pa
 
 /-- `diva cert`: write the certificate, a Lean file stating that the program never
     fails. -/
-def runCert (p : Parsed) : IO UInt32 := do
-  writeAndCheck (Commands.cert (depth := depth p) (file := some (fileName p)) (read := ← reader p)) "cert.lean"
+def runCert (l : Lang) (p : Parsed) : IO UInt32 := do
+  writeAndCheck (Commands.cert (depth := depth p) (file := some (fileName p)) (read := ← reader l p)) "cert.lean"
     "certificate checked by Lean: the program never fails" p
 
 /-- `diva opt`: print the optimised program. With `--cert`, write the certificate of the
     optimisation instead, a Lean file stating that the two programs are equivalent. -/
-def runOpt (p : Parsed) : IO UInt32 := do
+def runOpt (l : Lang) (p : Parsed) : IO UInt32 := do
   let infer := p.hasFlag "infer"
   if p.hasFlag "cert" then
-    writeAndCheck (Commands.optCert (infer := infer) (depth := depth p) (file := some (fileName p)) (read := ← reader p)) "opt.lean"
+    writeAndCheck (Commands.optCert (infer := infer) (depth := depth p) (file := some (fileName p)) (read := ← reader l p)) "opt.lean"
       "certificate checked by Lean: the optimised program is equivalent to the program" p
-  else runWith (Commands.opt (infer := infer) (depth := depth p) (file := some (fileName p)) (read := ← reader p)) p
+  else runWith (Commands.opt (infer := infer) (depth := depth p) (file := some (fileName p)) (read := ← reader l p)) p
 
 /-- `diva prove`: write a Lean file stating that the functions meet their contracts.
     With `--oracle CMD`, the command `CMD` completes the proofs that Lean doesn't accept. -/
-def runProve (p : Parsed) : IO UInt32 :=
+def runProve (l : Lang) (p : Parsed) : IO UInt32 :=
   match p.flag? "oracle" with
   | none => do
-    writeAndCheck (Commands.prove (infer := p.hasFlag "infer") (depth := depth p) (file := some (fileName p)) (read := ← reader p))
+    writeAndCheck (Commands.prove (infer := p.hasFlag "infer") (depth := depth p) (file := some (fileName p)) (read := ← reader l p))
       "prove.lean"
       "checked by Lean: the functions meet their contracts, and the top-level expressions don't fail" p
   | some cmd => do
@@ -229,7 +259,7 @@ def runProve (p : Parsed) : IO UInt32 :=
       runLean p output
     let check := ParseProof.check (← proofEnv)
     runWith' (Commands.proveOracle (← oracleOf p (cmd.as! String)) lean check (rounds p)
-      (file := some (fileName p)) (read := ← reader p)) p
+      (file := some (fileName p)) (read := ← reader l p)) p
 
 /-- `diva spec --oracle CMD`: the command `CMD` writes the contracts of the functions
     that the functions with a contract call. Lean checks the file of `diva prove`, which
@@ -242,7 +272,7 @@ def runSpec (p : Parsed) : IO UInt32 := do
     IO.FS.writeFile output file
     runLean p output
   runWith' (Commands.specOracle (← oracleOf p (cmd.as! String)) lean (rounds p)
-    (file := some (fileName p)) (read := ← reader p)) p
+    (file := some (fileName p)) (read := ← reader .diva p)) p
 
 /-- `diva synth --oracle CMD`: the command `CMD` writes the code of the functions whose
     body is `assert false`. Lean checks the file of `diva prove`, which is written to
@@ -255,7 +285,7 @@ def runSynth (p : Parsed) : IO UInt32 := do
     IO.FS.writeFile output file
     runLean p output
   runWith' (Commands.synthOracle (← oracleOf p (cmd.as! String)) lean (rounds p)
-    (file := some (fileName p)) (read := ← reader p)) p
+    (file := some (fileName p)) (read := ← reader .diva p)) p
 
 /-- `diva` without a command: print the help. -/
 def runDiva (p : Parsed) : IO UInt32 := do
@@ -278,11 +308,14 @@ def entryDoc :=
 def timeoutDoc :=
   "How many seconds to wait for each answer of the oracle (no limit by default). If the time is up, the oracle is stopped, and `diva` stops with an error."
 
-def runPrint (p : Parsed) : IO UInt32 := do
-  runWith (Commands.print (file := some (fileName p)) (read := ← reader p)) p
+def runPrint (l : Lang) (p : Parsed) : IO UInt32 := do
+  runWith (Commands.print (file := some (fileName p)) (read := ← reader l p)) p
 
-def printCmd : Cmd := `[Cli|
-  print VIA runPrint;
+/-- `print`, for a file in the language `l`. -/
+def printCmd (l : Lang) : Cmd :=
+  let go := runPrint l
+  `[Cli|
+  print VIA go;
   "Print the program as DIVA reads it."
   FLAGS:
     quiet; quietDoc
@@ -290,8 +323,11 @@ def printCmd : Cmd := `[Cli|
     file : String; "The program (`-` reads the standard input)."
 ]
 
-def runCmd : Cmd := `[Cli|
-  run VIA runRun;
+/-- `run`, for a file in the language `l`. -/
+def runCmd (l : Lang) : Cmd :=
+  let go := runRun l
+  `[Cli|
+  run VIA go;
   "Evaluate the program and print its return value."
   FLAGS:
     quiet; quietDoc
@@ -301,8 +337,11 @@ def runCmd : Cmd := `[Cli|
 
 def checkOracleDoc := oracleDoc ++ " It proposes hints, which are checked."
 
-def checkCmd : Cmd := `[Cli|
-  check VIA runCheck;
+/-- `check`, for a file in the language `l`. -/
+def checkCmd (l : Lang) : Cmd :=
+  let go := runCheck l
+  `[Cli|
+  check VIA go;
   "Say where the program may fail. Exits with 1 if it may fail."
   FLAGS:
     entry : Array String; entryDoc
@@ -315,8 +354,11 @@ def checkCmd : Cmd := `[Cli|
     file : String; "The program (`-` reads the standard input)."
 ]
 
-def optCmd : Cmd := `[Cli|
-  opt VIA runOpt;
+/-- `opt`, for a file in the language `l`. -/
+def optCmd (l : Lang) : Cmd :=
+  let go := runOpt l
+  `[Cli|
+  opt VIA go;
   "Optimize the program and print it."
   FLAGS:
     depth : Nat; depthDoc
@@ -329,8 +371,11 @@ def optCmd : Cmd := `[Cli|
     file : String; "The program (`-` reads the standard input)."
 ]
 
-def hintsCmd : Cmd := `[Cli|
-  hints VIA runHints;
+/-- `hints`, for a file in the language `l`. -/
+def hintsCmd (l : Lang) : Cmd :=
+  let go := runHints l
+  `[Cli|
+  hints VIA go;
   "Print the hints inferred for the program."
   FLAGS:
     entry : Array String; entryDoc
@@ -340,8 +385,11 @@ def hintsCmd : Cmd := `[Cli|
     file : String; "The program (`-` reads the standard input)."
 ]
 
-def certCmd : Cmd := `[Cli|
-  cert VIA runCert;
+/-- `cert`, for a file in the language `l`. -/
+def certCmd (l : Lang) : Cmd :=
+  let go := runCert l
+  `[Cli|
+  cert VIA go;
   "Write a certificate: a Lean file stating that the program never fails. \
    Exits with 1 if the program may fail."
   FLAGS:
@@ -356,8 +404,11 @@ def certCmd : Cmd := `[Cli|
 def proveOracleDoc :=
   oracleDoc ++ " It completes the proofs that Lean doesn't accept. Implies `--check`."
 
-def proveCmd : Cmd := `[Cli|
-  prove VIA runProve;
+/-- `prove`, for a file in the language `l`. -/
+def proveCmd (l : Lang) : Cmd :=
+  let go := runProve l
+  `[Cli|
+  prove VIA go;
   "Write a Lean file stating that the functions meet their contracts, written in \
    `(*@ requires ... ensures ... *)` comments. Exits with 1 if there is no contract."
   FLAGS:
@@ -408,35 +459,60 @@ def synthCmd : Cmd := `[Cli|
     file : String; "The program (`-` reads the standard input)."
 ]
 
-def ocamlCmd : Cmd := `[Cli|
+def ocamlCmd : Cmd :=
+  let (run, print, check, opt, hints, cert, prove) := (runCmd .ocaml, printCmd .ocaml,
+    checkCmd .ocaml, optCmd .ocaml, hintsCmd .ocaml, certCmd .ocaml, proveCmd .ocaml)
+  `[Cli|
   ocaml VIA runDiva;
   "Run a command on an OCaml file: the OCaml compiler type-checks it, and DIVA's \
    OCaml frontend translates it (see `frontend/ocaml`). (WIP)"
   SUBCOMMANDS:
-    runCmd;
-    printCmd;
-    checkCmd;
-    optCmd;
-    hintsCmd;
-    certCmd;
-    proveCmd
+    run;
+    print;
+    check;
+    opt;
+    hints;
+    cert;
+    prove
 ]
 
-def divaCmd : Cmd := `[Cli|
+def cCmd : Cmd :=
+  let (run, print, check, opt, hints, cert) :=
+    (runCmd .c, printCmd .c, checkCmd .c, optCmd .c, hintsCmd .c, certCmd .c)
+  `[Cli|
+  c VIA runDiva;
+  "Run a command on a C file: clang type-checks it, and DIVA's C frontend translates it \
+   (see `Diva/C.lean`). Only a small part of C is supported. (WIP)"
+  SUBCOMMANDS:
+    run;
+    print;
+    check;
+    opt;
+    hints;
+    cert
+]
+
+def divaCmd : Cmd :=
+  let (run, print, check, opt, hints, cert, prove) := (runCmd .diva, printCmd .diva,
+    checkCmd .diva, optCmd .diva, hintsCmd .diva, certCmd .diva, proveCmd .diva)
+  `[Cli|
   diva VIA runDiva; ["dev"]
   "A simple program verifier."
   SUBCOMMANDS:
-    runCmd;
-    printCmd;
-    checkCmd;
-    optCmd;
-    hintsCmd;
-    certCmd;
-    proveCmd;
+    run;
+    print;
+    check;
+    opt;
+    hints;
+    cert;
+    prove;
     specCmd;
     synthCmd;
-    ocamlCmd
+    ocamlCmd;
+    cCmd
 ]
+-- TODO: instead of using different commands for different languages, make diva
+-- decide which parser to use by itself
 
 /-- An error, such as an oracle that takes too long, is printed as `error: ...`, with
     the exit code 1. `IO.Process.exit` ends `diva` without waiting for the tasks that

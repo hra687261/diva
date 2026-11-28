@@ -11,7 +11,8 @@
 # line, and scripts `*.sh` that these commands use.
 #
 # The tests in `test/ocaml/` are the same, but every command is run as `diva ocaml CMD`:
-# they are read by the OCaml frontend. Then `test/diff.sh` runs the programs of
+# they are read by the OCaml frontend. Those in `test/c/` are files `<name>.c`, and every
+# command is run as `diva c CMD`: they are read by clang and the C frontend. Then `test/diff.sh` runs the programs of
 # `test/diff/` under OCaml and under DIVA, and compares their results.
 set -u
 export PATH=$HOME/.elan/bin:$PATH
@@ -31,6 +32,8 @@ outputs() {
     mapfile -t -O "${#all[@]}" all <"$(dirname "$1")/commands"
   fi
   for command in "${all[@]}"; do
+    # `diva c` has no contracts, so no `prove`
+    if [ "$2" = "c " ] && [ "${command%% *}" = "prove" ]; then continue; fi
     command="$2$command"
     echo "\$ diva $command $(basename "$1")"
     # `$command` unquoted: `cert --check` is two arguments
@@ -40,9 +43,16 @@ outputs() {
   done
 }
 
-for test in $(find test/cli test/ocaml -name "*.ml" | sort); do
+for test in $(find test/cli test/ocaml test/c -name "*.ml" -o -name "*.c" | sort); do
   dir=$(dirname "$test")
   prefix=""
+  if [ "${test#test/c/}" != "$test" ]; then
+    prefix="c "
+    if ! command -v clang >/dev/null; then
+      echo "skip $test (no clang)"
+      continue
+    fi
+  fi
   if [ "${test#test/ocaml/}" != "$test" ]; then
     prefix="ocaml "
     if [ ! -x .lake/build/bin/ocaml-frontend ]; then
@@ -53,8 +63,8 @@ for test in $(find test/cli test/ocaml -name "*.ml" | sort); do
   work=$(mktemp -d)
   cp "$test" "$work"
   cp "$dir"/commands "$dir"/*.sh "$work" 2>/dev/null
-  outputs "$work/$(basename "$test")" "$prefix" >"$work/$(basename "${test%.ml}").out"
-  if [ "${1:-}" = "--update" ] || [ ! -f "${test%.ml}.out" ]; then
+  outputs "$work/$(basename "$test")" "$prefix" >"$work/$(basename "${test%.*}").out"
+  if [ "${1:-}" = "--update" ] || [ ! -f "${test%.*}.out" ]; then
     rm -f "$dir"/*.lean
     cp "$work"/* "$dir"
     echo "wrote $dir"

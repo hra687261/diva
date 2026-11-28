@@ -1,0 +1,20 @@
+$ diva c run div_zero.c
+runtime error: division by zero
+[exit 1]
+
+$ diva c check div_zero.c
+div_zero.c:2:24-36: `10 / (3 - 3)`: possible division by zero (divisor: 0) (in the call `main`)
+[exit 1]
+
+$ diva c opt div_zero.c
+(let main = (fun _ -> (10 / 0)) in (main ()))
+[exit 0]
+
+$ diva c hints div_zero.c
+_#0 : ()
+[exit 0]
+
+$ diva c cert --check div_zero.c
+the program may fail, so there is no certificate (see `diva check`)
+[exit 1]
+
