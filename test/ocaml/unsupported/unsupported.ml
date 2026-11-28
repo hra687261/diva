@@ -1,6 +1,7 @@
 (* A construct that the translation doesn't support yet: it stops at the first one,
    with its position. *)
-type point = { mutable x : int; y : int }
+type point = { x : int; y : int }
 
 let pair = (1, 2)
 let p = { x = 1; y = 2 }
+let shift ~dx q = { q with x = q.x + dx }

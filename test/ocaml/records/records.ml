@@ -20,9 +20,19 @@ let on_axis = function { x = 0; _ } | { y = 0; _ } -> true | _ -> false
 let s = { from = p; upto = q }
 let len = manhattan { x = s.upto.x - s.from.x; y = s.upto.y - s.from.y }
 
+(* mutable fields: each one is a ref. `{ c with ... }` copies the current value into a
+   new ref, so `d.count` doesn't change when `c.count` does *)
+type counter = { name : int; mutable count : int }
+
+let c = { name = 1; count = 0 }
+let () = c.count <- c.count + 1
+let d = { c with name = 2 }
+let () = c.count <- c.count + 1
+let counts = match (c, d) with { count = n; _ }, { count = m; _ } -> (10 * n) + m
+
 (* a parameter of type `int ref`. With `--entry bump`, `r` is any value: a ref given by
    other code has no allocation site in the program, so `!r` is reported *)
 let bump (r : int ref) = r := !r + 1
 ;;
 
-a + len + if on_axis p then 1 else 0
+((a + len + if on_axis p then 1 else 0) * 100) + counts

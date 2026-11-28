@@ -781,9 +781,10 @@ let rec expr (e : expression) : expr =
         | [ e; v ] -> mk loc (Assign (e, v))
         | _ -> assert false)
   | Texp_record { fields; extended_expression; _ } -> (
-      if Array.exists (fun (l, _) -> is_mutable l) fields then
-        unsupported loc "mutable fields (for now)";
       let n = Array.length fields in
+      let cell i e =
+        if is_mutable (fst fields.(i)) then mk loc (Ref e) else e
+      in
       (* the fields that are given, in the order of the type *)
       let given =
         List.filter_map
@@ -797,8 +798,14 @@ let rec expr (e : expression) : expr =
               if i = n then []
               else
                 match (snd fields.(i), es, base) with
-                | Overridden _, e :: es, _ -> e :: comps (i + 1) es
-                | Kept _, es, Some r -> field loc r i n :: comps (i + 1) es
+                | Overridden _, e :: es, _ -> cell i e :: comps (i + 1) es
+                | Kept _, es, Some r ->
+                    let x = field loc r i n in
+                    let x =
+                      if is_mutable (fst fields.(i)) then mk loc (Deref x)
+                      else x
+                    in
+                    cell i x :: comps (i + 1) es
                 | _ -> assert false
             in
             tuple loc (comps 0 es))
@@ -810,10 +817,16 @@ let rec expr (e : expression) : expr =
           let r = fresh () in
           letin loc r (expr e0) (build (Some r)))
   | Texp_field (e, _, l) ->
-      if is_mutable l then unsupported loc "mutable fields (for now)";
       let r = fresh () in
-      letin loc r (expr e) (field loc r l.lbl_pos (Array.length l.lbl_all))
-  | Texp_setfield _ -> unsupported loc "mutable fields (for now)"
+      let x = field loc r l.lbl_pos (Array.length l.lbl_all) in
+      letin loc r (expr e) (if is_mutable l then mk loc (Deref x) else x)
+  | Texp_setfield (e, _, l, v) ->
+      ordered loc [ e; v ] (function
+        | [ e; v ] ->
+            let r = fresh () in
+            let x = field loc r l.lbl_pos (Array.length l.lbl_all) in
+            letin loc r e (mk loc (Assign (x, v)))
+        | _ -> assert false)
   | Texp_array _ -> unsupported loc "array literals (for now)"
   | _ -> unsupported loc "this expression"
 
@@ -1185,8 +1198,6 @@ and pattern (p : pattern) v ok ko =
       match fs with
       | [] -> ok
       | (_, l, _) :: _ ->
-          if List.exists (fun (_, l, _) -> is_mutable l) fs then
-            unsupported loc "mutable fields (for now)";
           (* a pattern for each field, in the order of the type: [_] if it is missing *)
           let ps =
             List.init (Array.length l.lbl_all) (fun i ->
@@ -1199,26 +1210,44 @@ and pattern (p : pattern) v ok ko =
                 | Some (_, _, q) -> q
                 | None -> { p with pat_desc = Tpat_any })
           in
-          tuple_pattern loc ps v ok ko)
+          let muts = Array.to_list (Array.map is_mutable l.lbl_all) in
+          tuple_pattern ~muts loc ps v ok ko)
   | Tpat_array _ -> unsupported loc "array patterns"
   | _ -> unsupported loc "this pattern"
 
 (* The test of the tuple pattern [(p1, ..., pn)] on [v]. A value of a tuple type is
    always a tuple of [n] components, so the tests of its constructor and of the length
-   of its list never fail: they raise [Match_failure], instead of copying [ko]. *)
-and tuple_pattern loc ps v ok ko =
+   of its list never fail: they raise [Match_failure], instead of copying [ko]. [muts]
+   says which components are refs (the mutable fields of a record): the pattern tests
+   their contents. *)
+and tuple_pattern ?(muts = []) loc ps v ok ko =
   let bad = match_failure loc in
   let l = fresh () in
-  let rec components l = function
+  let rec components l ps muts =
+    match ps with
     | [] -> ok
     | p :: ps ->
-        let h = name_for p in
+        let m, muts =
+          match muts with m :: ms -> (m, ms) | [] -> (false, [])
+        in
         let t = if List.is_empty ps then "_" else fresh () in
-        mk loc
-          (MatchList (var loc l, bad, h, t, pattern p h (components t ps) ko))
+        let rest = components t ps muts in
+        let h, test =
+          match p.pat_desc with
+          | Tpat_any -> ("_", rest)
+          | _ when m ->
+              let h = fresh () in
+              let x = name_for p in
+              (h, letin loc x (mk loc (Deref (var loc h))) (pattern p x rest ko))
+          | _ ->
+              let h = name_for p in
+              (h, pattern p h rest ko)
+        in
+        mk loc (MatchList (var loc l, bad, h, t, test))
   in
   mk loc
-    (CtorCase (var loc v, tuple_ctor (List.length ps), l, components l ps, bad))
+    (CtorCase
+       (var loc v, tuple_ctor (List.length ps), l, components l ps muts, bad))
 
 (* The name for the value that the pattern [p] tests: the name of [p] if it is a name,
    else a new name. *)

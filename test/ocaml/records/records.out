@@ -1,24 +1,30 @@
 $ diva ocaml run records.ml
-8
+821
 [exit 0]
 
 $ diva ocaml check records.ml
-no runtime error found, but not proved: the analysis of arrays, refs, exceptions and the elements of lists isn't proved yet
-[exit 0]
+records.ml:28:20-31: `c.count + 1`: may overflow 63-bit integers (result: [1, +∞])
+records.ml:30:20-31: `c.count + 1`: may overflow 63-bit integers (result: [1, +∞])
+records.ml:31:69-77: `(10 * n)`: may overflow 63-bit integers (result: [0, +∞])
+records.ml:31:69-81: `(10 * n) + m`: may overflow 63-bit integers (result: [0, +∞])
+records.ml:38:0-55: `((a + len + if on_axis p then 1 else 0) * 100) + counts`: may overflow 63-bit integers (result: [800, +∞])
+[exit 1]
 
 $ diva ocaml opt records.ml
-(let Stdlib.abs = (fun x -> (if (x >= 0) then x else (let %r = (0 - x) in (let _ = (assert (%r <= 4611686018427387903)) in %r)))) in (let p = (%2 (3 :: (0 :: []))) in (let q = (let %t1 = p in (%2 ((match %t1 with %2 %t2 -> (match %t2 with [] -> (raise Match_failure) | %t3 :: _ -> %t3) | _ -> (raise Match_failure)) :: (2 :: [])))) in (let a = (let %r = (10 / (let %t4 = q in (match %t4 with %2 %t5 -> (match %t5 with [] -> (raise Match_failure) | _ :: %t6 -> (match %t6 with [] -> (raise Match_failure) | %t7 :: _ -> %t7)) | _ -> (raise Match_failure)))) in (let _ = (assert (if (-4611686018427387904 <= %r) then (%r <= 4611686018427387903) else false)) in %r)) in (let manhattan = (fun %t8 -> (match %t8 with %2 %t11 -> (match %t11 with [] -> (raise Match_failure) | x :: %t12 -> (match %t12 with [] -> (raise Match_failure) | y :: _ -> (let %t10 = (Stdlib.abs y) in (let %t9 = (Stdlib.abs x) in (let %r = (%t9 + %t10) in (let _ = (assert (%r <= 4611686018427387903)) in %r)))))) | _ -> (raise Match_failure))) in (let on_axis = (fun %t13 -> (match %t13 with %2 %t17 -> (match %t17 with [] -> (raise Match_failure) | %t18 :: %t19 -> (if (%t18 = 0) then (match %t19 with [] -> (raise Match_failure) | _ :: _ -> true) else (match %t13 with %2 %t14 -> (match %t14 with [] -> (raise Match_failure) | _ :: %t15 -> (match %t15 with [] -> (raise Match_failure) | %t16 :: _ -> (if (%t16 = 0) then true else false))) | _ -> (raise Match_failure)))) | _ -> (raise Match_failure))) in (let s = (%2 (p :: (q :: []))) in (let len = (manhattan (let %t53 = (let %t52 = (let %t45 = (let %t49 = s in (match %t49 with %2 %t50 -> (match %t50 with [] -> (raise Match_failure) | %t51 :: _ -> %t51) | _ -> (raise Match_failure))) in (match %t45 with %2 %t46 -> (match %t46 with [] -> (raise Match_failure) | _ :: %t47 -> (match %t47 with [] -> (raise Match_failure) | %t48 :: _ -> %t48)) | _ -> (raise Match_failure))) in (let %t44 = (let %t36 = (let %t40 = s in (match %t40 with %2 %t41 -> (match %t41 with [] -> (raise Match_failure) | _ :: %t42 -> (match %t42 with [] -> (raise Match_failure) | %t43 :: _ -> %t43)) | _ -> (raise Match_failure))) in (match %t36 with %2 %t37 -> (match %t37 with [] -> (raise Match_failure) | _ :: %t38 -> (match %t38 with [] -> (raise Match_failure) | %t39 :: _ -> %t39)) | _ -> (raise Match_failure))) in (let %r = (%t44 - %t52) in (let _ = (assert (if (-4611686018427387904 <= %r) then (%r <= 4611686018427387903) else false)) in %r)))) in (let %t35 = (let %t34 = (let %t28 = (let %t31 = s in (match %t31 with %2 %t32 -> (match %t32 with [] -> (raise Match_failure) | %t33 :: _ -> %t33) | _ -> (raise Match_failure))) in (match %t28 with %2 %t29 -> (match %t29 with [] -> (raise Match_failure) | %t30 :: _ -> %t30) | _ -> (raise Match_failure))) in (let %t27 = (let %t20 = (let %t23 = s in (match %t23 with %2 %t24 -> (match %t24 with [] -> (raise Match_failure) | _ :: %t25 -> (match %t25 with [] -> (raise Match_failure) | %t26 :: _ -> %t26)) | _ -> (raise Match_failure))) in (match %t20 with %2 %t21 -> (match %t21 with [] -> (raise Match_failure) | %t22 :: _ -> %t22) | _ -> (raise Match_failure))) in (let %r = (%t27 - %t34) in (let _ = (assert (if (-4611686018427387904 <= %r) then (%r <= 4611686018427387903) else false)) in %r)))) in (%2 (%t35 :: (%t53 :: [])))))) in (let %r = ((let %r = (a + len) in (let _ = (assert (if (-4611686018427387904 <= %r) then (%r <= 4611686018427387903) else false)) in %r)) + (if (on_axis p) then 1 else 0)) in (let _ = (assert (if (-4611686018427387904 <= %r) then (%r <= 4611686018427387903) else false)) in %r))))))))))
+(let Stdlib.abs = (fun x -> (if (x >= 0) then x else (let %r = (0 - x) in (let _ = (assert (%r <= 4611686018427387903)) in %r)))) in (let p = (%2 (3 :: (0 :: []))) in (let q = (let %t1 = p in (%2 ((match %t1 with %2 %t2 -> (match %t2 with [] -> (raise Match_failure) | %t3 :: _ -> %t3) | _ -> (raise Match_failure)) :: (2 :: [])))) in (let a = (let %r = (10 / (let %t4 = q in (match %t4 with %2 %t5 -> (match %t5 with [] -> (raise Match_failure) | _ :: %t6 -> (match %t6 with [] -> (raise Match_failure) | %t7 :: _ -> %t7)) | _ -> (raise Match_failure)))) in (let _ = (assert (if (-4611686018427387904 <= %r) then (%r <= 4611686018427387903) else false)) in %r)) in (let manhattan = (fun %t8 -> (match %t8 with %2 %t11 -> (match %t11 with [] -> (raise Match_failure) | x :: %t12 -> (match %t12 with [] -> (raise Match_failure) | y :: _ -> (let %t10 = (Stdlib.abs y) in (let %t9 = (Stdlib.abs x) in (let %r = (%t9 + %t10) in (let _ = (assert (%r <= 4611686018427387903)) in %r)))))) | _ -> (raise Match_failure))) in (let on_axis = (fun %t13 -> (match %t13 with %2 %t17 -> (match %t17 with [] -> (raise Match_failure) | %t19 :: %t18 -> (if (%t19 = 0) then (match %t18 with [] -> (raise Match_failure) | _ :: _ -> true) else (match %t13 with %2 %t14 -> (match %t14 with [] -> (raise Match_failure) | _ :: %t15 -> (match %t15 with [] -> (raise Match_failure) | %t16 :: _ -> (if (%t16 = 0) then true else false))) | _ -> (raise Match_failure)))) | _ -> (raise Match_failure))) in (let s = (%2 (p :: (q :: []))) in (let len = (manhattan (let %t53 = (let %t52 = (let %t45 = (let %t49 = s in (match %t49 with %2 %t50 -> (match %t50 with [] -> (raise Match_failure) | %t51 :: _ -> %t51) | _ -> (raise Match_failure))) in (match %t45 with %2 %t46 -> (match %t46 with [] -> (raise Match_failure) | _ :: %t47 -> (match %t47 with [] -> (raise Match_failure) | %t48 :: _ -> %t48)) | _ -> (raise Match_failure))) in (let %t44 = (let %t36 = (let %t40 = s in (match %t40 with %2 %t41 -> (match %t41 with [] -> (raise Match_failure) | _ :: %t42 -> (match %t42 with [] -> (raise Match_failure) | %t43 :: _ -> %t43)) | _ -> (raise Match_failure))) in (match %t36 with %2 %t37 -> (match %t37 with [] -> (raise Match_failure) | _ :: %t38 -> (match %t38 with [] -> (raise Match_failure) | %t39 :: _ -> %t39)) | _ -> (raise Match_failure))) in (let %r = (%t44 - %t52) in (let _ = (assert (if (-4611686018427387904 <= %r) then (%r <= 4611686018427387903) else false)) in %r)))) in (let %t35 = (let %t34 = (let %t28 = (let %t31 = s in (match %t31 with %2 %t32 -> (match %t32 with [] -> (raise Match_failure) | %t33 :: _ -> %t33) | _ -> (raise Match_failure))) in (match %t28 with %2 %t29 -> (match %t29 with [] -> (raise Match_failure) | %t30 :: _ -> %t30) | _ -> (raise Match_failure))) in (let %t27 = (let %t20 = (let %t23 = s in (match %t23 with %2 %t24 -> (match %t24 with [] -> (raise Match_failure) | _ :: %t25 -> (match %t25 with [] -> (raise Match_failure) | %t26 :: _ -> %t26)) | _ -> (raise Match_failure))) in (match %t20 with %2 %t21 -> (match %t21 with [] -> (raise Match_failure) | %t22 :: _ -> %t22) | _ -> (raise Match_failure))) in (let %r = (%t27 - %t34) in (let _ = (assert (if (-4611686018427387904 <= %r) then (%r <= 4611686018427387903) else false)) in %r)))) in (%2 (%t35 :: (%t53 :: [])))))) in (let c = (%2 (1 :: ((ref 0) :: []))) in (let _ = (let %t58 = c in ((match %t58 with %2 %t59 -> (match %t59 with [] -> (raise Match_failure) | _ :: %t60 -> (match %t60 with [] -> (raise Match_failure) | %t61 :: _ -> %t61)) | _ -> (raise Match_failure)) := (let %r = ((let %t54 = c in !(match %t54 with %2 %t55 -> (match %t55 with [] -> (raise Match_failure) | _ :: %t56 -> (match %t56 with [] -> (raise Match_failure) | %t57 :: _ -> %t57)) | _ -> (raise Match_failure))) + 1) in (let _ = (assert (if (-4611686018427387904 <= %r) then (%r <= 4611686018427387903) else false)) in %r)))) in (let d = (let %t62 = c in (%2 (2 :: ((ref !(match %t62 with %2 %t63 -> (match %t63 with [] -> (raise Match_failure) | _ :: %t64 -> (match %t64 with [] -> (raise Match_failure) | %t65 :: _ -> %t65)) | _ -> (raise Match_failure))) :: [])))) in (let _ = (let %t70 = c in ((match %t70 with %2 %t71 -> (match %t71 with [] -> (raise Match_failure) | _ :: %t72 -> (match %t72 with [] -> (raise Match_failure) | %t73 :: _ -> %t73)) | _ -> (raise Match_failure)) := (let %r = ((let %t66 = c in !(match %t66 with %2 %t67 -> (match %t67 with [] -> (raise Match_failure) | _ :: %t68 -> (match %t68 with [] -> (raise Match_failure) | %t69 :: _ -> %t69)) | _ -> (raise Match_failure))) + 1) in (let _ = (assert (if (-4611686018427387904 <= %r) then (%r <= 4611686018427387903) else false)) in %r)))) in (let counts = (let %t74 = (%2 (c :: (d :: []))) in (match %t74 with %2 %t75 -> (match %t75 with [] -> (raise Match_failure) | %t81 :: %t76 -> (match %t81 with %2 %t82 -> (match %t82 with [] -> (raise Match_failure) | _ :: %t83 -> (match %t83 with [] -> (raise Match_failure) | %t84 :: _ -> (let n = !%t84 in (match %t76 with [] -> (raise Match_failure) | %t77 :: _ -> (match %t77 with %2 %t78 -> (match %t78 with [] -> (raise Match_failure) | _ :: %t79 -> (match %t79 with [] -> (raise Match_failure) | %t80 :: _ -> (let m = !%t80 in (let %r = ((let %r = (10 * n) in (let _ = (assert (if (-4611686018427387904 <= %r) then (%r <= 4611686018427387903) else false)) in %r)) + m) in (let _ = (assert (if (-4611686018427387904 <= %r) then (%r <= 4611686018427387903) else false)) in %r))))) | _ -> (raise Match_failure)))))) | _ -> (raise Match_failure))) | _ -> (raise Match_failure))) in (let %r = ((let %r = ((let %r = ((let %r = (a + len) in (let _ = (assert (if (-4611686018427387904 <= %r) then (%r <= 4611686018427387903) else false)) in %r)) + (if (on_axis p) then 1 else 0)) in (let _ = (assert (if (-4611686018427387904 <= %r) then (%r <= 4611686018427387903) else false)) in %r)) * 100) in (let _ = (assert (if (-4611686018427387904 <= %r) then (%r <= 4611686018427387903) else false)) in %r)) + counts) in (let _ = (assert (if (-4611686018427387904 <= %r) then (%r <= 4611686018427387903) else false)) in %r)))))))))))))))
 [exit 0]
 
 $ diva ocaml hints records.ml
 x#0 : [0, 2]
 %t8#1 : (0, 2)
 %t13#2 : (3, 0)
+!0 : [0, +∞]
+!1 : [0, +∞]
 r#3 : ⊥
 [exit 0]
 
 $ diva ocaml cert --check records.ml
-the analysis of arrays, refs, exceptions and the elements of lists isn't proved yet, so there is no certificate (see `diva check`)
+the program may fail, so there is no certificate (see `diva check`)
 [exit 1]
 
 $ diva ocaml prove --check -o prove.lean records.ml
@@ -29,17 +35,29 @@ $ diva ocaml hints --entry manhattan,on_axis records.ml
 x#0 : [-4611686018427387904, 4611686018427387903]
 %t8#1 : ([-4611686018427387904, 4611686018427387903], [-4611686018427387904, 4611686018427387903])
 %t13#2 : ([-4611686018427387904, 4611686018427387903], [-4611686018427387904, 4611686018427387903])
+!0 : [0, +∞]
+!1 : [0, +∞]
 r#3 : ⊥
 [exit 0]
 
 $ diva ocaml check --entry manhattan records.ml
+records.ml:28:20-31: `c.count + 1`: may overflow 63-bit integers (result: [1, +∞])
+records.ml:30:20-31: `c.count + 1`: may overflow 63-bit integers (result: [1, +∞])
+records.ml:31:69-77: `(10 * n)`: may overflow 63-bit integers (result: [0, +∞])
+records.ml:31:69-81: `(10 * n) + m`: may overflow 63-bit integers (result: [0, +∞])
+records.ml:38:0-55: `((a + len + if on_axis p then 1 else 0) * 100) + counts` may fail
 prelude: `(0 - x)`: may overflow 63-bit integers (result: [1, 4611686018427387904]) (in the call `abs y`)
 prelude: `(0 - x)`: may overflow 63-bit integers (result: [1, 4611686018427387904]) (in the call `abs x`)
 records.ml:16:25-38: `abs x + abs y`: may overflow 63-bit integers (result: [0, 9223372036854775808])
 [exit 1]
 
 $ diva ocaml check --entry bump records.ml
-records.ml:25:30-32: `!r`: may not be a ref (⊤)
-records.ml:25:25-36: `r := !r + 1`: may not be a ref (⊤)
+records.ml:28:20-31: `c.count + 1`: may overflow 63-bit integers (result: [1, +∞])
+records.ml:30:20-31: `c.count + 1`: may overflow 63-bit integers (result: [1, +∞])
+records.ml:31:69-77: `(10 * n)`: may overflow 63-bit integers (result: [0, +∞])
+records.ml:31:69-81: `(10 * n) + m`: may overflow 63-bit integers (result: [0, +∞])
+records.ml:38:0-55: `((a + len + if on_axis p then 1 else 0) * 100) + counts` may fail
+records.ml:35:30-32: `!r`: may not be a ref (⊤)
+records.ml:35:25-36: `r := !r + 1`: may not be a ref (⊤)
 [exit 1]
 
