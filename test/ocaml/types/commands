@@ -3,3 +3,5 @@ hints --entry negate,area,first,code
 check --entry quad,half
 check --entry inv
 check --entry nope
+check --entry bump2
+hints --entry bump2,reset

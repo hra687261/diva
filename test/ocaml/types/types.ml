@@ -20,5 +20,10 @@ let r = ref 1
 let () = r := 0
 let inv x = x / !r
 
+(* refs given by other code, and refs of refs: each one is a new ref of the entry
+   point's call, whose contents have the type of the ref *)
+let bump2 (r : int ref ref) = !r := !(!r) + 1
+let reset (r : int ref ref) = r := ref 0
+
 (* this one fails: the top-level code always runs, with or without `--entry` *)
 let z = 10 / 0
