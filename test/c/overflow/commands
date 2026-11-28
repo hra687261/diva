@@ -1,1 +1,2 @@
 check --entry avg,half,neg
+check --entry rem,rem10

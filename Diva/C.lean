@@ -13,7 +13,8 @@ does. The program is the functions of the file, then the call `main ()`.
 The C that is supported, so far: functions with `int` parameters whose body is
 `return e;`, where `e` is an expression on `int`s (literals, parameters, `+`, `-`, `*`,
 `/`, `%`). Each `+`, `-`, `*` and `/` checks that its result fits in an `int`: signed
-overflow is undefined behaviour. Anything else is rejected, with its position.
+overflow is undefined behaviour. `a % b` checks that `a / b` fits (only `INT_MIN % -1`
+doesn't). Anything else is rejected, with its position.
 -/
 
 namespace Diva.C
@@ -86,6 +87,26 @@ def arith : String → Option BinOp
 def checked (t : Json) (op : BinOp) (e : LExpr) : LExpr :=
   if Overflow.mayOverflow op then Overflow.wrap IntType.int32 e (span t) else e
 
+/-- `a % b` of the node `t`, with the check that `a / b` fits in an `int`: C leaves `a % b`
+    undefined when `a / b` doesn't fit (C11, 6.5.5), which is `INT_MIN % -1`. So `a % b` is
+    `let %a = a in let %b = b in assert (if %a = INT_MIN then %b <> -1 else true); %a mod %b`.
+    -/
+def remChecked (t : Json) (a b : LExpr) : LExpr :=
+  let leaf (e : Expr) : LExpr := ⟨e, .leaf (span t)⟩
+  let letin (x : String) (e rest : LExpr) := node t (.letin x e.expr rest.expr) [e, rest]
+  -- `%a = INT_MIN`
+  let isMin := node t (.binop .eq (.var "%a") (.int IntType.int32.min))
+    [leaf (.var "%a"), leaf (.int IntType.int32.min)]
+  -- `%b <> -1`
+  let notM1 := node t (.binop .ne (.var "%b") (.int (-1))) [leaf (.var "%b"), leaf (.int (-1))]
+  -- `assert (if %a = INT_MIN then %b <> -1 else true)`
+  let ok := node t (.ite isMin.expr notM1.expr (.bool true)) [isMin, notM1, leaf (.bool true)]
+  let check := node t (.assert ok.expr) [ok]
+  -- `%a mod %b`, after the check
+  let rem := node t (.binop .mod (.var "%a") (.var "%b")) [leaf (.var "%a"), leaf (.var "%b")]
+  -- `a` and `b` are computed once, before the check
+  letin "%a" a (letin "%b" b (letin "_" check rem))
+
 /-- The expression `t`, of type `int`. `env` gives the names in scope. -/
 partial def expr (env : Env) (t : Json) : M LExpr := do
   unless qualType t == "int" do unsupported t s!"the type `{qualType t}`"
@@ -108,6 +129,7 @@ partial def expr (env : Env) (t : Json) : M LExpr := do
     | some op =>
       let a ← expr env a
       let b ← expr env b
+      if op == .mod then return remChecked t a b
       return checked t op (node t (.binop op a.expr b.expr) [a, b])
     | none => unsupported t s!"the operator `{(str t "opcode").getD ""}`"
   | "UnaryOperator", [a] =>
