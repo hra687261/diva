@@ -37,8 +37,9 @@ private def fact (s : String) : String :=
 #guard fact "v" == "true"
 #guard fact "not v" == "false"
 #guard fact "v = false" == "false"
-#guard fact "length v > 0" == "non-empty list"
+#guard fact "length v > 0" == "list (length [1, +∞])"
 #guard fact "length v >= 0" == "list"
+#guard fact "length v = 2" == "list (length 2)"
 
 /-- The Lean proposition that `diva prove` writes for the term `s`, where `b` is a
     boolean, `l` a list, and the other names integers. -/

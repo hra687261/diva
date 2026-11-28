@@ -19,9 +19,9 @@ _#4 : ()
 d#5 : [0, 7]
 o#6 : Some [1, 5] | None
 n#7 : [1, 5]
-l1#9 : list of [1, 2]
+l1#9 : list of [1, 2] (length [0, 2])
 $zip#8 : list of ([1, 2], 3)
-l2#10 : list of 3
+l2#10 : list of 3 (length [0, 1])
 [exit 0]
 
 $ diva ocaml cert --check patterns.ml

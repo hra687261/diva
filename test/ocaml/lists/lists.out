@@ -7,13 +7,13 @@ lists.ml:15:8-14: `last l`: may raise an exception that isn't caught (Failure)
 [exit 1]
 
 $ diva ocaml opt lists.ml
-(let Stdlib.List.hd = (fun %p8 -> (match %p8 with [] -> (raise Failure) | a :: _ -> a)) in (let l = (3 :: (1 :: (2 :: []))) in (let a = (Stdlib.List.hd l) in (let second = (fun l -> (match l with [] -> 0 | _ :: %t1 -> (match %t1 with [] -> 0 | x :: _ -> x))) in (let b = (second (0 :: l)) in (let rec last %t2 = (let %t3 = (fun _ -> (match %t2 with [] -> (raise Failure) | _ :: l -> (last l))) in (match %t2 with [] -> (%t3 ()) | x :: %t4 -> (match %t4 with [] -> x | _ :: _ -> (%t3 ())))) in (let c = (last l) in c)))))))
+(let Stdlib.List.hd = (fun %p8 -> (match %p8 with [] -> (raise Failure) | a :: _ -> a)) in (let l = (3 :: (1 :: (2 :: []))) in (let a = (Stdlib.List.hd l) in (let second = (fun l -> (match l with [] -> 0 | _ :: %t1 -> (match %t1 with [] -> 0 | x :: _ -> x))) in (let b = (second (0 :: l)) in (let rec last %t2 = (let %t3 = (fun _ -> (match %t2 with [] -> (raise Failure) | _ :: l -> (last l))) in (match %t2 with [] -> (%t3 ()) | x :: %t4 -> (match %t4 with [] -> x | _ :: _ -> (%t3 ())))) in (let c = (last l) in (let l2 = (if (c > 0) then (1 :: (2 :: [])) else (1 :: (2 :: (3 :: [])))) in (let d = (match l2 with [] -> (raise Failure) | _ :: %t5 -> (match %t5 with [] -> (raise Failure) | y :: _ -> y)) in d)))))))))
 [exit 0]
 
 $ diva ocaml hints lists.ml
 %p8#0 : [3; 1; 2]
 l#1 : [0; 3; 1; 2]
-%t2#3 : list of [1, 3]
+%t2#3 : list of [1, 3] (length [0, 3])
 $last#2 : [1, 3]
 _#4 : ()
 [exit 0]

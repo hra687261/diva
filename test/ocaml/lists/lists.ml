@@ -13,3 +13,8 @@ let b = second (0 :: l)
    gets a non-empty list: `Failure` is reported. *)
 let rec last = function [ x ] -> x | _ :: l -> last l | [] -> failwith "last"
 let c = last l
+
+(* the lengths of lists: `l2` has 2 or 3 elements, so `_ :: y :: _` matches. Its
+   elements one by one are lost in the join, its lengths are not *)
+let l2 = if c > 0 then [ 1; 2 ] else [ 1; 2; 3 ]
+let d = match l2 with _ :: y :: _ -> y | _ -> failwith "short"

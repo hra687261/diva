@@ -56,8 +56,9 @@ structure Flat (A : Type) where
   /-- The arguments `v` of the values `C v`, for the constructors `C` of `ctors`. A
       constructor without an entry may have any argument. -/
   args : List (String × Flat A) := []
-  /-- If `list`: the lists it describes may be `[]`. -/
-  empty : Bool := true
+  /-- The lengths of the lists it may be (`bot` if it may be none). Only the analysis
+      that isn't proved yet uses them, as the parts above. -/
+  len : A
   deriving Inhabited
 
 namespace Flat
@@ -67,17 +68,23 @@ variable {A : Type} [NumDomain A]
 /-- No value at all. -/
 def bot : Flat A :=
   ⟨AbsDomain.bot, false, false, false, false, false, false, false, [], [], [], none, none, [],
-   false⟩
+   AbsDomain.bot⟩
 
 /-- Any value. -/
 def top : Flat A :=
-  ⟨AbsDomain.top, true, true, true, true, true, true, true, [], [], [], none, none, [], true⟩
+  ⟨AbsDomain.top, true, true, true, true, true, true, true, [], [], [], none, none, [],
+   AbsDomain.top⟩
 
 def ofInt (i : A) : Flat A := { (bot : Flat A) with int := i }
 /-- A boolean that may be `true` (`t`) or `false` (`f`). -/
 def bools (t f : Bool) : Flat A := { (bot : Flat A) with tt := t, ff := f }
 def unitV : Flat A := { (bot : Flat A) with unit := true }
-def listV : Flat A := { (bot : Flat A) with list := true, empty := true }
+/-- The lengths of any list: from 0. -/
+def anyLen : A := (assumeLe (const 0) AbsDomain.top).2
+/-- The lengths of the lists that aren't `[]`: from 1. -/
+def consLen : A := (assumeLe (const 1) AbsDomain.top).2
+
+def listV : Flat A := { (bot : Flat A) with list := true, len := anyLen }
 def fnV : Flat A := { (bot : Flat A) with fn := true }
 def ctorV : Flat A := { (bot : Flat A) with ctor := true }
 
@@ -86,7 +93,7 @@ def joinBase (a b : Flat A) : Flat A :=
   ⟨AbsDomain.join a.int b.int, a.tt || b.tt, a.ff || b.ff, a.unit || b.unit,
    a.list || b.list, a.fn || b.fn, a.loc || b.loc, a.ctor || b.ctor,
    (a.refs ++ b.refs).eraseDups, (a.arrs ++ b.arrs).eraseDups, (a.ctors ++ b.ctors).eraseDups,
-   none, none, [], (a.list && a.empty) || (b.list && b.empty)⟩
+   none, none, [], AbsDomain.join a.len b.len⟩
 
 /-
 The functions on the parts are recursive. Lean accepts their recursion only if they take
@@ -168,7 +175,7 @@ def meet (a b : Flat A) : Flat A :=
    common a.ctors b.ctors b.ctor ++ common b.ctors [] (a.ctor && !b.ctor),
    if a.list && b.list then (a.elem <|> b.elem) else none,
    if a.list && b.list then (a.items <|> b.items) else none,
-   if a.args.isEmpty then b.args else a.args, a.empty && b.empty⟩
+   if a.args.isEmpty then b.args else a.args, AbsDomain.meet a.len b.len⟩
 
 /-- `leq` without the parts of lists and of ADT values. -/
 def leqBase (a b : Flat A) : Bool :=
@@ -186,7 +193,7 @@ mutual
 def leq : Flat A → Flat A → Bool
   | a@⟨_, _, _, _, la, _, _, _, _, _, ta, ea, ia, aa, na⟩,
     b@⟨_, _, _, _, _, _, _, _, _, _, _, eb, ib, ab, nb⟩ =>
-    leqBase a b && (!la || ((!na || nb) && leqElem ea eb && leqItems ia ib)) &&
+    leqBase a b && (!la || (AbsDomain.leq na nb && leqElem ea eb && leqItems ia ib)) &&
       leqArgs ab aa && ta.all fun c => (aa.lookup c).isSome || (ab.lookup c).isNone
 termination_by structural a _ => a
 
@@ -219,7 +226,7 @@ end
 
 theorem leq_eq (a b : Flat A) :
     a.leq b = (leqBase a b &&
-      (!a.list || ((!a.empty || b.empty) && leqElem a.elem b.elem && leqItems a.items b.items)) &&
+      (!a.list || (AbsDomain.leq a.len b.len && leqElem a.elem b.elem && leqItems a.items b.items)) &&
       leqArgs b.args a.args && a.ctors.all fun c => (a.args.lookup c).isSome ||
         (b.args.lookup c).isNone) := by
   cases a
@@ -229,13 +236,14 @@ theorem leq_eq (a b : Flat A) :
 mutual
 
 /-- Widening: the integers of `a` and `b` are widened, and so are the integers of their
-    parts (`elem`, `items`, `args`). The other components are joined: they are finite. -/
+    parts (`elem`, `items`, `args`) and the lengths of their lists. The other components
+    are joined: they are finite. -/
 def widen : Flat A → Flat A → Flat A
-  | a@⟨ia, _, _, _, _, _, _, _, _, _, _, ea, isa, aa, _⟩, b =>
+  | a@⟨ia, _, _, _, _, _, _, _, _, _, _, ea, isa, aa, na⟩, b =>
     let j := a.join b
     { j with
-      int := AbsDomain.widen ia b.int, elem := widenOpt ea j.elem,
-      items := widenItems isa j.items, args := widenArgs aa j.args }
+      int := AbsDomain.widen ia b.int, len := AbsDomain.widen na b.len,
+      elem := widenOpt ea j.elem, items := widenItems isa j.items, args := widenArgs aa j.args }
 termination_by structural a _ => a
 
 def widenOpt : Option (Flat A) → Option (Flat A) → Option (Flat A)
@@ -372,20 +380,23 @@ theorem mem_bools {p : Bool × Bool} {P : Prop} [Decidable P]
   · simp [mem, bools, hP, h.1 hP]
   · simp [mem, bools, hP, h.2 hP]
 
-/-- `a` printed, with its parts down to `n` levels: `list of e`, `[a; b]` for lists of a
-    known length, `(a, b)` for a tuple, and `C x` for a constructor with its argument. -/
+/-- `a` printed, with its parts down to `n` levels: `list of e (length l)` (without `l` if
+    it is any length), `[a; b]` for lists of a known length, `(a, b)` for a tuple, and
+    `C x` for a constructor with its argument. -/
 def str [ToString A] : Nat → Flat A → String
   | n, a =>
     if top.leq a then "⊤" else
     let sub (x : Flat A) : String := match n with
       | 0 => "..."
       | k + 1 => str k x
+    -- the lengths, unless any length
+    let length := if AbsDomain.leq anyLen a.len then "" else s!" (length {a.len})"
     let lists :=
       match a.list, a.items, a.elem with
       | false, _, _ => []
       | true, some ws, _ => [s!"[{"; ".intercalate (ws.map sub)}]"]
-      | true, none, some e => [s!"{if a.empty then "" else "non-empty "}list of {sub e}"]
-      | true, none, none => [if a.empty then "list" else "non-empty list"]
+      | true, none, some e => [s!"list of {sub e}{length}"]
+      | true, none, none => [s!"list{length}"]
     let tag (c : String) : String :=
       match a.args.lookup c with
       -- a constructor without argument has the argument `()`
@@ -462,12 +473,18 @@ def summary (S : Summary A) : AVal A := { toFlat := Flat.bot, sum := some S }
 def listOf (e : Flat A) (mayNil : Bool := true) : AVal A :=
   { toFlat := Flat.bot, sum := none, elems := some e, mayNil := mayNil }
 
+/-- The lengths of the lists `a` describes, for the analysis that isn't proved yet:
+    `toFlat.len`, which this analysis sets, or else what `elems` and `mayNil` say. -/
+def lenI (a : AVal A) : A :=
+  if a.elems.isSome && AbsDomain.leq a.toFlat.len AbsDomain.bot then
+    if a.mayNil then Flat.anyLen else Flat.consLen
+  else a.toFlat.len
+
 /-- Forget the summary and the elements: "any closure" and "any list". -/
 def flat (a : AVal A) : Flat A :=
   let elem := flatElem a
   { a.toFlat with
-    fn := a.fn || a.sum.isSome, list := a.list || a.elems.isSome, elem,
-    empty := (a.list && a.toFlat.empty) || (a.elems.isSome && a.mayNil) }
+    fn := a.fn || a.sum.isSome, list := a.list || a.elems.isSome, elem, len := a.lenI }
 where
   /-- The elements of the lists of `a`, for `Flat.elem`: those of `a.toFlat` and of
       `a.elems`. -/
@@ -531,22 +548,24 @@ def tails (a : AVal A) : AVal A :=
 
 /-- The lists `[v₁; ...; vₙ]` where each `vᵢ` is in the `i`-th element of `ws`. -/
 def itemsOf (ws : List (Flat A)) : AVal A :=
-  { listOf (ws.foldl Flat.join Flat.bot) (mayNil := ws.isEmpty) with items := some ws }
+  { listOf (ws.foldl Flat.join Flat.bot) (mayNil := ws.isEmpty) with
+    items := some ws, len := const ws.length }
 
 /-- `h :: t`, element by element if `t` is known that way. If `t` may be any list, the
     lists whose elements are those of `t` (`Flat.elem`) and `h`. -/
 def consI (h t : AVal A) : AVal A :=
+  let len := add t.lenI (const 1)
   if t.list then
     match t.flat.elem with
-    | some e => ofFlat { Flat.listV with elem := some (e.join h.flat), empty := false }
-    | none => ofFlat { Flat.listV with empty := false }
-  else { cons h t with items := t.items.map (h.flat :: ·) }
+    | some e => ofFlat { Flat.listV with elem := some (e.join h.flat), len }
+    | none => ofFlat { Flat.listV with len }
+  else { cons h t with items := t.items.map (h.flat :: ·), len }
 
-/-- `mayBeNil`, using `items` if `a` has them, and `Flat.empty` if it may be any list. -/
+/-- `mayBeNil`, using `items` if `a` has them, and the lengths of its lists (`lenI`). -/
 def mayBeNilI (a : AVal A) : Bool :=
   match a.items with
   | some ws => ws.isEmpty
-  | none => (a.list && a.toFlat.empty) || (a.elems.isSome && a.mayNil)
+  | none => AbsDomain.leq (const 0) a.lenI
 
 /-- `heads`, using `items` if `a` has them, and the elements of `a.toFlat` if it may be
     any list. -/
@@ -555,7 +574,9 @@ def headsI (a : AVal A) : Flat A :=
   | some (w :: _) => w
   | some [] => Flat.bot
   | none =>
-    if a.list then
+    -- only `[]`: no first element
+    if AbsDomain.leq a.lenI (const 0) then Flat.bot
+    else if a.list then
       (a.toFlat.elem.getD Flat.top).join (a.elems.getD Flat.bot)
     else a.heads
 
@@ -566,9 +587,12 @@ def tailsI (a : AVal A) : AVal A :=
   | some (_ :: ws) => itemsOf ws
   | some [] => bot
   | none =>
+    -- the lists that aren't `[]`, one element shorter
+    let len := sub (AbsDomain.meet a.lenI Flat.consLen) (const 1)
     if a.list then
-      (ofFlat { Flat.listV with elem := a.toFlat.elem }).join ((a.elems.map (listOf ·)).getD bot)
-    else a.tails
+      { (ofFlat { Flat.listV with elem := a.toFlat.elem }).join
+          ((a.elems.map (listOf ·)).getD bot) with len }
+    else { a.tails with len }
 
 instance [ToString A] : ToString (AVal A) where
   toString a :=

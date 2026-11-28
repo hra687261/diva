@@ -10,9 +10,9 @@ def source : Diva.Expr :=
 
 /-- The hints of the analysis. `opt` uses them to choose what to rewrite. -/
 def hints : Diva.AbsInt.Hints Diva.AbsInt.Itv := [
-  ("n#1", { int := (.range .negInf (.fin 10)), tt := false, ff := false, unit := false, list := false, fn := false, loc := false, ctor := false }),
-  ("$sumsq#0", { int := (.range (.fin 0) .posInf), tt := false, ff := false, unit := false, list := false, fn := false, loc := false, ctor := false }),
-  ("acc#2", { int := (.range (.fin 0) .posInf), tt := false, ff := false, unit := false, list := false, fn := false, loc := false, ctor := false })]
+  ("n#1", { int := (.range .negInf (.fin 10)), tt := false, ff := false, unit := false, list := false, fn := false, loc := false, ctor := false, len := .bot }),
+  ("$sumsq#0", { int := (.range (.fin 0) .posInf), tt := false, ff := false, unit := false, list := false, fn := false, loc := false, ctor := false, len := .bot }),
+  ("acc#2", { int := (.range (.fin 0) .posInf), tt := false, ff := false, unit := false, list := false, fn := false, loc := false, ctor := false, len := .bot })]
 
 /-- The optimised program. -/
 def optimized : Diva.Expr :=

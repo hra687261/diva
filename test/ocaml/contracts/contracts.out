@@ -15,9 +15,9 @@ $ diva ocaml opt contracts.ml
 $ diva ocaml hints contracts.ml
 a#0 : true
 b#1 : true
-l#3 : list of [1, 2]
+l#3 : list of [1, 2] (length [0, 2])
 $length#2 : [0, +∞]
-%l#5 : list of [1, 2]
+%l#5 : list of [1, 2] (length [0, 2])
 $%length#4 : [0, +∞]
 l#6 : [3; 4]
 [exit 0]

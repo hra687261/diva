@@ -73,7 +73,8 @@ def flat (a : Flat Itv) : String :=
   let sites := (if a.refs.isEmpty then "" else s!", refs := {a.refs}") ++
     (if a.arrs.isEmpty then "" else s!", arrs := {a.arrs}")
   s!"\{ int := {itv a.int}, tt := {a.tt}, ff := {a.ff}, unit := {a.unit}, " ++
-  s!"list := {a.list}, fn := {a.fn}, loc := {a.loc}, ctor := {a.ctor}{sites} }"
+  s!"list := {a.list}, fn := {a.fn}, loc := {a.loc}, ctor := {a.ctor}{sites}, " ++
+  s!"len := {itv a.len} }"
 
 /-- `H` as a Lean term of type `Hints Itv`, one hint per line. -/
 def hints (H : Hints Itv) : String :=

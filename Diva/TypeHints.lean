@@ -56,7 +56,7 @@ partial def flat [Inhabited A] : Ty → Flat A
     let comps : Flat A := { Flat.listV with
       items := some ws
       elem := some elem
-      empty := ws.isEmpty }
+      len := const ws.length }
     { Flat.bot with ctors := [tag], args := [(tag, comps)] }
   | .variant cs =>
     { Flat.bot with

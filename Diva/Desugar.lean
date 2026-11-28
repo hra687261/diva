@@ -29,9 +29,10 @@ def notExpr (e : Expr) : Expr := .ite e (.bool false) (.bool true)
     (`atLeast`) rather than a call of `lengthExpr`. The analysis follows `match`es
     exactly, but gives `lengthExpr`'s result for all the lists it is called on.
 
-    TODO: describe the length of lists by an interval in `Flat` (`[]` has length 0, and
-    `x :: l` the length of `l` plus 1). The analysis then gives `length l` for any `n`,
-    without `match`es, `unroll` goes away, and `Flat.empty` is the length 0. -/
+    TODO: the analysis knows the lengths of lists (`Flat.len`), but a call of `lengthExpr`
+    gives the result of its summary, whatever the list. A `length` primitive in the core
+    language would give `length l` from `Flat.len`, for any `n`, and `unroll` would go
+    away. -/
 def lengthCmp (op : BinOp) (l : Expr) (n : Nat) : Option Expr :=
   match op with
   | .ge => some (atLeast n l)

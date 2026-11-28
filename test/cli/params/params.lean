@@ -10,16 +10,16 @@ def program : Diva.Expr :=
 
 /-- The hints of the analysis. The kernel checks them again. -/
 def hints : Diva.AbsInt.Hints Diva.AbsInt.Itv := [
-  ("a#1", { int := (.range (.fin 1) (.fin 5)), tt := false, ff := false, unit := false, list := false, fn := false, loc := false, ctor := false }),
-  ("$mul#0", { int := (.range (.fin 0) .posInf), tt := false, ff := false, unit := false, list := false, fn := false, loc := false, ctor := false }),
-  ("b#2", { int := (.range (.fin 0) (.fin 3)), tt := false, ff := false, unit := false, list := false, fn := false, loc := false, ctor := false }),
-  ("a#3", { int := (.range (.fin 1) (.fin 5)), tt := false, ff := false, unit := false, list := false, fn := false, loc := false, ctor := false }),
-  ("b#4", { int := (.range (.fin 0) (.fin 5)), tt := false, ff := false, unit := false, list := false, fn := false, loc := false, ctor := false }),
-  ("a#5", { int := (.range (.fin 1) (.fin 1)), tt := false, ff := false, unit := false, list := false, fn := false, loc := false, ctor := false }),
-  ("b#6", { int := (.range (.fin 5) (.fin 5)), tt := false, ff := false, unit := false, list := false, fn := false, loc := false, ctor := false }),
-  ("c#7", { int := (.range (.fin 2) (.fin 2)), tt := false, ff := false, unit := false, list := false, fn := false, loc := false, ctor := false }),
-  ("w#8", { int := (.range (.fin 1) (.fin 5)), tt := false, ff := false, unit := false, list := false, fn := false, loc := false, ctor := false }),
-  ("h#9", { int := (.range (.fin 3) (.fin 3)), tt := false, ff := false, unit := false, list := false, fn := false, loc := false, ctor := false })]
+  ("a#1", { int := (.range (.fin 1) (.fin 5)), tt := false, ff := false, unit := false, list := false, fn := false, loc := false, ctor := false, len := .bot }),
+  ("$mul#0", { int := (.range (.fin 0) .posInf), tt := false, ff := false, unit := false, list := false, fn := false, loc := false, ctor := false, len := .bot }),
+  ("b#2", { int := (.range (.fin 0) (.fin 3)), tt := false, ff := false, unit := false, list := false, fn := false, loc := false, ctor := false, len := .bot }),
+  ("a#3", { int := (.range (.fin 1) (.fin 5)), tt := false, ff := false, unit := false, list := false, fn := false, loc := false, ctor := false, len := .bot }),
+  ("b#4", { int := (.range (.fin 0) (.fin 5)), tt := false, ff := false, unit := false, list := false, fn := false, loc := false, ctor := false, len := .bot }),
+  ("a#5", { int := (.range (.fin 1) (.fin 1)), tt := false, ff := false, unit := false, list := false, fn := false, loc := false, ctor := false, len := .bot }),
+  ("b#6", { int := (.range (.fin 5) (.fin 5)), tt := false, ff := false, unit := false, list := false, fn := false, loc := false, ctor := false, len := .bot }),
+  ("c#7", { int := (.range (.fin 2) (.fin 2)), tt := false, ff := false, unit := false, list := false, fn := false, loc := false, ctor := false, len := .bot }),
+  ("w#8", { int := (.range (.fin 1) (.fin 5)), tt := false, ff := false, unit := false, list := false, fn := false, loc := false, ctor := false, len := .bot }),
+  ("h#9", { int := (.range (.fin 3) (.fin 3)), tt := false, ff := false, unit := false, list := false, fn := false, loc := false, ctor := false, len := .bot })]
 
 /-- The program never fails, whatever the starting store. -/
 theorem program_safe {μ μ' : Diva.Store} {k : Diva.Err} :
