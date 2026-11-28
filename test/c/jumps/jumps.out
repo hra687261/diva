@@ -1,0 +1,61 @@
+$ diva c run jumps.c
+250803
+[exit 0]
+
+$ diva c check jumps.c
+jumps.c:14:4-12: `odd += i`: may overflow 32-bit integers (result: [0, +∞]) (in the call `main`)
+jumps.c:18:4-7: `k++`: may overflow 32-bit integers (result: [1, +∞]) (in the call `main`)
+jumps.c:19:8-13: `k * k`: may overflow 32-bit integers (result: [1, +∞]) (in the call `main`)
+jumps.c:27:9-20: `odd * 10000`: may overflow 32-bit integers (result: [0, +∞]) (in the call `main`)
+jumps.c:27:23-30: `k * 100`: may overflow 32-bit integers (result: [100, +∞]) (in the call `main`)
+jumps.c:27:9-30: `odd * 10000 + k * 100`: may overflow 32-bit integers (result: [100, +∞]) (in the call `main`)
+jumps.c:27:9-34: `odd * 10000 + k * 100 + j`: may overflow 32-bit integers (result: [103, +∞]) (in the call `main`)
+jumps.c:22:2-26:13: `do { j++; if (j < 3) continue; break; } while (1)`: the function called may fail (in the call `main`)
+jumps.c:17:2-20:3: `while (1) { k++; if (k * k > 50) break; }`: the function called may fail (in the call `main`)
+jumps.c:12:2-15:3: `for (int i = 0; i < 10; i++) { if (i % 2 == 0) continue; ...`: the function called may fail (in the call `main`)
+[exit 1]
+
+$ diva c opt jumps.c
+(let main = (fun _ -> (let %k%5 = (fun i -> (fun odd -> (let %k%3 = (fun k -> (let %k = (fun j -> (let %r = ((let %r = ((let %r = (odd * 10000) in (let _ = (assert (if (-2147483648 <= %r) then (%r <= 2147483647) else false)) in %r)) + (let %r = (k * 100) in (let _ = (assert (if (-2147483648 <= %r) then (%r <= 2147483647) else false)) in %r))) in (let _ = (assert (if (-2147483648 <= %r) then (%r <= 2147483647) else false)) in %r)) + j) in (let _ = (assert (if (-2147483648 <= %r) then (%r <= 2147483647) else false)) in %r))) in (let rec %loop j = (let j = (let %r = (j + 1) in (let _ = (assert (if (-2147483648 <= %r) then (%r <= 2147483647) else false)) in %r)) in (let %k%2 = (fun _ -> (%k j)) in (if (j < 3) then (%loop j) else (%k%2 ())))) in (%loop 0)))) in (let rec %loop%2 k = (let k = (let %r = (k + 1) in (let _ = (assert (if (-2147483648 <= %r) then (%r <= 2147483647) else false)) in %r)) in (let %k%4 = (fun _ -> (%loop%2 k)) in (if ((let %r = (k * k) in (let _ = (assert (%r <= 2147483647)) in %r)) > 50) then (%k%3 k) else (%k%4 ())))) in (%loop%2 0))))) in (let rec %loop%3 i = (fun odd -> (if (i < 10) then (let %k%6 = (fun _ -> (let odd = (let %r = (odd + i) in (let _ = (assert (if (-2147483648 <= %r) then (%r <= 2147483647) else false)) in %r)) in (let i = (let %r = (i + 1) in (let _ = (assert (if (-2147483648 <= %r) then true else false)) in %r)) in ((%loop%3 i) odd)))) in (if ((let %a = i in (%a mod 2)) = 0) then (let i = (let %r = (i + 1) in (let _ = (assert (if (-2147483648 <= %r) then true else false)) in %r)) in ((%loop%3 i) odd)) else (%k%6 ()))) else ((%k%5 i) odd))) in ((%loop%3 0) 0)))) in (main ()))
+[exit 0]
+
+$ diva c hints jumps.c
+n#0 : ⊥
+d#1 : ⊥
+d#3 : 2
+$%loop#2 : ⊥
+_#4 : ⊥
+_#5 : ()
+i#6 : 10
+odd#7 : [0, +∞]
+k#8 : [1, +∞]
+j#9 : [1, 3]
+j#11 : [0, 2]
+$%loop#10 : [101, +∞]
+_#12 : ()
+k#14 : [0, +∞]
+$%loop%2#13 : [101, +∞]
+_#15 : ()
+i#17 : [0, 10]
+$%loop%3#16 : [101, +∞]
+odd#18 : [0, +∞]
+_#19 : ()
+[exit 0]
+
+$ diva c cert --check jumps.c
+the program may fail, so there is no certificate (see `diva check`)
+[exit 1]
+
+$ diva c check --entry smallest_divisor jumps.c
+jumps.c:14:4-12: `odd += i`: may overflow 32-bit integers (result: [0, +∞]) (in the call `main`)
+jumps.c:18:4-7: `k++`: may overflow 32-bit integers (result: [1, +∞]) (in the call `main`)
+jumps.c:19:8-13: `k * k`: may overflow 32-bit integers (result: [1, +∞]) (in the call `main`)
+jumps.c:27:9-20: `odd * 10000`: may overflow 32-bit integers (result: [0, +∞]) (in the call `main`)
+jumps.c:27:23-30: `k * 100`: may overflow 32-bit integers (result: [100, +∞]) (in the call `main`)
+jumps.c:27:9-30: `odd * 10000 + k * 100`: may overflow 32-bit integers (result: [100, +∞]) (in the call `main`)
+jumps.c:27:9-34: `odd * 10000 + k * 100 + j`: may overflow 32-bit integers (result: [103, +∞]) (in the call `main`)
+jumps.c:22:2-26:13: `do { j++; if (j < 3) continue; break; } while (1)`: the function called may fail (in the call `main`)
+jumps.c:17:2-20:3: `while (1) { k++; if (k * k > 50) break; }`: the function called may fail (in the call `main`)
+jumps.c:12:2-15:3: `for (int i = 0; i < 10; i++) { if (i % 2 == 0) continue; ...`: the function called may fail (in the call `main`)
+[exit 1]
+

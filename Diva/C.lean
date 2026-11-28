@@ -11,8 +11,8 @@ tree to the items of DIVA's core language, with their positions, as the OCaml fr
 does. The program is the functions of the file, then the call `main ()`.
 
 The C that is supported, so far: functions with `int` parameters, whose bodies have
-locals of type `int`, assignments to them (`=`, `+=`, `++`, ...), `if`, `while`, `for`, `do` and
-`return`, and
+locals of type `int`, assignments to them (`=`, `+=`, `++`, ...), `if`, `while`, `for`, `do`,
+`return`, `break` and `continue`, and
 expressions on `int`s (literals, parameters, `+`, `-`, `*`,
 `/`, `%`, comparisons, `&&`, `||`, `!`, `c ? a : b`). Each `+`, `-`, `*` and `/` checks that
 its result fits in an `int`: signed overflow is undefined behaviour. `a % b` checks that
@@ -327,13 +327,21 @@ def recFn (t : Json) (f : String) (xs : List String) (body call : LExpr) : LExpr
   let b := ys.foldr (fun y b => node t (.lam y b.expr) [b]) body
   node t (.letrec f x b.expr call.expr) [b, call]
 
+/-- Where `break` and `continue` go in the innermost loop: the call of the code after the
+    loop, and the code that starts the next iteration. -/
+structure Jumps where
+  brk : LExpr
+  cont : LExpr
+
 mutual
 
-/-- The statement `s`, then `k` with the names in scope after `s`. -/
-partial def stmt (env : Env) (s : Json) (k : Env → S LExpr) : S LExpr := do
+/-- The statement `s`, then `k` with the names in scope after `s`. `jumps` are those of the
+    innermost loop around `s`, if there is one. -/
+partial def stmt (jumps : Option Jumps) (env : Env) (s : Json) (k : Env → S LExpr) :
+    S LExpr := do
   match kind s, inner s with
   -- the locals of a block are only in scope in the block
-  | "CompoundStmt", ss => stmts env ss fun _ => k env
+  | "CompoundStmt", ss => stmts jumps env ss fun _ => k env
   | "DeclStmt", ds => decls env ds k
   | "ReturnStmt", [e] => expr env e
   -- `if`: both branches end with the call of the join point of the code after the `if`
@@ -341,9 +349,9 @@ partial def stmt (env : Env) (s : Json) (k : Env → S LExpr) : S LExpr := do
     let xs := env.filter (fun (id, _) => (assigned s).contains id) |>.map (·.2)
     let (kn, fn, call) ← join s xs (← k env)
     let c ← cond env c
-    let t ← stmt env t fun _ => pure call
+    let t ← stmt jumps env t fun _ => pure call
     let e ← match e with
-      | [e] => stmt env e fun _ => pure call
+      | [e] => stmt jumps env e fun _ => pure call
       | _ => pure call
     return letin s kn fn (ite s c t e)
   | "WhileStmt", [c, b] => loop s env (some c) b none k
@@ -352,8 +360,16 @@ partial def stmt (env : Env) (s : Json) (k : Env → S LExpr) : S LExpr := do
     let c := if kind c == "" then none else some c
     let inc := if kind inc == "" then none else some inc
     if kind init == "" then loop s env c b inc k
-    else stmt env init fun env' => loop s env' c b inc fun _ => k env
+    else stmt jumps env init fun env' => loop s env' c b inc fun _ => k env
   | "DoStmt", [b, c] => doLoop s env b c k
+  | "BreakStmt", _ =>
+    match jumps with
+    | some j => return j.brk
+    | none => unsupported s "`break` outside a loop"
+  | "ContinueStmt", _ =>
+    match jumps with
+    | some j => return j.cont
+    | none => unsupported s "`continue` outside a loop"
   | "NullStmt", _ => k env
   | k', _ =>
     if k'.endsWith "Stmt" then unsupported s s!"this statement ({k'})"
@@ -363,7 +379,7 @@ partial def stmt (env : Env) (s : Json) (k : Env → S LExpr) : S LExpr := do
     `%loop` of the locals `xs` that the loop may assign,
     `let rec %loop x = fun y -> if c then [b; inc; %loop x y] else %k x y in %loop x y`,
     where `%k` is the join point of the code after the loop (`join`). Without `c`, the
-    condition holds. -/
+    condition holds. `break` is `%k x y`, and `continue` is `inc; %loop x y`. -/
 partial def loop (s : Json) (env : Env) (c : Option Json) (b : Json) (inc : Option Json)
     (k : Env → S LExpr) : S LExpr := do
   let xs := env.filter (fun (id, _) => (assigned s).contains id) |>.map (·.2)
@@ -372,24 +388,28 @@ partial def loop (s : Json) (env : Env) (c : Option Json) (b : Json) (inc : Opti
   let c ← match c with
     | some c => cond env c
     | none => pure (bool s true)
-  let body ← stmt env b fun env => match inc with
+  let next ← match inc with
     | some i => exprStmt env i fun _ => pure again
     | none => pure again
+  let body ← stmt (some ⟨exit, next⟩) env b fun _ => pure next
   return letin s kn kfn (recFn s ln xs (ite s c body exit) again)
 
-/-- The loop `do b while (c)`: as `loop`, with the test of `c` after `b`. -/
+/-- The loop `do b while (c)`: as `loop`, with the test of `c` after `b`. `continue` goes
+    to the test. -/
 partial def doLoop (s : Json) (env : Env) (b c : Json) (k : Env → S LExpr) : S LExpr := do
   let xs := env.filter (fun (id, _) => (assigned s).contains id) |>.map (·.2)
   let (kn, kfn, exit) ← join s xs (← k env)
   let (ln, again) ← recCall s xs
-  let body ← stmt env b fun env => do return ite s (← cond env c) again exit
+  let test := ite s (← cond env c) again exit
+  let body ← stmt (some ⟨exit, test⟩) env b fun _ => pure test
   return letin s kn kfn (recFn s ln xs body again)
 
 /-- The statements `ss`, one after the other, then `k`. -/
-partial def stmts (env : Env) (ss : List Json) (k : Env → S LExpr) : S LExpr :=
+partial def stmts (jumps : Option Jumps) (env : Env) (ss : List Json) (k : Env → S LExpr) :
+    S LExpr :=
   match ss with
   | [] => k env
-  | s :: ss => stmt env s fun env => stmts env ss k
+  | s :: ss => stmt jumps env s fun env => stmts jumps env ss k
 
 end
 
@@ -398,7 +418,7 @@ end
     any use of it an error. `names` are the names of the parameters. -/
 def body (f : String) (env : Env) (names : List String) (t : Json) : M LExpr :=
   let fallOff : LExpr := if f == "main" then int t 0 else ⟨.unit, .leaf (span t)⟩
-  (stmt env t fun _ => pure fallOff).run' names
+  (stmt none env t fun _ => pure fallOff).run' names
 
 /-- The type `int` of C, for the hints of `--entry`: the integers of 32 bits. -/
 def intTy : Ty := .range IntType.int32.min IntType.int32.max
