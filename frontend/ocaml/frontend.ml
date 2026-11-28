@@ -828,7 +828,20 @@ let rec expr (e : expression) : expr =
             let x = field loc r l.lbl_pos (Array.length l.lbl_all) in
             letin loc r e (mk loc (Assign (x, v)))
         | _ -> assert false)
-  | Texp_array _ -> unsupported loc "array literals (for now)"
+  | Texp_array (_, es) ->
+      (* [[|a1; ...; an|]]: an array of [n] copies of [a1], then the others written *)
+      ordered loc es (function
+        | [] -> mk loc (Alloc (int loc 0, unit loc))
+        | e1 :: rest ->
+            let t = fresh () in
+            let writes =
+              List.mapi
+                (fun i e -> mk loc (Set (var loc t, int loc (i + 1), e)))
+                rest
+            in
+            letin loc t
+              (mk loc (Alloc (int loc (List.length es), e1)))
+              (List.fold_right (seq loc) writes (var loc t)))
   | _ -> unsupported loc "this expression"
 
 (* [C args], for the constructor [cd]. *)

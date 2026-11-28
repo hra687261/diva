@@ -1,0 +1,37 @@
+$ diva ocaml run arrays.ml
+51
+[exit 0]
+
+$ diva ocaml check arrays.ml
+arrays.ml:7:22-33: `100 / a.(2)`: may overflow 63-bit integers (result: [-∞, +∞])
+arrays.ml:7:8-19: `100 / a.(0)`: may overflow 63-bit integers (result: [-∞, +∞])
+arrays.ml:7:8-33: `100 / a.(0) + 100 / a.(2)`: may overflow 63-bit integers (result: [-∞, +∞])
+arrays.ml:12:9-19: `!s + t.(i)`: may overflow 63-bit integers (result: [2, +∞]) (in the call `sum a`)
+arrays.ml:11:2-13:6: `for i = 0 to Array.length t - 1 do s := !s + t.(i) done`: the function called may fail (in the call `sum a`)
+arrays.ml:20:0-9: `b + sum a`: may overflow 63-bit integers (result: [-∞, +∞])
+arrays.ml:20:0-13: `b + sum a + c`: may overflow 63-bit integers (result: [-∞, +∞])
+[exit 1]
+
+$ diva ocaml opt arrays.ml
+(let a = (let %t1 = (Array.make 3 4) in (let _ = (%t1.(1) <- 2) in (let _ = (%t1.(2) <- 8) in %t1))) in (let b = (let %t3 = (let %r = (100 / a.(2)) in (let _ = (assert (if (-4611686018427387904 <= %r) then (%r <= 4611686018427387903) else false)) in %r)) in (let %t2 = (let %r = (100 / a.(0)) in (let _ = (assert (if (-4611686018427387904 <= %r) then (%r <= 4611686018427387903) else false)) in %r)) in (let %r = (%t2 + %t3) in (let _ = (assert (if (-4611686018427387904 <= %r) then (%r <= 4611686018427387903) else false)) in %r)))) in (let sum = (fun t -> (let s = (ref 0) in (let _ = (let %hi = (let %r = ((Array.length t) - 1) in (let _ = (assert (if (-4611686018427387904 <= %r) then (%r <= 4611686018427387903) else false)) in %r)) in (let rec %for i = (if (i <= %hi) then (let _ = (s := (let %t5 = t.(i) in (let %t4 = !s in (let %r = (%t4 + %t5) in (let _ = (assert (if (-4611686018427387904 <= %r) then (%r <= 4611686018427387903) else false)) in %r))))) in (%for (i + 1))) else ()) in (%for 0))) in !s))) in (let empty = (Array.make 0 ()) in (let c = (Array.length empty) in (let %r = ((let %r = (b + (sum a)) in (let _ = (assert (if (-4611686018427387904 <= %r) then (%r <= 4611686018427387903) else false)) in %r)) + c) in (let _ = (assert (if (-4611686018427387904 <= %r) then (%r <= 4611686018427387903) else false)) in %r)))))))
+[exit 0]
+
+$ diva ocaml hints arrays.ml
+!0 : [2, 8]
+!0.length : 3
+t#0 : array !0
+!1 : [0, +∞]
+i#2 : [0, 3]
+$%for#1 : ()
+!2 : ()
+!2.length : 0
+[exit 0]
+
+$ diva ocaml cert --check arrays.ml
+the program may fail, so there is no certificate (see `diva check`)
+[exit 1]
+
+$ diva ocaml prove --check -o prove.lean arrays.ml
+no function has a contract: write one in a `(*@ ... *)` comment after a function
+[exit 1]
+
