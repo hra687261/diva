@@ -11,7 +11,7 @@ tree to the items of DIVA's core language, with their positions, as the OCaml fr
 does. The program is the functions of the file, then the call `main ()`.
 
 The C that is supported, so far: functions with `int` parameters, whose bodies have
-locals of type `int`, assignments to them (`=`, `+=`, `++`, ...) and `return`, and
+locals of type `int`, assignments to them (`=`, `+=`, `++`, ...), `if` and `return`, and
 expressions on `int`s (literals, parameters, `+`, `-`, `*`,
 `/`, `%`, comparisons, `&&`, `||`, `!`, `c ? a : b`). Each `+`, `-`, `*` and `/` checks that
 its result fits in an `int`: signed overflow is undefined behaviour. `a % b` checks that
@@ -206,7 +206,9 @@ A statement is translated with the code that comes after it, its continuation `k
 function has its own name in the core language, so a local that hides another one in a
 block gets another name, and the code after the block sees the first one again. An
 assignment `x = e;` binds the name of `x` again: `let x = e in rest`. `return e;` gives
-`e`, without its continuation. -/
+`e`, without its continuation. After an `if`, its continuation is a function `%k` of the locals that
+the branches may assign, called at the end of each branch (a join point). `Inline` copies
+it into each branch, so the analysis sees the values of each branch. -/
 
 /-- The translation of statements, which also gives each local of the function its own
     name: the state is the names used so far. -/
@@ -272,6 +274,37 @@ def decls (env : Env) (ds : List Json) (k : Env → S LExpr) : S LExpr := do
     let y ← fresh x
     return letin d y e (← decls ((id, y) :: env) ds k)
 
+/-- The ids of the locals that `t` assigns: `x = e`, `x += e`, `x++`, ... -/
+partial def assigned (t : Json) : List String :=
+  let here := match kind t, str t "opcode", inner t with
+    | "BinaryOperator", some "=", l :: _ | "CompoundAssignOperator", _, l :: _ => declId l
+    | "UnaryOperator", some op, [l] => if op == "++" || op == "--" then declId l else []
+    | _, _, _ => []
+  here ++ (inner t).flatMap assigned
+where
+  /-- The id of the declaration that `t` refers to. -/
+  declId (t : Json) : List String :=
+    match kind t, inner t with
+    | "DeclRefExpr", _ => ((field t "referencedDecl").bind (str · "id")).toList
+    | "ParenExpr", [a] => declId a
+    | _, _ => []
+
+/-- The application of `f` to `args`, with the positions of `t`. -/
+def apps (t : Json) (f : LExpr) (args : List LExpr) : LExpr :=
+  args.foldl (fun f a => node t (.app f.expr a.expr) [f, a]) f
+
+/-- The join point of the code `rest` after the statement `t`: the function
+    `fun x -> fun y -> rest` of the names `xs` of the locals that `t` may change (`fun _`
+    without any), and its call `%k x y` (or `%k ()`), which ends each branch of `t`.
+    Gives the name `%k`, the function and the call. -/
+def join (t : Json) (xs : List String) (rest : LExpr) : S (String × LExpr × LExpr) := do
+  let k ← fresh "%k"
+  let ps := if xs.isEmpty then ["_"] else xs
+  let fn := ps.foldr (fun x b => node t (.lam x b.expr) [b]) rest
+  let var (x : String) : LExpr := ⟨.var x, .leaf (span t)⟩
+  let args := if xs.isEmpty then [⟨.unit, .leaf (span t)⟩] else xs.map var
+  return (k, fn, apps t (var k) args)
+
 mutual
 
 /-- The statement `s`, then `k` with the names in scope after `s`. -/
@@ -281,6 +314,16 @@ partial def stmt (env : Env) (s : Json) (k : Env → S LExpr) : S LExpr := do
   | "CompoundStmt", ss => stmts env ss fun _ => k env
   | "DeclStmt", ds => decls env ds k
   | "ReturnStmt", [e] => expr env e
+  -- `if`: both branches end with the call of the join point of the code after the `if`
+  | "IfStmt", c :: t :: e =>
+    let xs := env.filter (fun (id, _) => (assigned s).contains id) |>.map (·.2)
+    let (kn, fn, call) ← join s xs (← k env)
+    let c ← cond env c
+    let t ← stmt env t fun _ => pure call
+    let e ← match e with
+      | [e] => stmt env e fun _ => pure call
+      | _ => pure call
+    return letin s kn fn (ite s c t e)
   | "NullStmt", _ => k env
   | k', _ =>
     if k'.endsWith "Stmt" then unsupported s s!"this statement ({k'})"

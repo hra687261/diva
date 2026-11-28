@@ -1,0 +1,34 @@
+$ diva c run ifs.c
+110
+[exit 0]
+
+$ diva c check ifs.c
+no runtime error is possible
+[exit 0]
+
+$ diva c opt ifs.c
+(let main = (fun _ -> (let %k%2 = (fun b -> (fun a -> (let %k = (fun _ -> (let %r = ((let %r = (a * 100) in %r) + b) in %r)) in (if (b = 0) then (let %r = (1 / 0) in %r) else (%k ()))))) in ((%k%2 10) 1))) in (main ()))
+[exit 0]
+
+$ diva c hints ifs.c
+x#0 : ⊥
+lo#1 : ⊥
+hi#2 : ⊥
+r#3 : ⊥
+r#4 : ⊥
+_#5 : ()
+b#6 : 10
+a#7 : 1
+_#8 : ()
+[exit 0]
+
+$ diva c cert --check ifs.c
+[diva] running Lean on ifs.lean
+wrote ifs.lean
+certificate checked by Lean: the program never fails
+[exit 0]
+
+$ diva c check --entry clamp ifs.c
+no runtime error is possible
+[exit 0]
+
