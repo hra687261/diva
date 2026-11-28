@@ -385,6 +385,11 @@ let rec type_of env depth (t : Types.type_expr) =
               (Ident.name cd.cd_id, arg)
             in
             Ty_variant (List.map ctor cds)
+        | { type_kind = Type_record (lds, _); _ } ->
+            Ty_tuple
+              (List.map
+                 (fun (ld : Types.label_declaration) -> sub ld.ld_type)
+                 lds)
         | _ | (exception Not_found) -> Ty_any)
     | Ttuple ts -> Ty_tuple (List.map (fun (_, t) -> sub t) ts)
     | Tarrow _ -> Ty_fun
@@ -615,6 +620,26 @@ let tuple loc es = mk loc (Ctor (tuple_ctor (List.length es), list loc es))
 let match_failure loc =
   mk loc (Raise (mk loc (Ctor ("Match_failure", unit loc))))
 
+(* The [i]-th of the [n] components of the tuple [v], as a field of a record. A value of a
+   record type is always such a tuple, so the tests never fail: they raise
+   [Match_failure], as in [tuple_pattern]. *)
+let field loc v i n =
+  let bad = match_failure loc in
+  let rec nth l i =
+    if i = 0 then
+      let h = fresh () in
+      mk loc (MatchList (var loc l, bad, h, "_", var loc h))
+    else
+      let t = fresh () in
+      mk loc (MatchList (var loc l, bad, "_", t, nth t (i - 1)))
+  in
+  let l = fresh () in
+  mk loc (CtorCase (var loc v, tuple_ctor n, l, nth l i, bad))
+
+(* [l] is a mutable field of a record. *)
+let is_mutable (l : Data_types.label_description) =
+  match l.lbl_mut with Mutable -> true | Immutable -> false
+
 (* The translation of [e]. The sub-expressions are translated from the first to the
    last, with [let]: OCaml computes the arguments of a function from the last to the
    first. So the first construct that isn't supported is the one reported. *)
@@ -720,8 +745,40 @@ let rec expr (e : expression) : expr =
           es
       in
       ordered loc es (tuple loc)
-  | Texp_record _ | Texp_field _ | Texp_setfield _ ->
-      unsupported loc "records (for now)"
+  | Texp_record { fields; extended_expression; _ } -> (
+      if Array.exists (fun (l, _) -> is_mutable l) fields then
+        unsupported loc "mutable fields (for now)";
+      let n = Array.length fields in
+      (* the fields that are given, in the order of the type *)
+      let given =
+        List.filter_map
+          (function _, Overridden (_, e) -> Some e | _, Kept _ -> None)
+          (Array.to_list fields)
+      in
+      (* the tuple: the fields that are given, and the others from [base] *)
+      let build base =
+        ordered loc given (fun es ->
+            let rec comps i es =
+              if i = n then []
+              else
+                match (snd fields.(i), es, base) with
+                | Overridden _, e :: es, _ -> e :: comps (i + 1) es
+                | Kept _, es, Some r -> field loc r i n :: comps (i + 1) es
+                | _ -> assert false
+            in
+            tuple loc (comps 0 es))
+      in
+      (* [{ e0 with ... }]: [e0] first *)
+      match extended_expression with
+      | None -> build None
+      | Some e0 ->
+          let r = fresh () in
+          letin loc r (expr e0) (build (Some r)))
+  | Texp_field (e, _, l) ->
+      if is_mutable l then unsupported loc "mutable fields (for now)";
+      let r = fresh () in
+      letin loc r (expr e) (field loc r l.lbl_pos (Array.length l.lbl_all))
+  | Texp_setfield _ -> unsupported loc "mutable fields (for now)"
   | Texp_array _ -> unsupported loc "array literals (for now)"
   | _ -> unsupported loc "this expression"
 
@@ -1014,6 +1071,7 @@ and pat_uses (p : pattern) =
   | Tpat_alias (q, _, _, _, _) -> pat_uses q
   | Tpat_constant _ -> 1
   | Tpat_tuple ps -> tuple_uses (List.map snd ps)
+  | Tpat_record (fs, _) -> tuple_uses (List.map (fun (_, _, q) -> q) fs)
   | Tpat_construct (_, cd, ps, _) -> (
       match (cd.cstr_name, ps) with
       | "()", _ -> 0
@@ -1082,7 +1140,25 @@ and pattern (p : pattern) v ok ko =
           in
           mk loc (CtorCase (var loc v, c, x, inner, ko)))
   | Tpat_or (p1, p2, _) -> pattern p1 v ok (pattern p2 v ok ko)
-  | Tpat_record _ -> unsupported loc "records (for now)"
+  | Tpat_record (fs, _) -> (
+      match fs with
+      | [] -> ok
+      | (_, l, _) :: _ ->
+          if List.exists (fun (_, l, _) -> is_mutable l) fs then
+            unsupported loc "mutable fields (for now)";
+          (* a pattern for each field, in the order of the type: [_] if it is missing *)
+          let ps =
+            List.init (Array.length l.lbl_all) (fun i ->
+                match
+                  List.find_opt
+                    (fun (_, (l : Data_types.label_description), _) ->
+                      Int.equal l.lbl_pos i)
+                    fs
+                with
+                | Some (_, _, q) -> q
+                | None -> { p with pat_desc = Tpat_any })
+          in
+          tuple_pattern loc ps v ok ko)
   | Tpat_array _ -> unsupported loc "array patterns"
   | _ -> unsupported loc "this pattern"
 

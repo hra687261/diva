@@ -2,41 +2,41 @@ $ diva ocaml run unsupported.ml
 error: File "unsupported.ml", line 6, characters 8-24:
 6 | let p = { x = 1; y = 2 }
             ^^^^^^^^^^^^^^^^
-Error: DIVA doesn't support records (for now)
+Error: DIVA doesn't support mutable fields (for now)
 [exit 1]
 
 $ diva ocaml check unsupported.ml
 error: File "unsupported.ml", line 6, characters 8-24:
 6 | let p = { x = 1; y = 2 }
             ^^^^^^^^^^^^^^^^
-Error: DIVA doesn't support records (for now)
+Error: DIVA doesn't support mutable fields (for now)
 [exit 1]
 
 $ diva ocaml opt unsupported.ml
 error: File "unsupported.ml", line 6, characters 8-24:
 6 | let p = { x = 1; y = 2 }
             ^^^^^^^^^^^^^^^^
-Error: DIVA doesn't support records (for now)
+Error: DIVA doesn't support mutable fields (for now)
 [exit 1]
 
 $ diva ocaml hints unsupported.ml
 error: File "unsupported.ml", line 6, characters 8-24:
 6 | let p = { x = 1; y = 2 }
             ^^^^^^^^^^^^^^^^
-Error: DIVA doesn't support records (for now)
+Error: DIVA doesn't support mutable fields (for now)
 [exit 1]
 
 $ diva ocaml cert --check unsupported.ml
 error: File "unsupported.ml", line 6, characters 8-24:
 6 | let p = { x = 1; y = 2 }
             ^^^^^^^^^^^^^^^^
-Error: DIVA doesn't support records (for now)
+Error: DIVA doesn't support mutable fields (for now)
 [exit 1]
 
 $ diva ocaml prove --check -o prove.lean unsupported.ml
 error: File "unsupported.ml", line 6, characters 8-24:
 6 | let p = { x = 1; y = 2 }
             ^^^^^^^^^^^^^^^^
-Error: DIVA doesn't support records (for now)
+Error: DIVA doesn't support mutable fields (for now)
 [exit 1]
 

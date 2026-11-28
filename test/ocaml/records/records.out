@@ -1,0 +1,38 @@
+$ diva ocaml run records.ml
+8
+[exit 0]
+
+$ diva ocaml check records.ml
+no runtime error found, but not proved: the analysis of arrays, refs, exceptions and the elements of lists isn't proved yet
+[exit 0]
+
+$ diva ocaml opt records.ml
+(let Stdlib.abs = (fun x -> (if (x >= 0) then x else (let %r = (0 - x) in (let _ = (assert (%r <= 4611686018427387903)) in %r)))) in (let p = (%2 (3 :: (0 :: []))) in (let q = (let %t1 = p in (%2 ((match %t1 with %2 %t2 -> (match %t2 with [] -> (raise Match_failure) | %t3 :: _ -> %t3) | _ -> (raise Match_failure)) :: (2 :: [])))) in (let a = (let %r = (10 / (let %t4 = q in (match %t4 with %2 %t5 -> (match %t5 with [] -> (raise Match_failure) | _ :: %t6 -> (match %t6 with [] -> (raise Match_failure) | %t7 :: _ -> %t7)) | _ -> (raise Match_failure)))) in (let _ = (assert (if (-4611686018427387904 <= %r) then (%r <= 4611686018427387903) else false)) in %r)) in (let manhattan = (fun %t8 -> (match %t8 with %2 %t11 -> (match %t11 with [] -> (raise Match_failure) | x :: %t12 -> (match %t12 with [] -> (raise Match_failure) | y :: _ -> (let %t10 = (Stdlib.abs y) in (let %t9 = (Stdlib.abs x) in (let %r = (%t9 + %t10) in (let _ = (assert (%r <= 4611686018427387903)) in %r)))))) | _ -> (raise Match_failure))) in (let on_axis = (fun %t13 -> (match %t13 with %2 %t17 -> (match %t17 with [] -> (raise Match_failure) | %t18 :: %t19 -> (if (%t18 = 0) then (match %t19 with [] -> (raise Match_failure) | _ :: _ -> true) else (match %t13 with %2 %t14 -> (match %t14 with [] -> (raise Match_failure) | _ :: %t15 -> (match %t15 with [] -> (raise Match_failure) | %t16 :: _ -> (if (%t16 = 0) then true else false))) | _ -> (raise Match_failure)))) | _ -> (raise Match_failure))) in (let s = (%2 (p :: (q :: []))) in (let len = (manhattan (let %t53 = (let %t52 = (let %t45 = (let %t49 = s in (match %t49 with %2 %t50 -> (match %t50 with [] -> (raise Match_failure) | %t51 :: _ -> %t51) | _ -> (raise Match_failure))) in (match %t45 with %2 %t46 -> (match %t46 with [] -> (raise Match_failure) | _ :: %t47 -> (match %t47 with [] -> (raise Match_failure) | %t48 :: _ -> %t48)) | _ -> (raise Match_failure))) in (let %t44 = (let %t36 = (let %t40 = s in (match %t40 with %2 %t41 -> (match %t41 with [] -> (raise Match_failure) | _ :: %t42 -> (match %t42 with [] -> (raise Match_failure) | %t43 :: _ -> %t43)) | _ -> (raise Match_failure))) in (match %t36 with %2 %t37 -> (match %t37 with [] -> (raise Match_failure) | _ :: %t38 -> (match %t38 with [] -> (raise Match_failure) | %t39 :: _ -> %t39)) | _ -> (raise Match_failure))) in (let %r = (%t44 - %t52) in (let _ = (assert (if (-4611686018427387904 <= %r) then (%r <= 4611686018427387903) else false)) in %r)))) in (let %t35 = (let %t34 = (let %t28 = (let %t31 = s in (match %t31 with %2 %t32 -> (match %t32 with [] -> (raise Match_failure) | %t33 :: _ -> %t33) | _ -> (raise Match_failure))) in (match %t28 with %2 %t29 -> (match %t29 with [] -> (raise Match_failure) | %t30 :: _ -> %t30) | _ -> (raise Match_failure))) in (let %t27 = (let %t20 = (let %t23 = s in (match %t23 with %2 %t24 -> (match %t24 with [] -> (raise Match_failure) | _ :: %t25 -> (match %t25 with [] -> (raise Match_failure) | %t26 :: _ -> %t26)) | _ -> (raise Match_failure))) in (match %t20 with %2 %t21 -> (match %t21 with [] -> (raise Match_failure) | %t22 :: _ -> %t22) | _ -> (raise Match_failure))) in (let %r = (%t27 - %t34) in (let _ = (assert (if (-4611686018427387904 <= %r) then (%r <= 4611686018427387903) else false)) in %r)))) in (%2 (%t35 :: (%t53 :: [])))))) in (let %r = ((let %r = (a + len) in (let _ = (assert (if (-4611686018427387904 <= %r) then (%r <= 4611686018427387903) else false)) in %r)) + (if (on_axis p) then 1 else 0)) in (let _ = (assert (if (-4611686018427387904 <= %r) then (%r <= 4611686018427387903) else false)) in %r))))))))))
+[exit 0]
+
+$ diva ocaml hints records.ml
+x#0 : [0, 2]
+%t8#1 : (0, 2)
+%t13#2 : (3, 0)
+[exit 0]
+
+$ diva ocaml cert --check records.ml
+the analysis of arrays, refs, exceptions and the elements of lists isn't proved yet, so there is no certificate (see `diva check`)
+[exit 1]
+
+$ diva ocaml prove --check -o prove.lean records.ml
+no function has a contract: write one in a `(*@ ... *)` comment after a function
+[exit 1]
+
+$ diva ocaml hints --entry manhattan,on_axis records.ml
+x#0 : [-4611686018427387904, 4611686018427387903]
+%t8#1 : ([-4611686018427387904, 4611686018427387903], [-4611686018427387904, 4611686018427387903])
+%t13#2 : ([-4611686018427387904, 4611686018427387903], [-4611686018427387904, 4611686018427387903])
+[exit 0]
+
+$ diva ocaml check --entry manhattan records.ml
+prelude: `(0 - x)`: may overflow 63-bit integers (result: [1, 4611686018427387904]) (in the call `abs y`)
+prelude: `(0 - x)`: may overflow 63-bit integers (result: [1, 4611686018427387904]) (in the call `abs x`)
+records.ml:16:25-38: `abs x + abs y`: may overflow 63-bit integers (result: [0, 9223372036854775808])
+[exit 1]
+
