@@ -18,6 +18,8 @@ inductive Ty where
   | range (lo hi : Int)
   | bool | unit | ctor | fn
   | list (t : Ty)
+  /-- A ref, with the type of its contents. -/
+  | ref (t : Ty)
   | tuple (ts : List Ty)
   /-- A variant type: its constructors, each with the type of its argument, if any. -/
   | variant (cs : List (String × Option Ty))
@@ -42,6 +44,9 @@ variable {A : Type} [NumDomain A]
 
 /-- The values of the type `t`. -/
 partial def flat [Inhabited A] : Ty → Flat A
+  -- a ref given by other code: any value, because the analysis describes a ref by the
+  -- place of the program that creates it (see `withEntries`)
+  | .ref _ => Flat.top
   | .int => Flat.ofInt AbsDomain.top
   | .range lo hi => Flat.ofInt (AbsDomain.join (const lo) (const hi))
   | .bool => Flat.bools true true
@@ -79,19 +84,30 @@ def Expr.kids : Expr → List Expr
   | .assign a b | .alloc _ a b | .tryw a _ b => [a, b]
   | .ite a b c | .matchList a b _ _ c | .set a b c | .ctorCase a _ _ b c => [a, b, c]
 
-/-- The hints of the types `ts` for the parameters of `e`, keyed by their names in `e`
-    (after `resolve`). `l` has the positions of `e`. -/
-partial def typeHints {A : Type} [AbsInt.NumDomain A] [Inhabited A] (ts : List TypeHint) (e : Expr)
-    (l : Loc) : List (String × AbsInt.Flat A) :=
-  let find (sp : Span) (x : String) : List (String × AbsInt.Flat A) :=
+/-- The types `ts` of the parameters of `e`, keyed by their names in `e` (after
+    `resolve`). `l` has the positions of `e`. -/
+partial def paramTypes (ts : List TypeHint) (e : Expr) (l : Loc) : List (String × Ty) :=
+  let find (sp : Span) (x : String) : List (String × Ty) :=
     match ts.find? fun t => t.start == sp.start && t.stop == sp.stop && t.name == sourceName x with
-    | some t => [(x, t.ty.flat)]
+    | some t => [(x, t.ty)]
     | none => []
   let here := match e with
     | .lam x _ => find l.span x
     | .letrec _ x _ _ => find (l.kid 0).span x
     | _ => []
-  here ++ (e.kids.zipIdx.flatMap fun (k, i) => typeHints ts k (l.kid i))
+  here ++ (e.kids.zipIdx.flatMap fun (k, i) => paramTypes ts k (l.kid i))
+
+/-- The hints of the types `ts` for the parameters of `e` (see `paramTypes`). -/
+def typeHints {A : Type} [AbsInt.NumDomain A] [Inhabited A] (ts : List TypeHint) (e : Expr)
+    (l : Loc) : List (String × AbsInt.Flat A) :=
+  (paramTypes ts e l).map fun (x, t) => (x, t.flat)
+
+/-- The first allocation site that `e` doesn't use: after those of its refs and arrays. -/
+partial def Expr.sitesEnd (e : Expr) : Nat :=
+  let here := match e with
+    | .ref s _ | .alloc s _ _ => s + 1
+    | _ => 0
+  e.kids.foldl (fun n k => max n k.sitesEnd) here
 
 /-- The top-level functions of `e` (after `resolve`), with their parameters. `l` has the
     positions of `e`: the span of each function is that of its declaration. -/
@@ -112,22 +128,39 @@ def atEnd (c : Expr) (lc : Loc) : Expr → Loc → LExpr
     ⟨.letin x a r'.expr, .node l.span [l.kid 0, r'.loc]⟩
   | r, l => ⟨.letin "_" c r, .node l.span [lc, l]⟩
 
+/-- The argument for a parameter of type `t`: the free name `a`, with the values of `t`.
+    For a ref, a new ref at the site `s` (and `s + 1`, ... for a ref of a ref) that holds
+    the argument for the type of its contents: the analysis knows a ref by the site that
+    creates it, and its contents by the hint of that site. Also gives the next free site. -/
+def argOf {A : Type} [AbsInt.NumDomain A] [Inhabited A] (a : String) :
+    Ty → Nat → Expr × Nat × AbsInt.Flat A
+  | .ref t, s =>
+    let (c, s', v) := argOf a t (s + 1)
+    (.ref s c, s', v)
+  | t, s => (.var a, s, t.flat)
+
 /-- `e`, then a call of each function of `fs`, with free names as arguments. `σ` gives
-    these names the values of the types `ts`. `l` has the positions of `e`. -/
+    these names the values of the types `ts`. A parameter that is a ref gets a new ref
+    (`argOf`). `l` has the positions of `e`. -/
 def withEntries {A : Type} [AbsInt.NumDomain A] [Inhabited A] (fs : List String)
     (ts : List TypeHint) (e : Expr) (l : Loc) : Except String (LExpr × AbsInt.AEnv A) := do
-  let T : List (String × AbsInt.Flat A) := typeHints ts e l
+  let T := paramTypes ts e l
   let fns := topFns e l
   let mut out : LExpr := ⟨e, l⟩
   let mut σ : AbsInt.AEnv A := []
+  let mut site := e.sitesEnd
   for name in fs do
     -- the last declaration of `name`: the one that the end of the program sees
     let some (f, xs, _) := (fns.filter (sourceName ·.1 == name)).getLast?
       | throw s!"no top-level function `{name}`"
-    let args := xs.zipIdx.map fun (x, i) => (s!"%{name}.{i}", x)
-    let call := args.foldl (fun c (a, _) => Expr.app c (.var a)) (.var f)
+    let mut call := Expr.var f
+    for (x, i) in xs.zipIdx do
+      let a := s!"%{name}.{i}"
+      let (arg, next, v) := argOf (A := A) a ((T.lookup x).getD .any) site
+      site := next
+      call := .app call arg
+      σ := σ ++ [(a, AbsInt.AVal.ofFlat v)]
     out := atEnd call (.leaf Span.prelude) out.expr out.loc
-    σ := σ ++ args.map fun (a, x) => (a, AbsInt.AVal.ofFlat ((T.lookup x).getD AbsInt.Flat.top))
   return (out, σ)
 
 end Diva

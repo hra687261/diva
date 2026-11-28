@@ -263,6 +263,7 @@ partial def ty : Sexp → Except String Ty
   | .atom "any" => .ok .any
   | .list [.atom "range", lo, hi] => return .range (← int lo) (← int hi)
   | .list [.atom "list", t] => return .list (← ty t)
+  | .list [.atom "ref", t] => return .ref (← ty t)
   | .list (.atom "tuple" :: ts) => return .tuple (← ts.mapM ty)
   | .list (.atom "variant" :: cs) => return .variant (← cs.mapM ctor)
   | x => .error s!"`{x.text}` is not a type"

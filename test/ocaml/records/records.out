@@ -57,7 +57,16 @@ records.ml:30:20-31: `c.count + 1`: may overflow 63-bit integers (result: [1, +�
 records.ml:31:69-77: `(10 * n)`: may overflow 63-bit integers (result: [0, +∞])
 records.ml:31:69-81: `(10 * n) + m`: may overflow 63-bit integers (result: [0, +∞])
 records.ml:38:0-55: `((a + len + if on_axis p then 1 else 0) * 100) + counts` may fail
-records.ml:35:30-32: `!r`: may not be a ref (⊤)
-records.ml:35:25-36: `r := !r + 1`: may not be a ref (⊤)
+records.ml:35:30-36: `!r + 1`: may overflow 63-bit integers (result: [-4611686018427387903, +∞])
 [exit 1]
+
+$ diva ocaml hints --entry bump records.ml
+x#0 : [0, 2]
+%t8#1 : (0, 2)
+%t13#2 : (3, 0)
+!0 : [0, +∞]
+!1 : [0, +∞]
+r#3 : ref !2
+!2 : [-4611686018427387904, +∞]
+[exit 0]
 

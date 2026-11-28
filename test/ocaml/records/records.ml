@@ -30,8 +30,8 @@ let d = { c with name = 2 }
 let () = c.count <- c.count + 1
 let counts = match (c, d) with { count = n; _ }, { count = m; _ } -> (10 * n) + m
 
-(* a parameter of type `int ref`. With `--entry bump`, `r` is any value: a ref given by
-   other code has no allocation site in the program, so `!r` is reported *)
+(* a parameter of type `int ref`. With `--entry bump`, `bump` gets a new ref that holds any
+   integer: only the overflow of `!r + 1` is reported *)
 let bump (r : int ref) = r := !r + 1
 ;;
 

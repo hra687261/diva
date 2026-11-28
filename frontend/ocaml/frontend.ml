@@ -82,6 +82,7 @@ type ty =
   | Ty_exn
   | Ty_fun
   | Ty_list of ty
+  | Ty_ref of ty  (** a ref, with the type of its contents *)
   | Ty_tuple of ty list
   | Ty_variant of (string * ty option) list
       (** the constructors, with the type of their argument if they have one *)
@@ -268,7 +269,7 @@ let item_to_sexp = function
       List ([ Atom "letrec"; Str f; Str x; to_sexp b ] @ spec_sexp spec)
   | Expr_item e -> List [ Atom "expr"; to_sexp e ]
 
-(* [t] as [int], [(range LO HI)], [bool], [unit], [exn], [fun], [(list T)],
+(* [t] as [int], [(range LO HI)], [bool], [unit], [exn], [fun], [(list T)], [(ref T)],
    [(tuple T ...)], [(variant ("C") ("D" T))] or [any]. *)
 let rec ty_to_sexp = function
   | Ty_range (lo, hi) ->
@@ -279,6 +280,7 @@ let rec ty_to_sexp = function
   | Ty_exn -> Atom "exn"
   | Ty_fun -> Atom "fun"
   | Ty_list t -> List [ Atom "list"; ty_to_sexp t ]
+  | Ty_ref t -> List [ Atom "ref"; ty_to_sexp t ]
   | Ty_tuple ts -> List (Atom "tuple" :: List.map ty_to_sexp ts)
   | Ty_variant cs ->
       let ctor (c, arg) =
@@ -383,8 +385,7 @@ let rec type_of env depth (t : Types.type_expr) =
     | Tconstr (p, [ a ], _) when Path.same p Predef.path_list -> Ty_list (sub a)
     | Tconstr (p, [ a ], _) when Path.same p Predef.path_option ->
         Ty_variant [ ("None", None); ("Some", Some (sub a)) ]
-    (* a ref isn't described by the types: any value *)
-    | Tconstr (p, _, _) when is_ref_type p -> Ty_any
+    | Tconstr (p, [ a ], _) when is_ref_type p -> Ty_ref (sub a)
     | Tconstr (p, _, _) -> (
         (* a variant type of the program. The arguments that use the parameters of the
            type are [Ty_any]. *)
